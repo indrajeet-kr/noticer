@@ -561,6 +561,8 @@ private actor DATEngine {
             return "These glasses want a newer Device Access SDK than this build has."
         case .dwaOutOfStuRange:
             return "The app and the glasses are outside the tested version range. The session can still continue."
+        @unknown default:
+            return error.localizedDescription
         }
     }
 
