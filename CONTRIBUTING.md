@@ -66,7 +66,7 @@ These are open. Do not pick a private answer in one track.
 
 13. **MWDAT Info.plist.** The nested `MWDAT` / `Analytics` / `OptOut` and `CrashReporting` / `OptOut` keys follow the PRD wording. Confirm them against the SDK README before linking it.
 
-14. **iOS version.** The XcodeGen spec targets iOS 17. The PRD does not name a version. Low versus medium DAT resolution, and a 512 px upload size, are also unset.
+14. **iOS version.** The XcodeGen spec targets iOS 18 so `Synchronization.Mutex` is available. The PRD does not name a version. Low versus medium DAT resolution, and a 512 px upload size, are also unset.
 
 15. **Replay file shape.** Cached responses are the normalized envelope in `fixtures/README.md`, plus an empty `raw_completion` for the real HTTP body. Confidence in the sample latch file is not a gate.
 
