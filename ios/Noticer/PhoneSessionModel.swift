@@ -99,7 +99,7 @@ final class PhoneSessionModel {
             configured = true
             registration = Self.registrationLabel(Wearables.shared.registrationState)
             watchWearables()
-        } catch let error as WearablesError {
+        } catch {
             if case .alreadyConfigured = error {
                 configured = true
                 registration = Self.registrationLabel(Wearables.shared.registrationState)
@@ -107,8 +107,6 @@ final class PhoneSessionModel {
                 return
             }
             registration = error.description
-        } catch {
-            registration = error.localizedDescription
         }
     }
 
