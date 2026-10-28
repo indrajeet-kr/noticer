@@ -20,6 +20,19 @@
 	<string>$(MARKETING_VERSION)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLName</key>
+			<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>noticer</string>
+			</array>
+		</dict>
+	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIApplicationSceneManifest</key>
@@ -36,14 +49,47 @@
 		<string>UIInterfaceOrientationPortrait</string>
 	</array>
 	<key>NSCameraUsageDescription</key>
-	<string>Noticer uses the glasses camera during an on-duty session you start. Frames stay in memory for that session.</string>
+	<string>Noticer watches through the glasses camera during a session you start. The iPhone camera is not the session camera. Frames stay in memory.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Noticer connects to your glasses over Bluetooth. It does not use the glasses microphone.</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Noticer connects to your glasses over Bluetooth. It does not use the glasses microphone.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Noticer can use the local network when the glasses stream video over Wi-Fi.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_bonjour._tcp</string>
+	</array>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>bluetooth-central</string>
+		<string>bluetooth-peripheral</string>
+		<string>external-accessory</string>
+	</array>
+	<key>UISupportedExternalAccessoryProtocols</key>
+	<array>
+		<string>com.meta.ar.wearable</string>
+	</array>
 	<!--
-		PRD path: MWDAT > Analytics > OptOut and MWDAT > CrashReporting > OptOut.
-		Confirm the real key names against the DAT SDK README when that SDK is linked.
-		There is no microphone usage string: the glasses mic stays closed.
+		TODO(verify): transport keys. The iOS integration guide lists bluetooth-central,
+		local network, and Bonjour. The GitHub getting-started skill also lists
+		bluetooth-peripheral and external-accessory / com.meta.ar.wearable.
+		Hotspot Configuration is documented for Wi-Fi streaming and is omitted so a
+		free Personal Team can sign. There is no microphone usage string.
+		TODO(verify): ClientToken 0. The iOS skill says Developer Mode may use MetaAppID 0.
+		Android says both ids may be 0. Confirm ClientToken 0 on iOS 1.0.1.
 	-->
 	<key>MWDAT</key>
 	<dict>
+		<key>AppLinkURLScheme</key>
+		<string>noticer://</string>
+		<!-- Developer Mode accepts 0. Replace both when you leave Developer Mode. -->
+		<key>MetaAppID</key>
+		<string>0</string>
+		<key>ClientToken</key>
+		<string>0</string>
+		<key>TeamID</key>
+		<string>$(DEVELOPMENT_TEAM)</string>
 		<key>Analytics</key>
 		<dict>
 			<key>OptOut</key>

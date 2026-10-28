@@ -2,24 +2,40 @@ name: Noticer
 options:
   bundleIdPrefix: app.noticer
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "17.2"
   createIntermediateGroups: true
 settings:
   SWIFT_VERSION: "6.0"
 packages:
   NoticerPackage:
     path: ..
+  # Tag 1.0.1 is the 1.0 line that still ships Package.swift and the xcframeworks.
+  # Later main commits dropped that manifest. Do not float onto main.
+  # https://github.com/facebook/meta-wearables-dat-ios/blob/1.0.1/Package.swift
+  MetaWearablesDAT:
+    url: https://github.com/facebook/meta-wearables-dat-ios
+    exactVersion: 1.0.1
 targets:
   Noticer:
     type: application
     platform: iOS
     sources:
       - path: Noticer
+      - path: ../fixtures/clips
+        buildPhase: resources
+        type: folder
+      - path: ../fixtures/model-responses
+        buildPhase: resources
+        type: folder
     dependencies:
       - package: NoticerPackage
         product: NoticerCore
       - package: NoticerPackage
         product: NoticerAgent
+      - package: MetaWearablesDAT
+        product: MWDATCore
+      - package: MetaWearablesDAT
+        product: MWDATCamera
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.noticer.Noticer
@@ -28,8 +44,11 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
+        IPHONEOS_DEPLOYMENT_TARGET: "17.2"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Noticer/Info.plist
+        # Leave the C preprocessor off so AppLinkURLScheme keeps its :// suffix.
+        INFOPLIST_PREPROCESS: NO
         CODE_SIGN_STYLE: Automatic
         ENABLE_PREVIEWS: YES
 schemes:
