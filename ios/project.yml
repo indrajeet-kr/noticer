@@ -2,7 +2,7 @@ name: Noticer
 options:
   bundleIdPrefix: app.noticer
   deploymentTarget:
-    iOS: "17.2"
+    iOS: "18.0"
   createIntermediateGroups: true
 settings:
   SWIFT_VERSION: "6.0"
@@ -49,7 +49,7 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_VERSION: "6.0"
-        IPHONEOS_DEPLOYMENT_TARGET: "17.2"
+        IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         GENERATE_INFOPLIST_FILE: NO
         INFOPLIST_FILE: Noticer/Info.plist
         # Leave the C preprocessor off so AppLinkURLScheme keeps its :// suffix.
