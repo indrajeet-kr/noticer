@@ -140,13 +140,13 @@ Streaming reference: <https://wearables.developer.meta.com/docs/develop/dat/stre
 
 The screen is dark and stays awake only while a session is running and the app is in front. `isIdleTimerDisabled` is set for that case. If you leave the app, live frames are dropped and the status says to bring it back. Pocket mode is not supported.
 
-**Mom's list.** Up to six needs: id, her words, the cue, priority, and whether a check-in is allowed. The list is saved on the phone. The recorded latch fixture uses the id `eating-one-handed`. The check-in phrase itself is not specified, so the app only stores the toggle.
+**Mom's list.** Up to six needs: id, her words, the cue, priority, and whether a check-in is allowed. The list is saved on the phone. The default ids are `take-baby` and `refill-water`, the same pair the engine and the scenario fixtures use. The check-in phrase itself is not specified, so the app only stores the toggle.
 
-**Live / Replay.** Live opens the glasses camera at 2 fps, `.raw`, `.low`, with no audio codec. Replay reads a file from `fixtures/clips` with `AVAssetImageGenerator` at 2 fps and plays those frames through the shared `ReplayFrameSource`. Recorded model turns come from `fixtures/model-responses`. A truncated fixture is skipped because that file is an error sample.
+**Live / Replay.** Live opens the glasses camera at 2 fps, `.raw`, `.low`, with no audio codec. Replay can play a bundled scenario from `fixtures/scenarios` with no clip and no API key. The scenario clock jumps, so the head start does not take 90 wall-clock seconds. A clip, when you add one, is read with `AVAssetImageGenerator` at 2 fps and played through `ReplayFrameSource`. Recorded model turns for a clip come from `fixtures/model-responses`. A truncated fixture is skipped because that file is an error sample.
 
-**API key.** Save it with **Save to Keychain**. It is a generic password in the Keychain, not in the repo and not in logs. A saved key is used before `META_API_KEY` in the process environment. Replay does not need a key. The live client is still the shared stub: after it sees a key it throws `notImplemented` and does not open a connection.
+**API key.** Save it with **Save to Keychain**. It is a generic password in the Keychain, not in the repo and not in logs. A saved key is used before `META_API_KEY` in the process environment. Replay does not need a key. Live mode, with a key, calls Muse Spark. With no key it does not open a connection.
 
-**Pipeline.** Each frame goes through the Vision person and hand gate. A frame is passed on when a person or a wearer hand is visible. A passed frame becomes one keyframe for `StubSessionEngine`, which calls `ModelClient`. A `latch_need_hypothesis` whose need id is on the list speaks that need's cue. The 90 second head start, mastery, and visitor rule are the core track's engine and are not applied.
+**Pipeline.** Each frame goes through the Vision person and hand gate, then `SessionPipeline`. The pipeline asks `NeedEngine` to pick keyframes, calls `ModelClient`, and hands the verdict back for the head start, mastery, and the cue. A scenario uses a scripted gate instead of Vision, because the fixture already says who is in frame. The head-start extension step is 15 seconds, passed into `HardCapGate`.
 
 **Cues.** `GlassesCueSpeaker` uses `AVSpeechSynthesizer` on a `.playback` / `.spokenAudio` / `.duckOthers` session. **Dismiss cue** stops speech. The glasses microphone is never opened.
 

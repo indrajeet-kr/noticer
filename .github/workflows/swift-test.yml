@@ -51,4 +51,5 @@ jobs:
       - name: Test
         run: |
           swift build --target noticer-gate-g0
+          swift build --target noticer-replay
           swift test

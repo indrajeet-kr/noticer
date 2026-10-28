@@ -9,67 +9,92 @@ Built for the Meta Global AI Developer Hackathon ("Build for Your World").
 ## How it works
 
 - The glasses stream camera frames to an iPhone app.
-- An on-phone person and hand check (Apple Vision) decides when a frame is worth sending.
-- Muse Spark reads keyframes against mom's list and decides whether a need is real.
-- The phone speaks a quiet cue, and cues retire once dad keeps catching that need himself.
+- An on-phone person and hand check (Apple Vision) decides what the frame contains.
+- The need engine keeps glance keyframes and asks the model only when a strip is ready.
+- Muse Spark reads that strip against mom's list and may request a latch, a deferral, or a self-notice.
+- The phone owns the 90 second head start. It whispers only if he misses it, and the cue fades as he catches the need himself.
 
-## Status
+## Replay without an account
 
-Step 0 is the shared skeleton: types, protocols, stubs, Linux tests, and the iOS app shell. The need engine, Vision gate, and glasses session are not implemented. The agent track now calls Muse Spark over chat completions, enforces the hard caps, and can record or replay a turn. All code in this repo was written during the hackathon.
+No API key, no glasses, and no clip. From this repo:
 
-Replay mode (recorded clips plus cached responses, no API key and no glasses) is the path judges will run. `ReplayModelClient` serves `fixtures/model-responses` by request fingerprint and does not read a key. `RecordedModelClient` still plays a fixture list in order.
+```sh
+swift test
+swift run noticer-replay
+swift run noticer-replay --scenario take-baby-whisper
+swift run noticer-replay --list
+```
+
+`noticer-replay` plays `fixtures/scenarios` through the same pipeline as the phone: replay frames, a scripted vision gate, `NeedEngine`, recorded model responses, then a cue speaker. The clock jumps, so the head start does not take 90 wall-clock seconds. A pass means the whisper fires at the head start, or a self-catch raises mastery and stays quiet. The two needs are `take-baby` (one-handed eating) and `refill-water` (nursing without water).
+
+The iPhone app's Replay mode runs those same scenarios. A clip in `fixtures/clips` is optional and still goes through the engine.
+
+`ReplayModelClient` can also serve `fixtures/model-responses` by request fingerprint. `RecordedModelClient` plays a fixture list in order. Neither reads a key.
+
+## Record a live response
+
+From a machine that has a key. This does not run in CI.
+
+```sh
+export META_API_KEY=...   # never commit this
+swift run noticer-gate-g0 --record fixtures/model-responses
+```
+
+`--record` writes one JSON file per request fingerprint. The file stores the normalized verdict and the HTTP body, not the JPEG bytes. Replay can then serve that file with no key. Flags are listed by `swift run noticer-gate-g0 --help`.
 
 ## Architecture
 
 ```
 Ray-Ban Meta Gen 3  -- DAT camera, 2 fps, glasses speaker
-        |  FrameSource          live seam (SDK not linked) | replay frames
+        |  FrameSource          DATFrameSource | ReplayFrameSource
         v
-Vision gate             iOS track, not built
+Vision gate             PersonHandGate on iOS | scripted gate in replay
         |  FrameGateSnapshot
         v
-Need engine             NoticerCore/Engine, not built
+Need engine             keyframe selection (NeedEngine)
         |  Keyframe strip + Need list
         v
-ModelClient             Muse Spark chat completions | recorded fixtures | replay | Baseten slot (refused)
-        |  ModelVerdict   (one tool + SceneAssessment)
+ModelClient             Muse Spark chat completions | recorded scenario | replay
+        |  ModelVerdict   (one tool + SceneAssessment; tool_calls wins over content)
         v
-Need engine             timers, caps, mastery, caught_himself, stale need, visitor rule
-        |  Cue
+Need engine             head start, caps, mastery, caught_himself
+        |  Cue            HardCapGate sees the same 15s extension step
         v
-CueSpeaker              recording stub | glasses speech seam (no AVSpeech yet)
+CueSpeaker              GlassesCueSpeaker | RecordingCueSpeaker
 ```
 
 `Clock` is injected so tests move the head-start window without sleeping.
 
 The phone owns timing and the hard caps. A model tool call is a request. Baseten is a second `ModelClient` backend and is out of scope: selecting it throws, and no request is built. Frames stay in memory. The Meta API key comes from the `META_API_KEY` environment variable or, later, the app's settings. It is not in the repo.
 
-Live calls, when they exist, go to `POST https://api.meta.ai/v1/chat/completions` with model `muse-spark-1.3`, `tool_choice: auto`, and `parallel_tool_calls: false`. `reasoning_effort: none` is not a candidate.
+Live calls go to `POST https://api.meta.ai/v1/chat/completions` with model `muse-spark-1.3`, `tool_choice: auto`, and `parallel_tool_calls: false`. `reasoning_effort: none` is not a candidate. A `tool_calls` body may also contain a content string. The parser keeps the tool.
 
 ## Track boundaries
 
 Three tracks can work in parallel. Folder ownership and the contract files they should not edit are in [CONTRIBUTING.md](CONTRIBUTING.md).
 
-| Track | Owns later | Step 0 leaves them |
-| --- | --- | --- |
-| Core logic | Need list, glance latch, mastery updates, `caught_himself`, stale need, visitor rule | Types and limits only, in `NoticerCore` |
-| Agent layer | Muse Spark chat completions, the 5 tool handlers, hard caps, record and replay | Tool JSON schemas and client stubs, in `NoticerAgent` |
-| iOS app | DAT camera ingest, Vision person/hand gate, `AVSpeechSynthesizer` cues, phone UI, replay mode | App shell and seams, in `ios/` |
+| Track | Owns |
+| --- | --- |
+| Core logic | Need list, glance latch, mastery, `caught_himself`, stale need, visitor rule, in `NoticerCore/Engine` |
+| Agent layer | Muse Spark chat completions, the 5 tool handlers, hard caps, record and replay, in `NoticerAgent` |
+| iOS app | DAT camera, Vision gate, speech cues, phone UI, in `ios/` |
+| Integration | `SessionPipeline`, scenario fixtures, the replay command. Glue only. It does not rewrite the engine or the client. |
 
-`NoticerAgent` depends on `NoticerCore`. The iOS app depends on both. Core does not depend on the agent or on Apple frameworks, so `swift test` runs on Linux.
+`NoticerAgent` depends on `NoticerCore`. `NoticerPipeline` depends on both. The iOS app depends on all three. Core does not depend on the agent or on Apple frameworks, so `swift test` runs on Linux.
 
 ## Repository layout
 
 ```
 Package.swift
-Sources/NoticerCore/          shared types, protocols, stubs
-Sources/NoticerCore/Engine/   empty; core track adds the engine here
-Sources/NoticerAgent/         five tool schemas, model client stubs
-Tests/                        contract tests
+Sources/NoticerCore/          shared types, protocols, need engine
+Sources/NoticerAgent/         Muse Spark client, caps, record and replay
+Sources/NoticerPipeline/      session pipeline and noticer-replay
+Tests/
 ios/project.yml               XcodeGen spec for the iPhone app
-ios/Noticer/                  SwiftUI shell and DAT / speech seams
+ios/Noticer/                  SwiftUI app, DAT seam, Vision gate, speech
 fixtures/clips/               POV clips (none yet)
-fixtures/model-responses/     cached model turns
+fixtures/model-responses/     cached model turns, including --record output
+fixtures/scenarios/           synthetic end-to-end sessions, no account
 .github/workflows/swift-test.yml
 ```
 
@@ -80,7 +105,7 @@ brew install xcodegen
 cd ios && xcodegen generate
 ```
 
-The DAT SDK is not a package dependency. `DATCameraSeam` and `UnlinkedDATFrameSource` are the seam. Do not import it until the iOS track is ready.
+The Swift package does not depend on the DAT SDK, so Linux `swift test` stays free of it. The iPhone target links DAT 1.0.1 from `ios/project.yml`. `UnlinkedDATFrameSource` is what the package uses when that SDK is absent.
 
 ## Shared contracts
 
@@ -90,7 +115,7 @@ Protocols: `FrameSource`, `ModelClient`, `CueSpeaker`, `Clock`.
 
 Tools: `latch_need_hypothesis`, `defer_cue_wearer_busy`, `log_wearer_intervention`, `request_head_start_extension`, `report_no_transition`.
 
-`ModelTurnNormalizer` maps `finish_reason: stop` to `report_no_transition` and rejects `length`. It does not validate need ids or action codes.
+`ModelTurnNormalizer` maps `finish_reason: stop` to `report_no_transition` and rejects `length`. A `tool_calls` finish with a non-null `content` string keeps the tool. The string does not become the verdict. The normalizer does not validate need ids or action codes.
 
 ## Gate G0
 
@@ -115,7 +140,7 @@ Flags and environment variables are listed by `swift run noticer-gate-g0 --help`
 | Timeout | 60 seconds |
 | Retries | 3 attempts, backoff from 0.5s, capped at 8s. 429 and 5xx retry. 400 and `model_not_found` do not |
 | Call budget | 300 per `live()` / `fromEnvironment()` client |
-| Extension step | none until the caller passes one. The 120s cap is still enforced |
+| Extension step | The session pipeline passes 15s from `EngineTuning`. `HardCapGate()` with no step still refuses extensions. The 120s cap is still enforced |
 | API key | `META_API_KEY` or the initializer. Not stored in the repo |
 
 `--record fixtures/model-responses` writes the pair for replay. The file stores the response and a request fingerprint, not the JPEG bytes.
@@ -126,7 +151,7 @@ Flags and environment variables are listed by `swift run noticer-gate-g0 --help`
 swift test
 ```
 
-CI runs that on Ubuntu for every pull request. The iOS target is not built in CI. Tests use a fake HTTP transport and do not call Meta.
+CI runs that on Ubuntu for every pull request, and it builds `noticer-replay` and `noticer-gate-g0`. The iOS target is not built in CI. Tests use a fake HTTP transport and do not call Meta. The iPhone app's Vision, DAT, and speech calls are marked `TODO(verify)` where this environment cannot check them.
 
 ## Privacy
 
