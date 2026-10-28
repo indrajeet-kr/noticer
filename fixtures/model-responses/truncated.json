@@ -1,0 +1,9 @@
+{
+  "fixture_id": "truncated",
+  "normalized": {
+    "finish_reason": "length",
+    "tool": null,
+    "assessment": {}
+  },
+  "raw_completion": null
+}

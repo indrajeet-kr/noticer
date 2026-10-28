@@ -1,0 +1,41 @@
+name: Noticer
+options:
+  bundleIdPrefix: app.noticer
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  SWIFT_VERSION: "6.0"
+packages:
+  NoticerPackage:
+    path: ..
+targets:
+  Noticer:
+    type: application
+    platform: iOS
+    sources:
+      - path: Noticer
+    dependencies:
+      - package: NoticerPackage
+        product: NoticerCore
+      - package: NoticerPackage
+        product: NoticerAgent
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.noticer.Noticer
+        PRODUCT_NAME: Noticer
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_VERSION: "6.0"
+        GENERATE_INFOPLIST_FILE: NO
+        INFOPLIST_FILE: Noticer/Info.plist
+        CODE_SIGN_STYLE: Automatic
+        ENABLE_PREVIEWS: YES
+schemes:
+  Noticer:
+    build:
+      targets:
+        Noticer: all
+    run:
+      config: Debug

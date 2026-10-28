@@ -1,0 +1,15 @@
+{
+  "fixture_id": "latch-eating-one-handed",
+  "normalized": {
+    "finish_reason": "tool_calls",
+    "tool": "latch_need_hypothesis",
+    "assessment": {
+      "need_id": "eating-one-handed",
+      "sustained_across_strip": true,
+      "partner_state_evidence": ["eating_one_handed", "plate_untouched"],
+      "wearer_hands_occupied": false,
+      "confidence": 0.7
+    }
+  },
+  "raw_completion": null
+}
