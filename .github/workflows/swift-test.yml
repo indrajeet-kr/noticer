@@ -49,4 +49,6 @@ jobs:
           /opt/swift/usr/bin/swift --version
 
       - name: Test
-        run: swift test
+        run: |
+          swift build --target noticer-gate-g0
+          swift test

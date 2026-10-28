@@ -14,7 +14,16 @@ let package = Package(
     ],
     targets: [
         .target(name: "NoticerCore"),
-        .target(name: "NoticerAgent", dependencies: ["NoticerCore"]),
+        .target(
+            name: "NoticerAgent",
+            dependencies: ["NoticerCore"],
+            exclude: ["GateG0Main"]
+        ),
+        .executableTarget(
+            name: "noticer-gate-g0",
+            dependencies: ["NoticerAgent"],
+            path: "Sources/NoticerAgent/GateG0Main"
+        ),
         .testTarget(name: "NoticerCoreTests", dependencies: ["NoticerCore"]),
         .testTarget(name: "NoticerAgentTests", dependencies: ["NoticerAgent"]),
     ]
