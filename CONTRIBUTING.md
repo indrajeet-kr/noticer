@@ -30,7 +30,7 @@ Add new types in your own folder instead of widening a shared file for a local n
 ## What Step 0 deliberately does not do
 
 - No glance latch, mastery update, `caught_himself` confirmation, stale-need close, or visitor pause.
-- No HTTP. `MuseSparkModelClient.complete` throws `notImplemented` after it sees a key.
+- No HTTP in Step 0. `MuseSparkModelClient(apiKey:)` with no transport still throws `notImplemented` after it sees a key, and the Step 0 test locks that. `live(apiKey:)` and `fromEnvironment()` perform chat completions. That HTTP client, the cap gate, the recorder, and `ReplayModelClient` live in `Sources/NoticerAgent/`.
 - `ModelBackend.baseten` throws `backendOutOfScope`. Do not add a Baseten request in passing.
 - No DAT import, no Vision request, no `AVSpeechSynthesizer`.
 - `MasteryState.phase` only classifies the stored score and self-notice streak. Two misses do not un-retire on their own.
