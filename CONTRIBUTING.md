@@ -13,8 +13,9 @@ Edit your track's folder. Leave the other tracks' folders alone so the three bra
 | Core logic | `Sources/NoticerCore/Engine/` and new tests in `Tests/NoticerCoreTests/` | HTTP, tool JSON, DAT, Vision, speech, SwiftUI |
 | Agent layer | `Sources/NoticerAgent/` (new files), `fixtures/model-responses/`, new tests in `Tests/NoticerAgentTests/` | Mastery math, the visitor count, DAT, speech |
 | iOS app | `ios/`, `fixtures/clips/` | The need engine and the chat-completions parser |
+| Integration | `Sources/NoticerPipeline/`, `fixtures/scenarios/`, `Tests/NoticerPipelineTests/`, and the glue that calls them from `ios/` | Rewriting `NeedEngine` or the chat-completions client. Call them. |
 
-`NoticerCore` is the shared contract. `NoticerAgent` depends on it. The app depends on both products in `ios/project.yml`.
+`NoticerCore` is the shared contract. `NoticerAgent` depends on it. `NoticerPipeline` depends on both and is the session glue. The app depends on all three products in `ios/project.yml`.
 
 ## Contract files
 
@@ -49,11 +50,11 @@ These are open. Do not pick a private answer in one track.
 
 5. **`partner_state_evidence`.** Encoded as an array of strings. There is no vocabulary.
 
-6. **Head-start extension step.** The PRD says fixed steps up to 120 seconds and does not say the step size. No constant is declared. Agree on one value before granting extensions.
+6. **Head-start extension step.** Agreed value is 15 seconds, `EngineTuning.headStartExtensionStepSeconds`. The engine grants that step. The session pipeline passes the same number into `HardCapGate(extensionStepSeconds:)`. Do not pick a second step size.
 
 7. **Per-need dwell versus H₀.** `Need.dwellSeconds` is the compile step's dwell. The fade spec also has H₀ = 90 seconds and `H = H₀ · (1 + 2·m)` capped at 120. Which one wins is undecided. Nothing reads `dwellSeconds`.
 
-8. **`finish_reason: length`.** It is an error (`ModelContractError.truncated`), not a no-op. `stop` becomes `report_no_transition` and still keeps any assessment payload, with `extension_reason` cleared. The engine must branch on the tool name.
+8. **`finish_reason: length`.** It is an error (`ModelContractError.truncated`), not a no-op. `stop` becomes `report_no_transition` and still keeps any assessment payload, with `extension_reason` cleared. The engine must branch on the tool name. `tool_calls` may arrive with a non-null `content` string. The tool wins. The string is not a verdict.
 
 9. **More than one tool call.** The type holds one verdict because `parallel_tool_calls` is false. A multi-call body has no contract.
 

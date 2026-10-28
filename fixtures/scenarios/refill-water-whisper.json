@@ -1,0 +1,75 @@
+{
+  "scenario_id": "refill-water-whisper",
+  "summary": "She is nursing without water. He misses it. The whisper waits out the 90s head start.",
+  "sample_every": 5,
+  "until": 95,
+  "people": "mom",
+  "needs": [
+    {
+      "id": "take-baby",
+      "author_text": "eating one-handed, take the baby",
+      "cue_wording": "Her plate's getting cold, maybe take the baby?",
+      "visual_condition": "partner eating with one hand and holding the baby",
+      "self_notice_signal": "wearer_hands_receiving_baby",
+      "priority": 0,
+      "allows_check_in": false,
+      "mastery": {
+        "score": 0,
+        "consecutive_self_notices": 0,
+        "consecutive_misses": 0
+      }
+    },
+    {
+      "id": "refill-water",
+      "author_text": "nursing, no water",
+      "cue_wording": "Her water's empty.",
+      "visual_condition": "partner nursing without water in reach",
+      "self_notice_signal": "wearer_carrying_water_toward_partner",
+      "priority": 1,
+      "allows_check_in": false,
+      "mastery": {
+        "score": 0,
+        "consecutive_self_notices": 0,
+        "consecutive_misses": 0
+      }
+    }
+  ],
+  "responses": [
+    {
+      "fixture_id": "refill-water-latch",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "latch_need_hypothesis",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "partner_state_evidence": ["nursing", "no_water"],
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": true,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    }
+  ],
+  "expect": {
+    "cue_need_id": "refill-water",
+    "cue_kind": "whisper",
+    "head_start_seconds": 90,
+    "mastery_scores": {
+      "take-baby": 0,
+      "refill-water": 0
+    }
+  }
+}

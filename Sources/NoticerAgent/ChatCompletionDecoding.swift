@@ -35,6 +35,8 @@ enum ChatCompletionResponse {
         let usage = ModelUsage.read(usage: root["usage"], rates: rates)
         let message = object(choice["message"]) ?? [:]
         let finishRaw = string(choice["finish_reason"]) ?? ""
+        // Branch on finish_reason. A non-null content string does not outrank a tool call.
+        let prose = proseText(message["content"])
 
         switch finishRaw {
         case FinishReason.length.rawValue:
@@ -55,14 +57,15 @@ enum ChatCompletionResponse {
                 finishReason: .stop,
                 tool: nil,
                 assessment: SceneAssessment(),
-                extensionReason: nil
+                extensionReason: nil,
+                content: prose
             )
             return DetailedModelCompletion(verdict: verdict, usage: usage, rawCompletion: raw)
         case FinishReason.toolCalls.rawValue:
             let calls = try toolCalls(in: message)
             if calls.isEmpty {
                 throw ModelClientError.malformedResponse(
-                    "finish_reason was tool_calls but the message had no tool call. content is allowed to be null; the call itself was missing."
+                    "finish_reason was tool_calls but the message had no tool call. A content string does not replace the call."
                 )
             }
             if calls.count > 1 {
@@ -70,11 +73,13 @@ enum ChatCompletionResponse {
             }
             let call = calls[0]
             let parsed = try parseArguments(call.arguments)
+            // tool_calls wins when the same message also has content.
             let verdict = try ModelTurnNormalizer.verdict(
                 finishReason: .toolCalls,
                 tool: call.name,
                 assessment: parsed.assessment,
-                extensionReason: parsed.extensionReason
+                extensionReason: parsed.extensionReason,
+                content: prose
             )
             return DetailedModelCompletion(verdict: verdict, usage: usage, rawCompletion: raw)
         default:
@@ -202,6 +207,14 @@ private func object(_ value: JSONValue?) -> [String: JSONValue]? {
 
 private func string(_ value: JSONValue?) -> String? {
     guard case .string(let text)? = value else {
+        return nil
+    }
+    return text
+}
+
+/// Assistant prose, when the message carried a string. Null, arrays, and blanks are ignored.
+private func proseText(_ value: JSONValue?) -> String? {
+    guard let text = string(value)?.trimmingCharacters(in: .whitespacesAndNewlines), !text.isEmpty else {
         return nil
     }
     return text

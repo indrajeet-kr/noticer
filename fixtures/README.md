@@ -15,3 +15,5 @@
 `confidence` in a sample is not a threshold. `stop` is routed to `report_no_transition`. `length` is an error, not a verdict.
 
 The iOS replay path and the `swift test` harness should both read these files through `RecordedModelClient` and `FrameSource`. Nothing here calls the network.
+
+`scenarios/` is a different shape. Each file is a whole session (a frame clock, recorded verdicts, and what should happen). `noticer-replay` and the phone's Replay mode read that folder. Do not drop a scenario file into `model-responses/`. `RecordedModelClient` will not decode it.

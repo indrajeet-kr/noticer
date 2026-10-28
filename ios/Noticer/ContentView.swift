@@ -27,7 +27,7 @@ struct ContentView: View {
         .background(Color.black)
         .preferredColorScheme(.dark)
         .onAppear {
-            model.reloadClips()
+            model.reloadLibrary()
             model.refreshKeyStatus()
             updateIdleTimer()
         }
@@ -85,7 +85,9 @@ struct ContentView: View {
             Text(model.gateLine)
             Text(model.toolLine)
             Text(model.cueLine)
-            Text("Stub loop: no 90 second head start. A passed frame asks the model, and a latch speaks mom's cue.")
+            Text(model.headStartLine)
+            Text(model.masteryLine)
+            Text("A cue waits out the head start. Replay scenarios jump the clock, so you do not wait 90 seconds.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
         }
@@ -102,16 +104,19 @@ struct ContentView: View {
             .pickerStyle(.segmented)
             .disabled(model.isRunning)
             if model.mode == .replay {
-                if model.clipLabels.isEmpty {
-                    Text("Add an mp4, mov, or m4v to fixtures/clips, then build again.")
+                if model.replayOptions.isEmpty {
+                    Text("No scenario in fixtures/scenarios, and no clip in fixtures/clips.")
                         .foregroundStyle(.secondary)
                 } else {
-                    Picker("Clip", selection: $model.selectedClip) {
-                        ForEach(model.clipLabels, id: \.self) { name in
-                            Text(name).tag(Optional(name))
+                    Picker("Replay", selection: $model.selectedReplayID) {
+                        ForEach(model.replayOptions) { option in
+                            Text(option.label).tag(option.id)
                         }
                     }
                     .disabled(model.isRunning)
+                    Text("Scenarios need no account and no glasses. A clip still runs the same pipeline.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
             }
         }
@@ -128,7 +133,7 @@ struct ContentView: View {
                     }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!model.isRunning && model.mode == .replay && model.clipLabels.isEmpty)
+                .disabled(!model.canStart)
                 Button("Dismiss cue") {
                     model.dismissCue()
                 }
@@ -181,7 +186,7 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Mom's list")
                 .font(.headline)
-            Text("Up to \(SessionLimits.maxAuthoredNeeds). Replay's recorded latch uses the id eating-one-handed.")
+            Text("Up to \(SessionLimits.maxAuthoredNeeds). Scenarios use take-baby and refill-water.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             ForEach($model.needs) { $need in

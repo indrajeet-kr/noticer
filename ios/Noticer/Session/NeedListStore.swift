@@ -1,7 +1,8 @@
 import Foundation
 import NoticerCore
+import NoticerPipeline
 
-/// Mom's list, kept on the phone. The compile step and the fade engine are other tracks.
+/// Mom's list, kept on the phone. The default ids match the engine and the scenarios.
 enum NeedListStore {
     private static let key = "noticer.needs.v1"
 
@@ -32,19 +33,6 @@ enum NeedListStore {
         )
     }
 
-    /// The recorded latch fixture uses the id `eating-one-handed`.
-    static let defaultNeeds: [Need] = [
-        Need(
-            id: "eating-one-handed",
-            authorText: "Eating one-handed, plate going cold",
-            cueWording: "Her plate's getting cold, maybe take the baby?",
-            priority: 0
-        ),
-        Need(
-            id: "nursing-water",
-            authorText: "Nursing, no water within reach",
-            cueWording: "Water's out of reach, maybe refill it?",
-            priority: 1
-        ),
-    ]
+    /// Same ids as the need engine and `fixtures/scenarios`: `take-baby`, `refill-water`.
+    static let defaultNeeds: [Need] = MVPNeedList.all
 }

@@ -1,6 +1,7 @@
 import Foundation
 import MWDATCore
 import NoticerCore
+import NoticerPipeline
 
 enum CaptureMode: String, CaseIterable, Identifiable, Hashable {
     case live = "Live"
@@ -9,13 +10,34 @@ enum CaptureMode: String, CaseIterable, Identifiable, Hashable {
     var id: String { rawValue }
 }
 
-/// Phone session: frames, the Vision gate, the stub engine, then a cue.
+struct ReplayOption: Identifiable, Hashable {
+    enum Kind: String {
+        case scenario
+        case clip
+    }
+
+    var kind: Kind
+    var name: String
+
+    var id: String { "\(kind.rawValue):\(name)" }
+
+    var label: String {
+        switch kind {
+        case .scenario:
+            return "Scenario: \(name)"
+        case .clip:
+            return "Clip: \(name)"
+        }
+    }
+}
+
+/// Phone session. Frames go through the vision gate, then `SessionPipeline`.
 @MainActor
 @Observable
 final class PhoneSessionModel {
     var needs: [Need] = NeedListStore.load()
     var mode: CaptureMode = .replay
-    var selectedClip: String?
+    var selectedReplayID = ""
     var phase = "Idle"
     var keepsScreenOn = false
     var framesSeen = 0
@@ -23,6 +45,8 @@ final class PhoneSessionModel {
     var gateLine = "No frame yet"
     var toolLine = "No model turn yet"
     var cueLine = "No cue yet"
+    var masteryLine = "Mastery not running"
+    var headStartLine = "Head start not running"
     var runError: String?
     var notices: [String] = []
     var dat = DATLiveStatus()
@@ -32,18 +56,38 @@ final class PhoneSessionModel {
     var sceneActive = true
 
     private var clips: [URL] = []
+    private var scenarios: [ReplayScenario] = []
     private var loop: Task<Void, Never>?
     private var liveSource: DATFrameSource?
+    private var pipeline: SessionPipeline?
     private let speaker = GlassesCueSpeaker()
     private let gate = PersonHandGate()
     private var watching = false
 
-    var clipLabels: [String] {
-        clips.map(\.lastPathComponent)
+    var replayOptions: [ReplayOption] {
+        let scenarioOptions = scenarios.map { ReplayOption(kind: .scenario, name: $0.scenarioID) }
+        let clipOptions = clips.map { ReplayOption(kind: .clip, name: $0.lastPathComponent) }
+        return scenarioOptions + clipOptions
+    }
+
+    var canStart: Bool {
+        if isRunning {
+            return true
+        }
+        switch mode {
+        case .live:
+            return true
+        case .replay:
+            return selectedOption != nil
+        }
     }
 
     var isRunning: Bool {
         loop != nil
+    }
+
+    private var selectedOption: ReplayOption? {
+        replayOptions.first { $0.id == selectedReplayID }
     }
 
     func configureWearables() {
@@ -99,10 +143,16 @@ final class PhoneSessionModel {
         }
     }
 
-    func reloadClips() {
+    func reloadLibrary() {
         clips = ClipLibrary.videoURLs()
-        if selectedClip == nil || !clipLabels.contains(selectedClip ?? "") {
-            selectedClip = clipLabels.first
+        do {
+            scenarios = try BundledScenarios.load()
+        } catch {
+            scenarios = []
+            addNotice(error.localizedDescription)
+        }
+        if selectedOption == nil {
+            selectedReplayID = replayOptions.first?.id ?? ""
         }
     }
 
@@ -144,8 +194,11 @@ final class PhoneSessionModel {
         framesPassed = 0
         gateLine = "No frame yet"
         toolLine = "No model turn yet"
+        cueLine = "No cue yet"
+        masteryLine = "Mastery not running"
+        headStartLine = "Head start not running"
         keepsScreenOn = true
-        phase = mode == .replay ? "Reading the clip" : "Starting glasses"
+        phase = mode == .replay ? "Reading the replay" : "Starting glasses"
         loop = Task {
             await self.run()
         }
@@ -175,79 +228,26 @@ final class PhoneSessionModel {
     }
 
     func dismissCue() {
+        let current = pipeline
         Task {
             await speaker.stop()
+            await current?.dismissLastCue()
+            if let view = await current?.view() {
+                self.masteryLine = view.masterySummary
+            }
         }
     }
 
     private func run() async {
         var outcome = "Idle"
         do {
-            let source: any FrameSource
-            let client: any ModelClient
             switch mode {
             case .replay:
-                guard let name = selectedClip, let url = clips.first(where: { $0.lastPathComponent == name }) else {
-                    throw ClipLibraryError.noClips
-                }
-                source = try await ClipLibrary.makeFrameSource(for: url)
-                let recording = try ClipLibrary.makeRecording()
-                client = recording.client
-                if recording.skippedTruncated > 0 {
-                    addNotice("Skipped \(recording.skippedTruncated) truncated fixture(s). Those files are error samples.")
-                }
+                try await runReplay()
+                outcome = "Finished"
             case .live:
-                let live = DATFrameSource()
-                await live.setStatusHandler { [weak self] status in
-                    Task { @MainActor in
-                        self?.apply(status)
-                    }
-                }
-                liveSource = live
-                try await live.start()
-                source = live
-                client = AgentSeam.makeLiveClient()
-            }
-            await gate.reset()
-            let stub = StubSessionEngine(model: client)
-            phase = "Watching"
-            let pace = mode == .replay
-            let interval = Duration.milliseconds(1_000 / SessionLimits.requestedFramesPerSecond)
-            while !Task.isCancelled {
-                while !sceneActive, !Task.isCancelled {
-                    phase = "Paused — bring the app to the front"
-                    try await Task.sleep(for: .milliseconds(200))
-                }
-                if Task.isCancelled {
-                    break
-                }
-                phase = "Watching"
-                guard let frame = try await source.nextFrame() else {
-                    outcome = "Finished"
-                    break
-                }
-                let decision = await gate.evaluate(frame)
-                framesSeen += 1
-                gateLine = Self.describe(decision)
-                if pace {
-                    try await Task.sleep(for: interval)
-                }
-                guard decision.passes else {
-                    continue
-                }
-                framesPassed += 1
-                let turn = await stub.takeTurn(frame: frame, needs: needs)
-                if let line = Self.describe(turn) {
-                    toolLine = line
-                }
-                if let cue = turn.cue {
-                    cueLine = cue.text
-                    do {
-                        try await speaker.speak(cue)
-                    } catch {
-                        addNotice("Cue audio failed: \(error.localizedDescription)")
-                    }
-                }
+                try await runLive()
+                outcome = "Finished"
             }
         } catch is CancellationError {
             outcome = "Idle"
@@ -265,6 +265,123 @@ final class PhoneSessionModel {
         if !Task.isCancelled {
             phase = outcome
             loop = nil
+        }
+    }
+
+    private func runReplay() async throws {
+        guard let option = selectedOption else {
+            throw ClipLibraryError.noClips
+        }
+        switch option.kind {
+        case .scenario:
+            guard let scenario = scenarios.first(where: { $0.scenarioID == option.name }) else {
+                throw ScenarioBundleError.unreadable(option.name)
+            }
+            addNotice("Replay clock. No API key. The scenario uses its own need list.")
+            let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker)
+            pipeline = playback.pipeline
+            phase = "Replaying \(scenario.scenarioID)"
+            gateLine = "Scripted gate: \(scenario.people)"
+            _ = try await playback.run(pace: .milliseconds(40)) { step, view in
+                self.framesSeen += 1
+                self.framesPassed += 1
+                self.apply(step, view)
+            }
+        case .clip:
+            guard let url = clips.first(where: { $0.lastPathComponent == option.name }) else {
+                throw ClipLibraryError.noClips
+            }
+            let frames = try await ClipLibrary.extractFrames(from: url)
+            guard let first = frames.first else {
+                throw ClipLibraryError.noFrames
+            }
+            let recording = try ClipLibrary.makeRecording()
+            if recording.skippedTruncated > 0 {
+                addNotice("Skipped \(recording.skippedTruncated) truncated fixture(s). Those files are error samples.")
+            }
+            let clock = SessionClock.manual(startingAt: first.capturedAt)
+            let session = try SessionPipeline(
+                clock: clock,
+                needs: needs,
+                model: recording.client,
+                speaker: speaker
+            )
+            pipeline = session
+            await gate.reset()
+            phase = "Watching"
+            let source = ReplayFrameSource(frames: frames)
+            let interval = Duration.milliseconds(1_000 / SessionLimits.requestedFramesPerSecond)
+            while !Task.isCancelled {
+                guard let frame = try await source.nextFrame() else {
+                    break
+                }
+                clock.advance(to: frame.capturedAt)
+                try await take(frame: frame, session: session, pace: interval)
+            }
+        }
+    }
+
+    private func runLive() async throws {
+        let live = DATFrameSource()
+        await live.setStatusHandler { [weak self] status in
+            Task { @MainActor in
+                self?.apply(status)
+            }
+        }
+        liveSource = live
+        try await live.start()
+        let session = try SessionPipeline(
+            clock: .wall(),
+            needs: needs,
+            model: AgentSeam.makeLiveClient(),
+            speaker: speaker
+        )
+        pipeline = session
+        await gate.reset()
+        phase = "Watching"
+        while !Task.isCancelled {
+            while !sceneActive, !Task.isCancelled {
+                phase = "Paused — bring the app to the front"
+                try await Task.sleep(for: .milliseconds(200))
+            }
+            if Task.isCancelled {
+                break
+            }
+            phase = "Watching"
+            guard let frame = try await live.nextFrame() else {
+                break
+            }
+            try await take(frame: frame, session: session, pace: nil)
+        }
+    }
+
+    private func take(frame: CameraFrame, session: SessionPipeline, pace: Duration?) async throws {
+        let decision = await gate.evaluate(frame)
+        framesSeen += 1
+        gateLine = Self.describe(decision)
+        if decision.passes {
+            framesPassed += 1
+        }
+        let step = try await session.ingest(frame: frame, gate: decision.snapshot)
+        apply(step, await session.view())
+        if let pace {
+            try await Task.sleep(for: pace)
+        }
+    }
+
+    private func apply(_ step: PipelineStep, _ view: SessionView) {
+        masteryLine = view.masterySummary
+        headStartLine = view.headStartSummary
+        if let cue = step.spoken.last {
+            cueLine = cue.kind == .chime ? "Chime" : cue.text
+        }
+        if let error = step.modelError {
+            toolLine = error
+        } else if let event = view.log.last {
+            toolLine = Self.describe(event)
+        }
+        if let speech = step.speechError {
+            addNotice("Cue audio failed: \(speech)")
         }
     }
 
@@ -314,23 +431,24 @@ final class PhoneSessionModel {
         return "\(decision.snapshot.people.count) people, \(hands)\(rising), \(decisionText)"
     }
 
-    private static func describe(_ turn: StubTurn) -> String? {
-        switch turn.note {
-        case .asked(let tool):
-            if tool == .latchNeedHypothesis, turn.cue == nil {
-                return "Latched, but that need is not on the list or the cue is empty."
-            }
-            return tool.rawValue
-        case .liveClientNotImplemented:
-            return "Live model client is still a stub. Replay uses the recorded responses."
-        case .missingAPIKey:
-            return "No API key. Save one in the Keychain, or use Replay."
-        case .recordingExhausted:
-            return "Recorded responses are used up."
-        case .standingBy:
-            return nil
-        case .failed(let message):
-            return message
+    private static func describe(_ event: EngineEvent) -> String {
+        let who = event.needID.map { " \($0)" } ?? ""
+        switch event.kind {
+        case .needLatched:
+            return "Latched\(who). Head start running."
+        case .cueFired:
+            return "Cue fired\(who)."
+        case .caughtHimself:
+            return "Caught it himself\(who)."
+        case .headStartExtended:
+            return "Head start extended\(who)."
+        case .cueDeferredHandsBusy:
+            return "Deferring the cue\(who). Hands are busy."
+        case .resolvedByPartner:
+            return "She handled it\(who)."
+        default:
+            let detail = event.detail.map { " \($0)" } ?? ""
+            return event.kind.rawValue + who + detail
         }
     }
 }

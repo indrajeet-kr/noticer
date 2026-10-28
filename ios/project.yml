@@ -27,11 +27,16 @@ targets:
       - path: ../fixtures/model-responses
         buildPhase: resources
         type: folder
+      - path: ../fixtures/scenarios
+        buildPhase: resources
+        type: folder
     dependencies:
       - package: NoticerPackage
         product: NoticerCore
       - package: NoticerPackage
         product: NoticerAgent
+      - package: NoticerPackage
+        product: NoticerPipeline
       - package: MetaWearablesDAT
         product: MWDATCore
       - package: MetaWearablesDAT
