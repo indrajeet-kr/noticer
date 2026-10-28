@@ -33,7 +33,7 @@ final class GlassesCueSpeaker: NSObject, CueSpeaker, AVSpeechSynthesizerDelegate
 
     nonisolated func stop() async {
         await MainActor.run {
-            self.synthesizer.stopSpeaking(at: .immediate)
+            _ = self.synthesizer.stopSpeaking(at: .immediate)
         }
         waiter.resume()
     }

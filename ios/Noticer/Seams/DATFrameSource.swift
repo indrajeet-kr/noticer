@@ -258,7 +258,7 @@ private actor DATEngine {
         errorTask?.cancel()
         errorTask = Task {
             for await error in created.errorStream() {
-                await self.noteSessionError(error)
+                self.noteSessionError(error)
             }
         }
         let states = created.stateStream()
