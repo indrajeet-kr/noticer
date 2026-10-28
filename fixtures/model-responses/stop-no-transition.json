@@ -1,0 +1,9 @@
+{
+  "fixture_id": "stop-no-transition",
+  "normalized": {
+    "finish_reason": "stop",
+    "tool": null,
+    "assessment": {}
+  },
+  "raw_completion": null
+}
