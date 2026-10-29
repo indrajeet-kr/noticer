@@ -4,7 +4,7 @@ import NoticerCore
 
 /// Plays one scenario through the same pipeline the phone uses.
 ///
-/// Order: `ReplayFrameSource`, scripted vision gate, `NeedEngine` keyframe
+/// Order: `ReplayFrameSource`, scripted signal gate, `NeedEngine` keyframe
 /// selection, recorded `ModelClient`, verdict handling, `CueSpeaker`.
 /// The clock jumps to each frame. Nothing sleeps unless the caller passes a pace.
 public struct ScenarioPlayback: Sendable {
@@ -50,7 +50,7 @@ public struct ScenarioPlayback: Sendable {
             let spec = frames[index]
             index += 1
             clock.advance(to: frame.capturedAt)
-            let gate = ScriptedVisionGate.snapshot(
+            let gate = ScriptedSignalGate.snapshot(
                 at: frame.capturedAt,
                 people: spec.people,
                 handsRising: false

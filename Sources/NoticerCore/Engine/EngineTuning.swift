@@ -4,8 +4,9 @@ import Foundation
 /// stay in `SessionLimits`. These are the ones this track had to choose.
 ///
 /// Visitor numbers are starting points for the clip set, not measurements.
-/// Vision rects are 2D, so a baby close to the lens can look large; the
-/// persistence count in `SessionLimits` is the other half of the check.
+/// Rects are caller-supplied (replay or a test). A baby close to the lens can
+/// look large in 2D; the persistence count in `SessionLimits` is the other
+/// half of the check. The live signal gate does not invent these rects.
 public enum EngineTuning {
     /// Minimum height of an adult-sized person, as a fraction of the frame.
     /// A standing adult a few feet away clears 0.40. A baby in arms usually

@@ -89,7 +89,9 @@ class EngineTestCase: XCTestCase {
         _ people: [ObservedPerson],
         sharpness: Double? = nil,
         jpeg: UInt8 = 1,
-        handsEdge: Bool = false
+        handsEdge: Bool = false,
+        sceneActive: Bool = false,
+        activityEdge: Bool = false
     ) {
         let now = clock.now()
         let frame = CameraFrame(capturedAt: now, jpegData: Data([jpeg]), width: 8, height: 8)
@@ -97,7 +99,10 @@ class EngineTestCase: XCTestCase {
             capturedAt: now,
             people: people,
             wearerHandsVisible: handsEdge,
-            handGateRisingEdge: handsEdge
+            handGateRisingEdge: handsEdge,
+            sharpness: sharpness,
+            sceneActive: sceneActive,
+            activityEdge: activityEdge
         )
         engine.ingest(frame: frame, gate: gate, sharpness: sharpness)
     }

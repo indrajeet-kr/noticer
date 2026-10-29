@@ -41,6 +41,14 @@ targets:
         product: MWDATCore
       - package: MetaWearablesDAT
         product: MWDATCamera
+    info:
+      path: Noticer/Info.plist
+      properties:
+        UIBackgroundModes:
+          - bluetooth-central
+          - bluetooth-peripheral
+          - external-accessory
+          - audio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.noticer.Noticer

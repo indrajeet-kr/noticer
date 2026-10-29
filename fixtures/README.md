@@ -7,7 +7,7 @@
 - `fixture_id`
 - `normalized.finish_reason` (`tool_calls`, `stop`, or `length`)
 - `normalized.tool` (a tool name, or null)
-- `normalized.assessment` (any subset of the shared assessment fields)
+- `normalized.assessment` (any subset of the shared assessment fields, including `partner_in_view` and `wearer_hands_visible` when the model sent them)
 - `normalized.extension_reason` (optional)
 - `raw_completion` (null on the hand-written tapes; the recording client stores the HTTP body here)
 - `request` (optional; omitted by the original tapes). The recording client writes a fingerprint, keyframe ids, ages, and byte counts. It does not write JPEG bytes. `ReplayModelClient` matches on `request.fingerprint` and returns that verdict every time. Tapes without `request` stay on `RecordedModelClient`, which plays them in order.

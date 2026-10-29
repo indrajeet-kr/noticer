@@ -72,13 +72,16 @@ public struct SessionView: Equatable, Sendable {
 /// Frame gate snapshot in, model call out, cue spoken.
 ///
 /// The caller pulls frames from a `FrameSource` (replay or DAT) and runs the
-/// Vision gate, then calls `ingest`. This type does not reimplement mastery
+/// signal gate, then calls `ingest`. This type does not reimplement mastery
 /// or the chat-completions client. `NeedEngine` decides. `HardCapGate` is
 /// asked with `EngineTuning.headStartExtensionStepSeconds` (15 s) so an
 /// extension grant uses the same step the engine applies.
 ///
-/// The engine stays the timer. A gate rejection is recorded on the step and
-/// does not rewrite the verdict.
+/// One model call is in flight at a time. Another `ingest` or `tick` updates
+/// the engine and waits; it does not start a second call. The in-flight call
+/// is abandoned at `EngineTuning.inFlightStaleSeconds` so the next tick can
+/// proceed. The engine stays the timer. A gate rejection is recorded on the
+/// step and does not rewrite the verdict.
 public actor SessionPipeline {
     public nonisolated let extensionStepSeconds: TimeInterval
 
@@ -89,6 +92,7 @@ public actor SessionPipeline {
     private var engine: NeedEngine<SessionClock>
     private var spokenCueIDs: Set<String> = []
     private var failedCallID: String?
+    private var modelInFlight = false
 
     public init(
         clock: SessionClock,
@@ -137,22 +141,35 @@ public actor SessionPipeline {
     }
 
     private func fulfill() async throws -> PipelineStep {
+        if modelInFlight {
+            let (spoken, speechError) = try await speakNewCues()
+            return PipelineStep(spoken: spoken, decisions: [], speechError: speechError)
+        }
         var decisions: [ToolHandlerResult] = []
         var modelError: String?
         while let call = engine.pendingModelCall {
             if failedCallID == call.id {
                 break
             }
+            modelInFlight = true
             let verdict: ModelVerdict
             do {
-                verdict = try await model.complete(call.request)
+                verdict = try await completeOne(call)
             } catch is CancellationError {
+                modelInFlight = false
                 throw CancellationError()
+            } catch is ModelCallTimeout {
+                modelInFlight = false
+                engine.abandonInFlightCall()
+                modelError = "The model call timed out. The next tick can start another."
+                break
             } catch {
+                modelInFlight = false
                 failedCallID = call.id
                 modelError = String(describing: error)
                 break
             }
+            modelInFlight = false
             failedCallID = nil
             let decision = caps.decide(
                 verdict: verdict,
@@ -169,6 +186,28 @@ public actor SessionPipeline {
             modelError: modelError,
             speechError: speechError
         )
+    }
+
+    /// Races the model call against the engine's in-flight stale window.
+    /// The loser is cancelled, so a timed-out call is not still running when the next one starts.
+    private func completeOne(_ call: PendingModelCall) async throws -> ModelVerdict {
+        let client = model
+        let request = call.request
+        return try await withThrowingTaskGroup(of: ModelVerdict.self) { group in
+            group.addTask {
+                try await client.complete(request)
+            }
+            group.addTask {
+                let nanoseconds = UInt64(EngineTuning.inFlightStaleSeconds * 1_000_000_000)
+                try await Task.sleep(nanoseconds: nanoseconds)
+                throw ModelCallTimeout()
+            }
+            guard let verdict = try await group.next() else {
+                throw CancellationError()
+            }
+            group.cancelAll()
+            return verdict
+        }
     }
 
     private func capSession() -> CapSession {
@@ -194,6 +233,7 @@ public actor SessionPipeline {
         var fresh: [Cue] = []
         var speechError: String?
         for cue in engine.cues where !spokenCueIDs.contains(cue.id) {
+            spokenCueIDs.insert(cue.id)
             do {
                 try await speaker.speak(cue)
             } catch is CancellationError {
@@ -201,9 +241,10 @@ public actor SessionPipeline {
             } catch {
                 speechError = String(describing: error)
             }
-            spokenCueIDs.insert(cue.id)
             fresh.append(cue)
         }
         return (fresh, speechError)
     }
 }
+
+private struct ModelCallTimeout: Error, Sendable {}

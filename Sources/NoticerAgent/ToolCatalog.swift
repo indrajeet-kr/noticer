@@ -186,6 +186,8 @@ private func assessmentProperties() -> [String: JSONValue] {
         AssessmentField.sustainedAcrossStrip: jsonBool(),
         AssessmentField.partnerStateEvidence: jsonStringArray(),
         AssessmentField.wearerHandsOccupied: jsonBool(),
+        AssessmentField.partnerInView: jsonBool(),
+        AssessmentField.wearerHandsVisible: jsonBool(),
         AssessmentField.resolution: jsonStringEnum(Resolution.recognized.map(\.rawValue)),
         AssessmentField.actionCode: jsonString(),
         AssessmentField.confidence: jsonNumber(),

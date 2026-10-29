@@ -211,6 +211,7 @@ private actor DATEngine {
         guard acceptingFrames, running, !finished else {
             return
         }
+        // One queued frame. A slow model call must not accumulate JPEGs.
         if let waiter {
             self.waiter = nil
             waiter.resume(returning: frame)
@@ -389,7 +390,10 @@ private actor DATEngine {
             Task { await self?.handleStreamState(state, generation: generation) }
         }
         let frameToken = stream.videoFramePublisher.listen { [weak self] frame in
-            guard let cameraFrame = DATFrames.cameraFrame(from: frame) else {
+            let cameraFrame: CameraFrame? = autoreleasepool {
+                DATFrames.cameraFrame(from: frame)
+            }
+            guard let cameraFrame else {
                 return
             }
             Task { await self?.yield(cameraFrame) }
@@ -612,10 +616,14 @@ private enum StartRace {
 }
 
 private enum DATFrames {
+    /// Reused so a 30 minute session does not build a new context per frame.
+    private static let colorContext = CIContext(options: [.cacheIntermediates: false])
+
     /// TODO(verify): `VideoFrame.makeUIImage()` on a `.raw` frame is upright and non-nil.
     /// The sample buffer path is only a fallback when that image is missing.
     /// UIImage conversion runs on the main thread so it still compiles if UIKit
     /// treats image drawing as main-actor work.
+    /// The JPEG is downsampled in memory. It is not written to disk.
     static func cameraFrame(from frame: VideoFrame) -> CameraFrame? {
         if Thread.isMainThread {
             return MainActor.assumeIsolated {
@@ -631,31 +639,41 @@ private enum DATFrames {
 
     @MainActor
     private static func convert(_ frame: VideoFrame) -> CameraFrame? {
-        if let image = frame.makeUIImage(), let jpeg = FrameJPEG.data(from: image) {
-            let width = Int((image.size.width * image.scale).rounded())
-            let height = Int((image.size.height * image.scale).rounded())
+        autoreleasepool {
+            if let image = frame.makeUIImage(), let jpeg = FrameJPEG.data(from: image) {
+                let pixelWidth = Int((image.size.width * image.scale).rounded())
+                let pixelHeight = Int((image.size.height * image.scale).rounded())
+                let longest = max(pixelWidth, pixelHeight)
+                let scale = longest > FrameJPEG.maxEdge ? Double(FrameJPEG.maxEdge) / Double(longest) : 1
+                return CameraFrame(
+                    capturedAt: Date(),
+                    jpegData: jpeg,
+                    width: max(1, Int((Double(pixelWidth) * scale).rounded())),
+                    height: max(1, Int((Double(pixelHeight) * scale).rounded()))
+                )
+            }
+            guard let pixel = CMSampleBufferGetImageBuffer(frame.sampleBuffer) else {
+                return nil
+            }
+            let image = CIImage(cvPixelBuffer: pixel)
+            let longest = max(image.extent.width, image.extent.height)
+            let scaled: CIImage
+            if longest > CGFloat(FrameJPEG.maxEdge), longest > 0 {
+                let factor = CGFloat(FrameJPEG.maxEdge) / longest
+                scaled = image.transformed(by: CGAffineTransform(scaleX: factor, y: factor))
+            } else {
+                scaled = image
+            }
+            guard let rendered = colorContext.createCGImage(scaled, from: scaled.extent),
+                  let jpeg = FrameJPEG.data(from: rendered) else {
+                return nil
+            }
             return CameraFrame(
                 capturedAt: Date(),
                 jpegData: jpeg,
-                width: max(width, 1),
-                height: max(height, 1)
+                width: rendered.width,
+                height: rendered.height
             )
         }
-        guard let pixel = CMSampleBufferGetImageBuffer(frame.sampleBuffer) else {
-            return nil
-        }
-        let image = CIImage(cvPixelBuffer: pixel)
-        guard let jpeg = CIContext().jpegRepresentation(
-            of: image,
-            colorSpace: CGColorSpaceCreateDeviceRGB()
-        ) else {
-            return nil
-        }
-        return CameraFrame(
-            capturedAt: Date(),
-            jpegData: jpeg,
-            width: CVPixelBufferGetWidth(pixel),
-            height: CVPixelBufferGetHeight(pixel)
-        )
     }
 }

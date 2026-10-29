@@ -113,6 +113,9 @@ final class LiveModelClientTests: XCTestCase {
             XCTAssertTrue(DeveloperPrompt.text.contains(name.rawValue))
         }
         XCTAssertTrue(DeveloperPrompt.text.contains("resolved_by_partner"))
+        XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.partnerInView))
+        XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.wearerHandsVisible))
+        XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.wearerHandsOccupied))
     }
 
     func testUnsetMaxTokensIsOmittedAndLowCapIsRejectedLocally() async {

@@ -6,6 +6,8 @@ public enum AssessmentField {
     public static let sustainedAcrossStrip = "sustained_across_strip"
     public static let partnerStateEvidence = "partner_state_evidence"
     public static let wearerHandsOccupied = "wearer_hands_occupied"
+    public static let partnerInView = "partner_in_view"
+    public static let wearerHandsVisible = "wearer_hands_visible"
     public static let resolution = "resolution"
     public static let actionCode = "action_code"
     public static let confidence = "confidence"
@@ -15,6 +17,8 @@ public enum AssessmentField {
         sustainedAcrossStrip,
         partnerStateEvidence,
         wearerHandsOccupied,
+        partnerInView,
+        wearerHandsVisible,
         resolution,
         actionCode,
         confidence,
@@ -56,6 +60,11 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
     public var sustainedAcrossStrip: Bool?
     public var partnerStateEvidence: [String]?
     public var wearerHandsOccupied: Bool?
+    /// Partner visible in the strip. The phone used to read this from an on-device
+    /// person detector. Muse Spark sets it now. Nil means the model did not say.
+    public var partnerInView: Bool?
+    /// Wearer's own hands in frame. Busy versus free is `wearerHandsOccupied`.
+    public var wearerHandsVisible: Bool?
     public var resolution: Resolution?
     public var actionCode: String?
     public var confidence: Double?
@@ -65,6 +74,8 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         sustainedAcrossStrip: Bool? = nil,
         partnerStateEvidence: [String]? = nil,
         wearerHandsOccupied: Bool? = nil,
+        partnerInView: Bool? = nil,
+        wearerHandsVisible: Bool? = nil,
         resolution: Resolution? = nil,
         actionCode: String? = nil,
         confidence: Double? = nil
@@ -73,6 +84,8 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         self.sustainedAcrossStrip = sustainedAcrossStrip
         self.partnerStateEvidence = partnerStateEvidence
         self.wearerHandsOccupied = wearerHandsOccupied
+        self.partnerInView = partnerInView
+        self.wearerHandsVisible = wearerHandsVisible
         self.resolution = resolution
         self.actionCode = actionCode
         self.confidence = confidence
@@ -83,6 +96,8 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         case sustainedAcrossStrip = "sustained_across_strip"
         case partnerStateEvidence = "partner_state_evidence"
         case wearerHandsOccupied = "wearer_hands_occupied"
+        case partnerInView = "partner_in_view"
+        case wearerHandsVisible = "wearer_hands_visible"
         case resolution
         case actionCode = "action_code"
         case confidence

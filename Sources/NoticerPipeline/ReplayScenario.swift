@@ -12,7 +12,7 @@ public enum ScenarioError: Error, Equatable, CustomStringConvertible {
     public var description: String {
         switch self {
         case .badPeople(let name):
-            return "Scenario people preset \"\(name)\" is not one of \(ScriptedVisionGate.knownPresets.joined(separator: ", "))."
+            return "Scenario people preset \"\(name)\" is not one of \(ScriptedSignalGate.knownPresets.joined(separator: ", "))."
         case .badTiming(let message):
             return message
         case .badRepeat:
@@ -101,7 +101,7 @@ public struct ScenarioExpectation: Codable, Sendable, Equatable {
     }
 }
 
-/// A synthetic session: a keyframe clock, a scripted vision preset, and recorded responses.
+/// A synthetic session: a keyframe clock, a scripted signal-gate preset, and recorded responses.
 public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
     public var scenarioID: String
     public var summary: String
@@ -140,7 +140,7 @@ public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
                 "\(scenarioID) needs sample_every > 0 and until between that step and the session cap."
             )
         }
-        guard ScriptedVisionGate.knownPresets.contains(people) else {
+        guard ScriptedSignalGate.knownPresets.contains(people) else {
             throw ScenarioError.badPeople(people)
         }
         guard !needs.isEmpty, !responses.isEmpty else {

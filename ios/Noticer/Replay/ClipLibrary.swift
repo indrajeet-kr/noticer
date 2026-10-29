@@ -114,15 +114,19 @@ enum ClipLibrary {
             let sample = CMTime(seconds: min(time, seconds - 0.001), preferredTimescale: 600)
             do {
                 let (image, _) = try await generator.image(at: sample)
-                if let jpeg = FrameJPEG.data(from: image) {
-                    frames.append(
-                        CameraFrame(
-                            capturedAt: anchor.addingTimeInterval(time),
-                            jpegData: jpeg,
-                            width: image.width,
-                            height: image.height
-                        )
+                let stored: CameraFrame? = autoreleasepool {
+                    guard let jpeg = FrameJPEG.data(from: image) else { return nil }
+                    let longest = max(image.width, image.height)
+                    let scale = longest > FrameJPEG.maxEdge ? Double(FrameJPEG.maxEdge) / Double(longest) : 1
+                    return CameraFrame(
+                        capturedAt: anchor.addingTimeInterval(time),
+                        jpegData: jpeg,
+                        width: max(1, Int((Double(image.width) * scale).rounded())),
+                        height: max(1, Int((Double(image.height) * scale).rounded()))
                     )
+                }
+                if let stored {
+                    frames.append(stored)
                 }
             } catch {
                 // One bad timestamp should not drop the rest of the clip.

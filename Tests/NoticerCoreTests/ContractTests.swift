@@ -122,6 +122,8 @@ final class ContractTests: XCTestCase {
             sustainedAcrossStrip: true,
             partnerStateEvidence: ["eating_one_handed"],
             wearerHandsOccupied: false,
+            partnerInView: true,
+            wearerHandsVisible: false,
             resolution: .unknown,
             actionCode: ActionCodeExamples.waterGlassPresent,
             confidence: 0.7

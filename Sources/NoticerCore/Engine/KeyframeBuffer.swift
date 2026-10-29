@@ -1,12 +1,14 @@
 import Foundation
 
-/// Glance keyframes. One sharp frame per glance, and one every 4 s while she
-/// stays in view. History older than 60 s is dropped.
+/// Glance keyframes. One sharp frame per glance, and one every 4 s while the
+/// scene stays active. History older than 60 s is dropped.
 ///
-/// A glance starts when a person is present after at least 2 s absent.
-/// Inside a glance, a sharper frame (higher Laplacian variance) replaces the
-/// current slot until the next 4 s boundary. Callers pass `sharpness`; this
-/// type does not decode JPEG.
+/// A glance starts after at least 2 s without an admitted frame. A person rect
+/// from replay or a test counts, and so does `sceneActive` from the signal gate.
+/// Only a person rect updates `lastPersonSeenAt`. Spark's `partner_in_view`
+/// does that later, through `notePersonSeen`. Inside a glance, a sharper frame
+/// (higher Laplacian variance) replaces the current slot until the next 4 s
+/// boundary. Callers pass `sharpness`; this type does not decode JPEG.
 struct KeyframeBuffer {
     private struct Slot {
         var id: String
@@ -19,7 +21,7 @@ struct KeyframeBuffer {
 
     private var committed: [Slot] = []
     private var openSlot: Slot?
-    private var lastPersonAt: Date?
+    private var lastActiveAt: Date?
     private var episodeSerial = 0
     private var keyframeSerial = 0
     /// Bumps when a new slot opens. A sharper replacement does not.
@@ -29,15 +31,17 @@ struct KeyframeBuffer {
     mutating func ingest(
         frame: CameraFrame,
         personPresent: Bool,
+        sceneActive: Bool = false,
         sharpness: Double?,
         now: Date,
         recordKeyframe: Bool
     ) {
         let time = frame.capturedAt
-        if personPresent {
+        let active = personPresent || sceneActive
+        if active {
             let newEpisode: Bool
-            if let lastPersonAt {
-                newEpisode = time.timeIntervalSince(lastPersonAt) >= SessionLimits.glanceAbsentSeconds
+            if let lastActiveAt {
+                newEpisode = time.timeIntervalSince(lastActiveAt) >= SessionLimits.glanceAbsentSeconds
             } else {
                 newEpisode = true
             }
@@ -56,13 +60,24 @@ struct KeyframeBuffer {
                     keepSharper(frame: frame, sharpness: sharpness, time: time)
                 }
             }
-            lastPersonAt = time
-            lastPersonSeenAt = time
-        } else if let lastPersonAt,
-                  time.timeIntervalSince(lastPersonAt) >= SessionLimits.glanceAbsentSeconds {
+            lastActiveAt = time
+            if personPresent {
+                lastPersonSeenAt = time
+            }
+        } else if let lastActiveAt,
+                  time.timeIntervalSince(lastActiveAt) >= SessionLimits.glanceAbsentSeconds {
             freezeOpenSlot()
         }
         expire(now: max(now, time))
+    }
+
+    /// Spark reported the partner in view, or a sustained latch said she was there.
+    /// Scene motion alone does not call this. The 45 s close keeps using this clock.
+    mutating func notePersonSeen(at time: Date) {
+        if let lastPersonSeenAt, time < lastPersonSeenAt {
+            return
+        }
+        lastPersonSeenAt = time
     }
 
     mutating func expire(now: Date) {
