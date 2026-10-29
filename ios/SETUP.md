@@ -121,10 +121,11 @@ Other keys, and where they come from:
 | `NSBluetoothAlwaysUsageDescription`, `UIBackgroundModes` `bluetooth-central` | Required for Bluetooth LE in the iOS integration guide. |
 | `bluetooth-peripheral`, `NSBluetoothPeripheralUsageDescription` | Present in the CameraAccess sample and the GitHub getting-started skill. |
 | `external-accessory`, `UISupportedExternalAccessoryProtocols` `com.meta.ar.wearable` | The getting-started skill says Bluetooth Classic camera streaming checks these. The integration page also says the SDK uses External Accessory. |
+| `audio` | A whisper can finish through the glasses speaker if the phone is locked or in a pocket. This is playback, not the glasses microphone. |
 | `NSLocalNetworkUsageDescription`, `NSBonjourServices` `_bonjour._tcp` | Wi-Fi streaming in the integration guide. |
 | `NSCameraUsageDescription` | The integration guide includes a camera usage string. Noticer does not use the iPhone camera as the session camera. |
 
-There is **no** `NSMicrophoneUsageDescription` and **no** `audio` background mode. The sample app has both because it records the glasses microphone. Noticer does not.
+There is **no** `NSMicrophoneUsageDescription`. `UIBackgroundModes` does include `audio`, alongside `bluetooth-central`, `bluetooth-peripheral`, and `external-accessory`, so `AVSpeechSynthesizer` can finish a whisper while the phone is locked. The sample app adds `audio` because it records the glasses microphone. Noticer does not record. The camera stream can still pause when the app leaves the foreground; `audio` does not keep that stream alive.
 
 Sources:
 
@@ -146,7 +147,7 @@ The screen is dark and stays awake only while a session is running and the app i
 
 **API key.** Save it with **Save to Keychain**. It is a generic password in the Keychain, not in the repo and not in logs. A saved key is used before `META_API_KEY` in the process environment. Replay does not need a key. Live mode, with a key, calls Muse Spark. With no key it does not open a connection.
 
-**Pipeline.** Each frame goes through the Vision person and hand gate, then `SessionPipeline`. The pipeline asks `NeedEngine` to pick keyframes, calls `ModelClient`, and hands the verdict back for the head start, mastery, and the cue. A scenario uses a scripted gate instead of Vision, because the fixture already says who is in frame. The head-start extension step is 15 seconds, passed into `HardCapGate`.
+**Pipeline.** Each frame is turned into a JPEG of about 512 px on the long side at quality 0.65, held in memory, and run through the signal gate: downsampled luma motion (mean absolute difference) and sharpness (Laplacian variance). That gate admits keyframes. It does not detect people or hands. When nothing is open it samples slowly (about every 20 seconds, plus a motion jump). When a need is open it admits changes about every 4 seconds, and the engine still heartbeats every 8 seconds. One Muse Spark call is in flight at a time; the next tick waits until that call returns or hits the 20 second in-flight limit. Spark's tool arguments include `partner_in_view`, `wearer_hands_visible`, and `wearer_hands_occupied`. `SessionPipeline` hands the verdict to `NeedEngine` for the head start, mastery, and the cue. A scenario uses the scripted signal gate and needs no API key, because the fixture already says who is in frame. The head-start extension step is 15 seconds, passed into `HardCapGate`. Head start, mastery, and the caps are unchanged.
 
 **Cues.** `GlassesCueSpeaker` uses `AVSpeechSynthesizer` on a `.playback` / `.spokenAudio` / `.duckOthers` session. **Dismiss cue** stops speech. The glasses microphone is never opened.
 
@@ -156,4 +157,4 @@ Gen 3 notes from Meta staff: <https://github.com/facebook/meta-wearables-dat-ios
 
 ## 10. Checks that still need the phone
 
-Search the iOS sources for `TODO(verify)`. They are the spots this machine could not compile or run: the iOS error enum versus `CAPABILITY_DENIED`, transport keys, Hotspot, JPEG quality, the wearer-hand line, low versus medium resolution, `makeUIImage()` on a raw frame, the fresh-camera restart on hardware, and whether playback stays on A2DP without opening HFP.
+Search the iOS sources for `TODO(verify)`. They are the spots this machine could not compile or run: the iOS error enum versus `CAPABILITY_DENIED`, transport keys, Hotspot, low versus medium resolution, `makeUIImage()` on a raw frame, the fresh-camera restart on hardware, and whether playback stays on A2DP without opening HFP. JPEG upload size is 512 px at quality 0.65. Partner in view and wearer hands come from Muse Spark, not from an on-device detector. `MWDAT > Analytics > OptOut` and `MWDAT > CrashReporting > OptOut` are already `true`. The SDK 1.0.1 README documents those Info.plist keys and no other analytics switch.

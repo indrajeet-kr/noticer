@@ -151,7 +151,7 @@ final class EndToEndReplayTests: XCTestCase {
             width: 8,
             height: 8
         )
-        let gate = ScriptedVisionGate.snapshot(at: at, people: ScriptedVisionGate.mom, handsRising: false)
+        let gate = ScriptedSignalGate.snapshot(at: at, people: ScriptedSignalGate.mom, handsRising: false)
         return try await pipeline.ingest(frame: frame, gate: gate)
     }
 

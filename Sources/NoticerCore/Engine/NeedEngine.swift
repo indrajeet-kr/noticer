@@ -8,8 +8,10 @@ import Foundation
 /// `capturedAt` should match `clock.now()` at ingest; spacing uses the frame
 /// time and every deadline uses the clock.
 ///
-/// The caller serializes access. The engine does not talk to the network,
-/// Vision, or the speaker. It records cues; something else plays them.
+/// The caller serializes access. The engine does not talk to the network
+/// or the speaker. It records cues; something else plays them. Person rects
+/// on a gate snapshot are caller input. Live frames admit keyframes with
+/// `sceneActive`. Partner in view comes back on the model assessment.
 public struct NeedEngine<TimeSource: Clock> {
     private struct ChoreMark: Equatable {
         var id: String
@@ -200,14 +202,19 @@ public struct NeedEngine<TimeSource: Clock> {
         buffer.ingest(
             frame: frame,
             personPresent: personPresent,
-            sharpness: sharpness,
+            sceneActive: gate.sceneActive,
+            sharpness: sharpness ?? gate.sharpness,
             now: clock.now(),
             recordKeyframe: !visitor.currentFrameQualifies
         )
-        if gate.handGateRisingEdge {
+        if gate.handGateRisingEdge || gate.activityEdge {
             handEdgePending = true
         }
-        refreshEvidenceFromKeyframes()
+        // Evidence age follows a person rect or, later, Spark's partner_in_view.
+        // A motion keyframe alone does not refresh it.
+        if personPresent {
+            refreshEvidenceFromKeyframes()
+        }
         evaluate()
     }
 
@@ -227,6 +234,7 @@ public struct NeedEngine<TimeSource: Clock> {
         var verdict = verdict
         verdict.assessment = sanitize(verdict.assessment)
         let assessment = verdict.assessment
+        notePartner(assessment, tool: verdict.tool, now: now)
 
         // An omitted need id can apply to the only open need. An unknown id
         // was dropped in sanitize and must not spill onto that need.
@@ -515,6 +523,14 @@ public struct NeedEngine<TimeSource: Clock> {
         )
     }
 
+    /// The transport gave up on the in-flight call. The next tick may start another.
+    /// A reply that arrives later for this id is dropped.
+    public mutating func abandonInFlightCall() {
+        guard let pendingModelCall else { return }
+        staleCallIDs.insert(pendingModelCall.id)
+        self.pendingModelCall = nil
+    }
+
     private mutating func retireStaleInFlight(now: Date) {
         guard let pendingModelCall else { return }
         guard now.timeIntervalSince(pendingModelCall.issuedAt) >= EngineTuning.inFlightStaleSeconds else {
@@ -710,11 +726,29 @@ public struct NeedEngine<TimeSource: Clock> {
 
     // MARK: - Bookkeeping
 
+    private mutating func notePartner(_ assessment: SceneAssessment, tool: ToolName, now: Date) {
+        if assessment.partnerInView == true {
+            buffer.notePersonSeen(at: now)
+            refreshEvidence(at: now)
+            return
+        }
+        // A sustained latch is itself a look at her, when the model did not say she was absent.
+        if tool == .latchNeedHypothesis,
+           assessment.sustainedAcrossStrip == true,
+           assessment.partnerInView != false {
+            buffer.notePersonSeen(at: now)
+        }
+    }
+
+    private mutating func refreshEvidence(at now: Date) {
+        for index in tracked.indices where now > tracked[index].evidenceAt {
+            tracked[index].evidenceAt = now
+        }
+    }
+
     private mutating func refreshEvidenceFromKeyframes() {
         guard let newest = buffer.keyframes(now: clock.now()).map(\.capturedAt).max() else { return }
-        for index in tracked.indices where newest > tracked[index].evidenceAt {
-            tracked[index].evidenceAt = newest
-        }
+        refreshEvidence(at: newest)
     }
 
     private func indexOfOpen(_ id: String) -> Int? {

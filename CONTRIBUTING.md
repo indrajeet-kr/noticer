@@ -10,7 +10,7 @@ Edit your track's folder. Leave the other tracks' folders alone so the three bra
 
 | Track | Write here | Do not take |
 | --- | --- | --- |
-| Core logic | `Sources/NoticerCore/Engine/` and new tests in `Tests/NoticerCoreTests/` | HTTP, tool JSON, DAT, Vision, speech, SwiftUI |
+| Core logic | `Sources/NoticerCore/Engine/` and new tests in `Tests/NoticerCoreTests/` | HTTP, tool JSON, DAT, on-device ML, speech, SwiftUI |
 | Agent layer | `Sources/NoticerAgent/` (new files), `fixtures/model-responses/`, new tests in `Tests/NoticerAgentTests/` | Mastery math, the visitor count, DAT, speech |
 | iOS app | `ios/`, `fixtures/clips/` | The need engine and the chat-completions parser |
 | Integration | `Sources/NoticerPipeline/`, `fixtures/scenarios/`, `Tests/NoticerPipelineTests/`, and the glue that calls them from `ios/` | Rewriting `NeedEngine` or the chat-completions client. Call them. |
@@ -33,7 +33,7 @@ Add new types in your own folder instead of widening a shared file for a local n
 - No glance latch, mastery update, `caught_himself` confirmation, stale-need close, or visitor pause.
 - No HTTP in Step 0. `MuseSparkModelClient(apiKey:)` with no transport still throws `notImplemented` after it sees a key, and the Step 0 test locks that. `live(apiKey:)` and `fromEnvironment()` perform chat completions. That HTTP client, the cap gate, the recorder, and `ReplayModelClient` live in `Sources/NoticerAgent/`.
 - `ModelBackend.baseten` throws `backendOutOfScope`. Do not add a Baseten request in passing.
-- No DAT import, no Vision request, no `AVSpeechSynthesizer`.
+- No DAT import, no on-device ML (no Vision request, no Core ML model), no `AVSpeechSynthesizer`.
 - `MasteryState.phase` only classifies the stored score and self-notice streak. Two misses do not un-retire on their own.
 
 ## Contract ambiguities
@@ -60,13 +60,13 @@ These are open. Do not pick a private answer in one track.
 
 10. **Check-in wording.** `CueKind.checkIn` and `Need.allowsCheckIn` exist. The phrase to speak is not specified.
 
-11. **Visitor measurements.** `FrameGateSnapshot` is normalized rects plus a wearer-hands flag. Adult versus baby thresholds are not set. Person rects include a baby or a screen until a later rule says otherwise. The same-chore exception to the 45 second close has no type yet.
+11. **Visitor measurements.** `FrameGateSnapshot.people` is still normalized rects for replay and tests. The live gate leaves that list empty and sends motion and sharpness instead. Adult versus baby thresholds are not set. Person rects include a baby or a screen until a later rule says otherwise. The same-chore exception to the 45 second close has no type yet. Partner in view on a live session comes from Muse Spark's `partner_in_view`.
 
 12. **Keyframe bytes.** `Keyframe` holds JPEG bytes and `ageSeconds` (Δt behind the newest frame). It does not store a file path. Decoding `fixtures/clips` is iOS work. The core replay stub only yields frames it was given.
 
 13. **MWDAT Info.plist.** The nested `MWDAT` / `Analytics` / `OptOut` and `CrashReporting` / `OptOut` keys follow the PRD wording. Confirm them against the SDK README before linking it.
 
-14. **iOS version.** The XcodeGen spec targets iOS 18 so `Synchronization.Mutex` is available. The PRD does not name a version. Low versus medium DAT resolution, and a 512 px upload size, are also unset.
+14. **iOS version.** The XcodeGen spec targets iOS 18 so `Synchronization.Mutex` is available. The PRD does not name a version. Low versus medium DAT resolution is unset. Upload frames are 512 px on the long side at JPEG quality 0.65.
 
 15. **Replay file shape.** Cached responses are the normalized envelope in `fixtures/README.md`, plus an empty `raw_completion` for the real HTTP body. Confidence in the sample latch file is not a gate.
 

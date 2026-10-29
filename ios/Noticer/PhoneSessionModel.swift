@@ -31,7 +31,7 @@ struct ReplayOption: Identifiable, Hashable {
     }
 }
 
-/// Phone session. Frames go through the vision gate, then `SessionPipeline`.
+/// Phone session. Frames go through the signal gate, then `SessionPipeline`.
 @MainActor
 @Observable
 final class PhoneSessionModel {
@@ -61,7 +61,7 @@ final class PhoneSessionModel {
     private var liveSource: DATFrameSource?
     private var pipeline: SessionPipeline?
     private let speaker = GlassesCueSpeaker()
-    private let gate = PersonHandGate()
+    private let gate = SignalFrameGate()
     private var watching = false
 
     var replayOptions: [ReplayOption] {
@@ -354,7 +354,8 @@ final class PhoneSessionModel {
     }
 
     private func take(frame: CameraFrame, session: SessionPipeline, pace: Duration?) async throws {
-        let decision = await gate.evaluate(frame)
+        let needOpen = await session.view().openNeeds.isEmpty == false
+        let decision = await gate.evaluate(frame, needOpen: needOpen)
         framesSeen += 1
         gateLine = Self.describe(decision)
         if decision.passes {
@@ -423,10 +424,17 @@ final class PhoneSessionModel {
     }
 
     private static func describe(_ decision: GateDecision) -> String {
-        let hands = decision.snapshot.wearerHandsVisible ? "hands visible" : "hands not visible"
-        let rising = decision.snapshot.handGateRisingEdge ? ", hand rising" : ""
-        let decisionText = decision.passes ? "passed" : "held"
-        return "\(decision.snapshot.people.count) people, \(hands)\(rising), \(decisionText)"
+        let motion = decision.snapshot.motionScore.map { String(format: "%.3f", $0) } ?? "—"
+        let sharp = decision.snapshot.sharpness.map { String(format: "%.4f", $0) } ?? "—"
+        let decisionText: String
+        if decision.snapshot.activityEdge {
+            decisionText = "activity edge"
+        } else if decision.passes {
+            decisionText = "admitted"
+        } else {
+            decisionText = "held"
+        }
+        return "motion \(motion), sharpness \(sharp), \(decisionText)"
     }
 
     private static func describe(_ event: EngineEvent) -> String {

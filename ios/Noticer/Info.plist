@@ -65,6 +65,7 @@
 		<string>bluetooth-central</string>
 		<string>bluetooth-peripheral</string>
 		<string>external-accessory</string>
+		<string>audio</string>
 	</array>
 	<key>UISupportedExternalAccessoryProtocols</key>
 	<array>
@@ -76,6 +77,7 @@
 		bluetooth-peripheral and external-accessory / com.meta.ar.wearable.
 		Hotspot Configuration is documented for Wi-Fi streaming and is omitted so a
 		free Personal Team can sign. There is no microphone usage string.
+		`audio` lets a whisper finish if the phone locks. It does not open the mic.
 		TODO(verify): ClientToken 0. The iOS skill says Developer Mode may use MetaAppID 0.
 		Android says both ids may be 0. Confirm ClientToken 0 on iOS 1.0.1.
 	-->

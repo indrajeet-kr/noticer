@@ -1,23 +1,31 @@
 import Foundation
 import NoticerCore
 
-/// Stand-in for the on-device Vision gate.
+/// Stand-in for the on-phone signal gate during replay.
 ///
-/// Linux replay has no Vision. A fixture says who is in the frame, and this
-/// builds the same `FrameGateSnapshot` the phone gate would. The iOS app uses
-/// `PersonHandGate` instead and passes that snapshot into the pipeline.
-public enum ScriptedVisionGate {
+/// A fixture says who is in the frame. This builds the same `FrameGateSnapshot`
+/// the phone would hand the engine: person rects for the visitor rule, and
+/// `sceneActive` when the preset is not empty so a keyframe can be admitted
+/// without a live luma plane. The iOS app uses `SignalFrameGate` on real pixels
+/// and leaves `people` empty. Partner in view and hands come back from Muse Spark.
+public enum ScriptedSignalGate {
     public static let mom = "mom"
     public static let none = "none"
     public static let momAndBaby = "mom-and-baby"
     public static let knownPresets = [mom, none, momAndBaby]
 
     public static func snapshot(at time: Date, people preset: String, handsRising: Bool) -> FrameGateSnapshot {
-        FrameGateSnapshot(
+        let people = people(for: preset)
+        let active = !people.isEmpty
+        return FrameGateSnapshot(
             capturedAt: time,
-            people: people(for: preset),
+            people: people,
             wearerHandsVisible: handsRising,
-            handGateRisingEdge: handsRising
+            handGateRisingEdge: handsRising,
+            motionScore: active ? 0.2 : 0,
+            sharpness: active ? 0.01 : 0,
+            sceneActive: active,
+            activityEdge: false
         )
     }
 

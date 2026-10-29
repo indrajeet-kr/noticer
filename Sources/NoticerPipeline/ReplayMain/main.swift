@@ -15,7 +15,7 @@ enum ReplayCommand {
     Noticer replay. No API key and no glasses.
 
     Plays fixtures/scenarios through the session pipeline:
-    replay frames, a scripted vision gate, the need engine, recorded model
+    replay frames, a scripted signal gate, the need engine, recorded model
     responses, then the cue speaker. The clock jumps. A whisper is a pass
     only after the head start. A self-catch raises mastery and stays quiet.
 
