@@ -58,6 +58,27 @@ final class PhoneSessionModel {
     /// Shorter waits for a test or a demo. The running session keeps the profile it started with.
     var quickTiming = UserDefaults.standard.bool(forKey: PhoneSessionModel.quickTimingKey)
 
+    // MARK: - Live display state (additive; the engine never reads these)
+
+    /// Timing the running session started with, for display math.
+    var runTiming = TimingProfile.standard
+    var liveOpenNeedID: String?
+    var liveHeadStartRemaining: TimeInterval?
+    var liveHeadStartTotal: TimeInterval?
+    var liveLastCueText = ""
+    var liveLastCueIsChime = false
+    var liveLastCueAt: Date?
+    var liveNoticedAt: Date?
+    var liveSelfNoticeAt: Date?
+    var liveSelfNoticeNeedID: String?
+    /// Ids the engine dropped as unknown, oldest first. Shows what the model
+    /// actually sent when a turn names an id that isn't on mom's list.
+    var liveDroppedNeedIDs: [String] = []
+    /// Tonight's wins for the Wins tab. Saved on the phone only.
+    var moments: [SessionMoment] = SessionMomentsStore.loadTonight()
+    /// Per-need mastery samples, oldest first, capped. For the Learning sparklines.
+    var masterySamples: [String: [Double]] = [:]
+
     private static let quickTimingKey = "noticer.timing.quick"
 
     private var clips: [URL] = []
@@ -69,6 +90,8 @@ final class PhoneSessionModel {
     private let gate = SignalFrameGate()
     private var watching = false
     private var activeTiming = TimingProfile.standard
+    private var seenCueIDs: Set<String> = []
+    private var seenLogCount = 0
 
     var replayOptions: [ReplayOption] {
         let scenarioOptions = scenarios.map { ReplayOption(kind: .scenario, name: $0.scenarioID) }
@@ -178,6 +201,32 @@ final class PhoneSessionModel {
         NeedListStore.save(needs)
     }
 
+    /// Saves the authored list and, when a live or clip session is already
+    /// running, swaps that list into the engine. A scenario replay keeps its
+    /// own needs. Without this, "Looks right" updated the phone list and the
+    /// running session kept the list it started with.
+    func commitNeeds() {
+        let snapshot = needsForSession()
+        saveNeeds()
+        guard let pipeline, sessionUsesAuthoredNeeds else {
+            return
+        }
+        Task {
+            do {
+                try await pipeline.replaceNeeds(snapshot)
+            } catch {
+                self.runError = String(describing: error)
+            }
+        }
+    }
+
+    private var sessionUsesAuthoredNeeds: Bool {
+        if mode == .replay, selectedOption?.kind == .scenario {
+            return false
+        }
+        return true
+    }
+
     /// Turns a freshly added need's UUID into a slug from her words. Existing ids such as
     /// `take-baby` stay put. Called when she leaves the card, and again when a session starts.
     /// A row that was already removed is left alone.
@@ -248,6 +297,8 @@ final class PhoneSessionModel {
         headStartLine = "Head start not running"
         keepsScreenOn = true
         activeTiming = timing
+        runTiming = activeTiming
+        resetLiveState()
         phase = mode == .replay ? "Reading the replay" : "Starting glasses"
         loop = Task {
             await self.run()
@@ -261,6 +312,9 @@ final class PhoneSessionModel {
         loop = nil
         keepsScreenOn = false
         phase = "Idle"
+        resetLiveState()
+        saveNeeds()
+        SessionMomentsStore.save(moments)
         Task {
             await source?.stop()
         }
@@ -315,6 +369,8 @@ final class PhoneSessionModel {
         if !Task.isCancelled {
             phase = outcome
             loop = nil
+            saveNeeds()
+            SessionMomentsStore.save(moments)
         }
     }
 
@@ -422,23 +478,121 @@ final class PhoneSessionModel {
         }
     }
 
+    private func resetLiveState() {
+        liveOpenNeedID = nil
+        liveHeadStartRemaining = nil
+        liveHeadStartTotal = nil
+        liveLastCueText = ""
+        liveLastCueIsChime = false
+        liveLastCueAt = nil
+        liveNoticedAt = nil
+        liveSelfNoticeAt = nil
+        liveSelfNoticeNeedID = nil
+        liveDroppedNeedIDs = []
+        seenCueIDs = []
+        seenLogCount = 0
+    }
+
     private func apply(_ step: PipelineStep, _ view: SessionView) {
         masteryLine = view.masterySummary
         headStartLine = view.headStartSummary
         if let cue = step.spoken.last {
             cueLine = cue.kind == .chime ? "Chime" : cue.text
         }
+        applyLiveState(view)
         modelCalls = view.modelCalls
+        // Sticky: a step without a model turn keeps the last verdict line
+        // instead of burying it under a per-frame event describe.
         if let error = step.modelError {
             toolLine = error
         } else if let summary = step.modelSummary {
             toolLine = summary
-        } else if let event = view.log.last {
+        } else if toolLine == "No model turn yet", let event = view.log.last {
             toolLine = Self.describe(event)
         }
         if let speech = step.speechError {
             addNotice("Cue audio failed: \(speech)")
         }
+    }
+
+    /// Display-only mirror of the pipeline view. Writes the live display
+    /// state, tonight's wins, and the authored list's mastery. Never feeds
+    /// anything back into the session.
+    private func applyLiveState(_ view: SessionView) {
+        if let open = view.openNeeds.first {
+            if liveOpenNeedID != open.needID {
+                liveOpenNeedID = open.needID
+                liveNoticedAt = Date()
+            }
+            liveHeadStartRemaining = max(0, open.cueDeadline.timeIntervalSince(view.now))
+            liveHeadStartTotal = max(1, open.cueDeadline.timeIntervalSince(open.latchedAt))
+        } else {
+            liveOpenNeedID = nil
+            liveHeadStartRemaining = nil
+            liveHeadStartTotal = nil
+        }
+        for cue in view.cues where !seenCueIDs.contains(cue.id) {
+            seenCueIDs.insert(cue.id)
+            liveLastCueText = cue.kind == .chime ? "Chime" : cue.text
+            liveLastCueIsChime = cue.kind == .chime
+            liveLastCueAt = Date()
+        }
+        let fresh = Array(view.log.dropFirst(seenLogCount))
+        for event in fresh {
+            switch event.kind {
+            case .caughtHimself:
+                liveSelfNoticeAt = Date()
+                liveSelfNoticeNeedID = event.needID
+                if let needID = event.needID {
+                    moments.append(SessionMoment(
+                        at: Date(),
+                        needID: needID,
+                        kind: .selfNotice,
+                        text: Self.words(for: needID, in: view)
+                    ))
+                }
+            case .cueFired:
+                if let needID = event.needID {
+                    moments.append(SessionMoment(
+                        at: Date(),
+                        needID: needID,
+                        kind: .cued,
+                        text: Self.words(for: needID, in: view)
+                    ))
+                }
+            default:
+                break
+            }
+        }
+        for dropped in SessionTelemetry.droppedNeedIDs(from: fresh) {
+            if liveDroppedNeedIDs.last != dropped {
+                liveDroppedNeedIDs.append(dropped)
+            }
+        }
+        liveDroppedNeedIDs = Array(liveDroppedNeedIDs.suffix(8))
+        seenLogCount = view.log.count
+        if moments.count > 200 {
+            moments = Array(moments.suffix(200))
+        }
+        for need in view.needs {
+            guard let index = needs.firstIndex(where: { $0.id == need.id }) else {
+                continue
+            }
+            needs[index].mastery = need.mastery
+            var samples = masterySamples[need.id] ?? []
+            if samples.last != need.mastery.score {
+                samples.append(need.mastery.score)
+                masterySamples[need.id] = Array(samples.suffix(30))
+            }
+        }
+    }
+
+    private static func words(for needID: String, in view: SessionView) -> String {
+        if let need = view.needs.first(where: { $0.id == needID }),
+           !need.authorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return need.authorText
+        }
+        return needID
     }
 
     private func apply(_ status: DATLiveStatus) {

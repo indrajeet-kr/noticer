@@ -5,8 +5,10 @@ import Foundation
 /// `endpoint` may be the API root (`https://api.meta.ai/v1`) or the full
 /// chat-completions URL. `postURL()` sends the request to the full path.
 /// `reasoningEffort` defaults to `low`. `none` is rejected before any request.
-/// `maxTokens` defaults to 1024 because reasoning tokens count toward that cap.
-/// Pass nil to omit the field. A set value under `MuseSparkModelClient.minimumMaxTokens` is rejected.
+/// `maxTokens` is omitted by default. Reasoning tokens count toward `max_tokens`,
+/// and a 1024 cap was ending turns with `finish_reason: length` before the tool
+/// call finished. Pass nil to omit the field. A set value under
+/// `MuseSparkModelClient.minimumMaxTokens` is rejected.
 public struct MuseSparkConfiguration: Equatable, Sendable {
     public static let defaultReasoningEffort = "low"
     public static let allowedReasoningEfforts = ["minimal", "low", "medium", "high", "xhigh", "max"]
@@ -26,7 +28,7 @@ public struct MuseSparkConfiguration: Equatable, Sendable {
         endpoint: URL = MuseSparkModelClient.chatCompletionsURL,
         modelID: String = MuseSparkModelClient.modelID,
         reasoningEffort: String = MuseSparkConfiguration.defaultReasoningEffort,
-        maxTokens: Int? = MuseSparkModelClient.minimumMaxTokens,
+        maxTokens: Int? = nil,
         requestTimeout: TimeInterval = 60,
         maxAttempts: Int = 3,
         retryInitialDelay: TimeInterval = 0.5,

@@ -137,7 +137,7 @@ Flags and environment variables are listed by `swift run noticer-gate-g0 --help`
 | Endpoint | `https://api.meta.ai/v1` (a full `.../chat/completions` URL also works) |
 | Model | `muse-spark-1.3` |
 | `reasoning_effort` | `low` (`minimal`, `medium`, `high`, `xhigh`, `max` are allowed) |
-| `max_tokens` | `1024`, or `unset` to omit it |
+| `max_tokens` | omitted (`unset`). Set an integer of at least `1024` to cap the turn. Reasoning tokens count toward that cap |
 | Timeout | 60 seconds |
 | Retries | 3 attempts, backoff from 0.5s, capped at 8s. 429 and 5xx retry. 400 and `model_not_found` do not |
 | Call budget | 300 per `live()` / `fromEnvironment()` client |
