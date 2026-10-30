@@ -10,3 +10,7 @@ xcuserdata/
 .env
 .env.*
 *.pem
+
+# Session transcripts pulled off the phone. Source that writes them is fine.
+*.log
+SessionLogs/
