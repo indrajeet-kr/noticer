@@ -107,6 +107,7 @@ struct ContentView: View {
             Text(model.cueLine)
             Text(model.headStartLine)
             Text(model.masteryLine)
+            Text(model.timingLine)
             Text("A cue waits out the head start. Replay scenarios jump the clock, so you do not wait 90 seconds.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -122,6 +123,14 @@ struct ContentView: View {
                 }
             }
             .pickerStyle(.segmented)
+            .disabled(model.isRunning)
+            Toggle(
+                "Quick timing (testing and demo)",
+                isOn: Binding(
+                    get: { model.quickTiming },
+                    set: { model.setQuickTiming($0) }
+                )
+            )
             .disabled(model.isRunning)
             if model.mode == .replay {
                 if model.replayOptions.isEmpty {

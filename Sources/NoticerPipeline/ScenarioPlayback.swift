@@ -17,7 +17,8 @@ public struct ScenarioPlayback: Sendable {
     public init(
         scenario: ReplayScenario,
         speaker: any CueSpeaker,
-        origin: Date = ScenarioLibrary.origin
+        origin: Date = ScenarioLibrary.origin,
+        timing: TimingProfile = .standard
     ) throws {
         let clock = SessionClock.manual(startingAt: origin)
         let client = try ScriptedModelClient(responses: scenario.responses)
@@ -25,7 +26,8 @@ public struct ScenarioPlayback: Sendable {
             clock: clock,
             needs: scenario.needs,
             model: client,
-            speaker: speaker
+            speaker: speaker,
+            timing: timing
         )
         self.scenario = scenario
         self.clock = clock

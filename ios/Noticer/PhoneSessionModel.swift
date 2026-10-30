@@ -55,6 +55,10 @@ final class PhoneSessionModel {
     var configured = false
     var keyStatus = ModelKeyStore.statusLine()
     var sceneActive = true
+    /// Shorter waits for a test or a demo. The running session keeps the profile it started with.
+    var quickTiming = UserDefaults.standard.bool(forKey: PhoneSessionModel.quickTimingKey)
+
+    private static let quickTimingKey = "noticer.timing.quick"
 
     private var clips: [URL] = []
     private var scenarios: [ReplayScenario] = []
@@ -64,6 +68,7 @@ final class PhoneSessionModel {
     private let speaker = GlassesCueSpeaker()
     private let gate = SignalFrameGate()
     private var watching = false
+    private var activeTiming = TimingProfile.standard
 
     var replayOptions: [ReplayOption] {
         let scenarioOptions = scenarios.map { ReplayOption(kind: .scenario, name: $0.scenarioID) }
@@ -85,6 +90,20 @@ final class PhoneSessionModel {
 
     var isRunning: Bool {
         loop != nil
+    }
+
+    var timing: TimingProfile {
+        quickTiming ? .quick : .standard
+    }
+
+    var timingLine: String {
+        let profile = isRunning ? activeTiming : timing
+        return "Timing \(profile.name)"
+    }
+
+    func setQuickTiming(_ enabled: Bool) {
+        quickTiming = enabled
+        UserDefaults.standard.set(enabled, forKey: Self.quickTimingKey)
     }
 
     private var selectedOption: ReplayOption? {
@@ -234,6 +253,7 @@ final class PhoneSessionModel {
         masteryLine = "Mastery not running"
         headStartLine = "Head start not running"
         keepsScreenOn = true
+        activeTiming = timing
         phase = mode == .replay ? "Reading the replay" : "Starting glasses"
         loop = Task {
             await self.run()
@@ -314,7 +334,7 @@ final class PhoneSessionModel {
                 throw ScenarioBundleError.unreadable(option.name)
             }
             addNotice("Replay clock. No API key. The scenario uses its own need list.")
-            let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker)
+            let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker, timing: activeTiming)
             pipeline = playback.pipeline
             phase = "Replaying \(scenario.scenarioID)"
             gateLine = "Scripted gate: \(scenario.people)"
@@ -340,7 +360,8 @@ final class PhoneSessionModel {
                 clock: clock,
                 needs: needsForSession(),
                 model: recording.client,
-                speaker: speaker
+                speaker: speaker,
+                timing: activeTiming
             )
             pipeline = session
             await gate.reset()
@@ -370,7 +391,8 @@ final class PhoneSessionModel {
             clock: .wall(),
             needs: needsForSession(),
             model: AgentSeam.makeLiveClient(),
-            speaker: speaker
+            speaker: speaker,
+            timing: activeTiming
         )
         pipeline = session
         await gate.reset()
