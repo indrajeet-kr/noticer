@@ -51,6 +51,7 @@ final class GlanceLatchTests: EngineTestCase {
         glancePair()
         let first = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: first.id, verdict: latchVerdict("take-baby"))
+        advance(2)
         see([mom()], handsEdge: true)
         let early = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: early.id, verdict: latchVerdict("refill-water"))
@@ -102,6 +103,7 @@ final class GlanceLatchTests: EngineTestCase {
     }
 
     private func sendHeartbeat(_ verdict: ModelVerdict) throws {
+        advance(2)
         see([mom()], handsEdge: true)
         let call = try XCTUnwrap(engine.pendingModelCall)
         XCTAssertEqual(call.purpose, .heartbeat)

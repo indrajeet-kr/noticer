@@ -59,7 +59,8 @@ struct SessionStatusHero: View {
 
 #Preview("Hero states") {
     VStack(spacing: Theme.Space.s32) {
-        SessionStatusHero(status: .listening, orbSize: 140)
+        SessionStatusHero(status: .listening(checking: false), orbSize: 140)
+        SessionStatusHero(status: .listening(checking: true), orbSize: 140)
         SessionStatusHero(
             status: .headStart(needName: "Her water bottle", fraction: 0.6, secondsLeft: 12),
             orbSize: 140

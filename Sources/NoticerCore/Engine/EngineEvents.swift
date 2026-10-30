@@ -83,6 +83,7 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case callBudgetExhausted
     case sessionEnded
     case retiredMiss
+    case callIssued
 }
 
 public struct EngineEvent: Equatable, Sendable {

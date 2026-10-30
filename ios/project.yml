@@ -63,6 +63,10 @@ targets:
       - path: NoticerTests
       - path: Noticer/Services/NeedsIntent.swift
       - path: Noticer/Services/SessionTelemetry.swift
+      - path: Noticer/Services/SessionStatus.swift
+      - path: Noticer/Services/SessionLog.swift
+      - path: Noticer/Seams/LoggingModelClient.swift
+      - path: Noticer/Theme/Theme.swift
       - path: Noticer/Session/NeedListStore.swift
     dependencies:
       - package: NoticerPackage

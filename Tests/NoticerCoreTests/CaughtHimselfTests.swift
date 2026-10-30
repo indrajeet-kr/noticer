@@ -116,7 +116,7 @@ final class CaughtHimselfTests: EngineTestCase {
 
     private func heartbeat(_ verdict: ModelVerdict) throws {
         advance(SessionLimits.heartbeatSeconds)
-        engine.tick()
+        see([mom()])
         let call = try XCTUnwrap(engine.pendingModelCall)
         XCTAssertEqual(call.purpose, .heartbeat)
         engine.handle(callID: call.id, verdict: verdict)

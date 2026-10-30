@@ -114,6 +114,7 @@ final class HeadStartTests: EngineTestCase {
     }
 
     private func grantExtension(_ id: String) throws {
+        advance(2)
         see([mom()], handsEdge: true)
         let call = try XCTUnwrap(engine.pendingModelCall)
         XCTAssertEqual(call.purpose, .heartbeat)
@@ -121,6 +122,7 @@ final class HeadStartTests: EngineTestCase {
     }
 
     private func markBusy(_ id: String) throws {
+        advance(2)
         see([mom()], handsEdge: true)
         let call = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: call.id, verdict: deferral(id))

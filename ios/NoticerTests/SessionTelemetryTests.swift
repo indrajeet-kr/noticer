@@ -36,4 +36,30 @@ final class SessionTelemetryTests: XCTestCase {
         XCTAssertEqual(SessionTelemetry.droppedLine([]), "dropped: —")
         XCTAssertEqual(SessionTelemetry.droppedLine(["no_need"]), "dropped: no_need")
     }
+
+    func testEventTimelineFormatsOldestFirstCapped() {
+        let start = Date(timeIntervalSince1970: 1_700_000_000)
+        let events = [
+            EngineEvent(kind: .needLatched, needID: "water", at: start),
+            EngineEvent(kind: .recheckRequested, needID: "water", at: start.addingTimeInterval(20)),
+            EngineEvent(kind: .cueFired, needID: "water", at: start.addingTimeInterval(24), detail: "whisper"),
+            EngineEvent(kind: .caughtHimself, needID: nil, at: start.addingTimeInterval(30)),
+        ]
+        let lines = SessionTelemetry.eventTimeline(from: events, cap: 3)
+        XCTAssertEqual(lines.count, 3)
+        XCTAssertTrue(lines[0].hasSuffix("recheckRequested water"))
+        XCTAssertTrue(lines[1].hasSuffix("cueFired water whisper"))
+        XCTAssertTrue(lines[2].hasSuffix("caughtHimself"))
+        XCTAssertTrue(lines.allSatisfy { $0.count > 9 && $0[$0.startIndex ..< $0.index($0.startIndex, offsetBy: 8)].contains(":") })
+    }
+
+    func testEventTimelineEmpty() {
+        XCTAssertTrue(SessionTelemetry.eventTimeline(from: []).isEmpty)
+    }
+
+    func testClockTimeHasSecondsPrecision() {
+        let rendered = SessionTelemetry.clockTime(Date(timeIntervalSince1970: 1_700_000_000))
+        XCTAssertEqual(rendered.filter { $0 == ":" }.count, 2)
+        XCTAssertEqual(rendered.count, 8)
+    }
 }

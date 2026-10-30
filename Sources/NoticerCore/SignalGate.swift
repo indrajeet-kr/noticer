@@ -30,7 +30,9 @@ public enum SignalGateTuning {
     /// Laplacian variance below this is a flat frame. A periodic sample skips it.
     public static let flatSharpness = 0.000_4
     /// No open need: admit a still scene at most this often, plus one rising glance.
-    public static let idleAdmitInterval: TimeInterval = 20
+    /// Short enough that a static scene reaches latch eligibility in seconds;
+    /// latch calls stay rate-limited by the timing profile and the call budget.
+    public static let idleAdmitInterval: TimeInterval = 8
     /// Open need: a changed or due frame may enter the strip this often.
     /// The engine still heartbeats on `SessionLimits.heartbeatSeconds` (8 s).
     public static let openAdmitInterval: TimeInterval = 4

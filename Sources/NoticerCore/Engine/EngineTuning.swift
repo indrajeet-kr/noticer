@@ -42,4 +42,9 @@ public enum EngineTuning {
     /// reply is dropped. Long enough for the latency the head start hides,
     /// short enough that a lost reply cannot wedge the session.
     public static let inFlightStaleSeconds: TimeInterval = 20
+
+    /// A recheck-clear is a "not sure", not a "gone". Relatch waits only
+    /// this long instead of the full relatch cooldown, so one flaky
+    /// no-transition cannot silence a need the next verdicts still see.
+    public static let recheckRelatchGraceSeconds: TimeInterval = 10
 }

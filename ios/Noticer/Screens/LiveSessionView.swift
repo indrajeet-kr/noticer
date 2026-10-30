@@ -25,7 +25,7 @@ struct LiveSessionView: View {
                         }
                         controls
                         quickTiming
-                        DevPanel(lines: devLines)
+                        DevPanel(lines: devLines, log: model.sessionLog)
                     }
                     .screenMargins()
                     .padding(.top, Theme.Space.s16)
@@ -161,7 +161,7 @@ struct LiveSessionView: View {
     // MARK: - Dev lines
 
     private var devLines: [String] {
-        [
+        var lines = [
             "frames seen \(model.framesSeen) · passed \(model.framesPassed)",
             "model calls \(model.modelCalls)",
             "meta: \(model.toolLine)",
@@ -169,9 +169,17 @@ struct LiveSessionView: View {
             "cue: \(model.cueLine)",
             "mastery: \(model.masteryLine)",
             "headstart: \(model.headStartLine)",
+            "last latch: \(model.liveLastLatchedNeedID ?? "—")\(SessionTelemetry.timeSuffix(model.liveLastLatchedAt))",
             SessionTelemetry.droppedLine(model.liveDroppedNeedIDs),
             model.timingLine,
         ]
+        if model.liveEventTimeline.isEmpty {
+            lines.append("events: —")
+        } else {
+            lines.append("events (oldest first):")
+            lines.append(contentsOf: model.liveEventTimeline.suffix(8))
+        }
+        return lines
     }
 }
 

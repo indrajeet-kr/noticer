@@ -34,6 +34,12 @@ public struct NeedEngine<TimeSource: Clock> {
         var didLogBusyDefer: Bool
         var didLogRateLimit: Bool
         var cueDelivered: Bool
+        /// True when the latch verdict said the partner was verifiably absent.
+        /// Such a need holds without her by definition and never no-person-closes.
+        var latchedWhileAbsent: Bool
+        /// Consecutive recheck verdicts that said the need is gone. One is a
+        /// flaky frame; two closes. Any sustained verdict resets it.
+        var recheckStrikes: Int
     }
 
     private struct CueEffect {
@@ -96,6 +102,7 @@ public struct NeedEngine<TimeSource: Clock> {
     private var handEdgePending = false
     private var staleCallIDs: Set<String> = []
     private var callsIssued = 0
+    private var stripSignatureAtLastCall: String?
 
     public private(set) var pendingModelCall: PendingModelCall?
     public private(set) var visitorUploadPaused = false
@@ -290,14 +297,17 @@ public struct NeedEngine<TimeSource: Clock> {
     }
 
     private mutating func closeNeedsWithNoPerson(now: Date) {
-        guard let lastPerson = buffer.lastPersonSeenAt else { return }
-        guard now.timeIntervalSince(lastPerson) >= timing.noPersonKeyframeCloseSeconds else {
-            return
-        }
-        let expiring = tracked.filter { !sameChoreHolds($0, now: now) }.map(\.needID)
-        for id in expiring {
-            close(id, now: now, cooldown: true)
-            record(.closedUnknown, needID: id, detail: "no-person")
+        for need in tracked {
+            if need.latchedWhileAbsent { continue }
+            if sameChoreHolds(need, now: now) { continue }
+            // Absence is measured per need from the later of the latch and the
+            // last sighting, so a fresh latch never dies on a stale clock.
+            let lastSeen = max(buffer.lastPersonSeenAt ?? .distantPast, need.latchedAt)
+            guard now.timeIntervalSince(lastSeen) >= timing.noPersonKeyframeCloseSeconds else {
+                continue
+            }
+            close(need.needID, now: now, cooldown: true)
+            record(.closedUnknown, needID: need.needID, detail: "no-person")
         }
     }
 
@@ -398,13 +408,27 @@ public struct NeedEngine<TimeSource: Clock> {
         guard catalog.need(id: needID) != nil else { return }
         if assessment.sustainedAcrossStrip == true {
             tracked[index].evidenceAt = now
+            tracked[index].recheckStrikes = 0
             return
         }
         if assessment.sustainedAcrossStrip == false {
             if tracked[index].pendingWearerAction != nil {
                 return
             }
-            close(needID, now: now, cooldown: true)
+            tracked[index].recheckStrikes += 1
+            guard tracked[index].recheckStrikes >= 2 else {
+                // One no-transition is a flaky frame, not an answer. Stay
+                // awaiting: the scheduler re-issues the recheck call.
+                tracked[index].awaitingRecheck = true
+                record(.recheckRequested, needID: needID, detail: "confirming")
+                return
+            }
+            // A recheck-clear is a "not sure", not a "gone". The full
+            // relatch cooldown would silence a need the next verdicts
+            // still see, so this close carries only a short grace.
+            close(needID, now: now, cooldown: false)
+            let grace = min(EngineTuning.recheckRelatchGraceSeconds, timing.relatchCooldownSeconds)
+            closedAt[needID] = now.addingTimeInterval(grace - timing.relatchCooldownSeconds)
             record(.closedUnknown, needID: needID, detail: "recheck-cleared")
             return
         }
@@ -485,7 +509,12 @@ public struct NeedEngine<TimeSource: Clock> {
                 now.timeIntervalSince($0) >= timing.heartbeatSeconds
             } ?? true
             if heartbeatDue || handEdgePending {
-                issue(.heartbeat, now: now)
+                // A heartbeat re-reads the strip. Identical pixels to the
+                // last call carry no new information, so skip the call. The
+                // edge stays pending, so the next new pixels still check.
+                if stripSignature(now: now) != stripSignatureAtLastCall {
+                    issue(.heartbeat, now: now)
+                }
                 return
             }
         }
@@ -518,12 +547,25 @@ public struct NeedEngine<TimeSource: Clock> {
         if purpose == .heartbeat || purpose == .recheck {
             handEdgePending = false
         }
+        let strip = buffer.modelStrip(now: now)
+        stripSignatureAtLastCall = stripSignature(now: now)
         pendingModelCall = PendingModelCall(
             id: id,
             purpose: purpose,
-            request: ModelRequest(keyframes: buffer.modelStrip(now: now), needs: catalog.needs),
+            request: ModelRequest(keyframes: strip, needs: catalog.needs),
             issuedAt: now
         )
+        record(.callIssued, needID: nil, detail: "\(purpose.rawValue) kf=\(strip.count)")
+    }
+
+    /// Slot ids, capture times, and bytes of the current model strip. The
+    /// same string means the model would read the same pixels as last
+    /// time. The byte hash catches a sharper in-glance replacement, which
+    /// keeps the slot id while swapping the image.
+    private func stripSignature(now: Date) -> String {
+        buffer.modelStrip(now: now).map {
+            "\($0.id)@\($0.capturedAt.timeIntervalSince1970)#\($0.jpegData.hashValue)"
+        }.joined(separator: "|")
     }
 
     /// The transport gave up on the in-flight call. The next tick may start another.
@@ -548,8 +590,14 @@ public struct NeedEngine<TimeSource: Clock> {
     private mutating func sanitize(_ assessment: SceneAssessment) -> SceneAssessment {
         var assessment = assessment
         if let needID = assessment.needID, catalog.need(id: needID) == nil {
+            // Strict schemas force need_id present on every call, so the model
+            // writes "none"/"no_need" for no-transition turns instead of null.
+            // Those read as omitted; truly unknown ids still drop below.
+            let folded = needID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             assessment.needID = nil
-            record(.assessmentDropped, needID: needID, detail: "unknown-need")
+            if folded != "none", folded != "no_need", !folded.isEmpty {
+                record(.assessmentDropped, needID: needID, detail: "unknown-need")
+            }
         }
         if let resolution = assessment.resolution, !Resolution.recognized.contains(resolution) {
             assessment.resolution = nil
@@ -664,10 +712,10 @@ public struct NeedEngine<TimeSource: Clock> {
                 return
             }
         }
-        open(needID, now: now)
+        open(needID, now: now, absent: assessment.partnerInView == false)
     }
 
-    private mutating func open(_ needID: String, now: Date) {
+    private mutating func open(_ needID: String, now: Date, absent: Bool) {
         guard let need = catalog.need(id: needID) else { return }
         let headStart = MasteryMath.headStartSeconds(for: need, timing: timing)
         let choreID = freshChoreID(now: now)
@@ -687,7 +735,9 @@ public struct NeedEngine<TimeSource: Clock> {
                 pendingWearerAction: nil,
                 didLogBusyDefer: false,
                 didLogRateLimit: false,
-                cueDelivered: false
+                cueDelivered: false,
+                latchedWhileAbsent: absent,
+                recheckStrikes: 0
             )
         )
         lastSuccessfulLatchAt = now

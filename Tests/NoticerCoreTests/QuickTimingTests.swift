@@ -40,7 +40,7 @@ final class QuickTimingTests: XCTestCase {
         XCTAssertEqual(timing.latchMinIntervalSeconds, 4)
         XCTAssertEqual(timing.latchMinKeyframes, 2)
         XCTAssertEqual(timing.latchMinKeyframeSpacingSeconds, 2)
-        XCTAssertEqual(timing.heartbeatSeconds, 4)
+        XCTAssertEqual(timing.heartbeatSeconds, 8)
         XCTAssertEqual(timing.defaultHeadStartSeconds, 20)
         XCTAssertEqual(timing.headStartCapSeconds, 40)
         XCTAssertEqual(timing.cueRateLimitSeconds, 30)

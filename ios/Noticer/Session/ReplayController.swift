@@ -324,7 +324,7 @@ private struct ReplayStatusMemory {
     private var lastCue: (text: String, at: Date)?
     private var lastSelfNotice: (name: String, at: Date)?
     private var seenLogCount = 0
-    private var current: SessionStatus = .listening
+    private var current: SessionStatus = .listening(checking: false)
 
     mutating func advance(view: SessionView, spoken: [Cue]) {
         if let open = view.openNeeds.first {
@@ -376,7 +376,7 @@ private struct ReplayStatusMemory {
             }
             return
         }
-        current = .listening
+        current = .listening(checking: false)
     }
 
     func status() -> SessionStatus {

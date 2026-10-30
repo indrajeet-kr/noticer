@@ -5,7 +5,10 @@ import UIKit
 /// selectable, with a copy button. Never shows the API key.
 struct DevPanel: View {
     var lines: [String]
+    /// When set, a Session log button opens the full transcript sheet.
+    var log: SessionLog?
     @State private var open = false
+    @State private var showingLog = false
 
     var body: some View {
         GlassCard {
@@ -16,16 +19,30 @@ struct DevPanel: View {
                         .foregroundStyle(Theme.textSecondary)
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button {
-                        UIPasteboard.general.string = lines.joined(separator: "\n")
-                    } label: {
-                        HStack(spacing: Theme.Space.s4) {
-                            Image(systemName: "doc.on.doc")
-                            Text("Copy")
+                    HStack(spacing: Theme.Space.s16) {
+                        Button {
+                            UIPasteboard.general.string = lines.joined(separator: "\n")
+                        } label: {
+                            HStack(spacing: Theme.Space.s4) {
+                                Image(systemName: "doc.on.doc")
+                                Text("Copy")
+                            }
+                            .font(Theme.Font.footnote)
                         }
-                        .font(Theme.Font.footnote)
+                        .foregroundStyle(Theme.accentWarm)
+                        if log != nil {
+                            Button {
+                                showingLog = true
+                            } label: {
+                                HStack(spacing: Theme.Space.s4) {
+                                    Image(systemName: "doc.text")
+                                    Text("Session log")
+                                }
+                                .font(Theme.Font.footnote)
+                            }
+                            .foregroundStyle(Theme.accentWarm)
+                        }
                     }
-                    .foregroundStyle(Theme.accentWarm)
                 }
                 .padding(.top, Theme.Space.s8)
             } label: {
@@ -42,6 +59,11 @@ struct DevPanel: View {
             .tint(Theme.textPrimary)
         }
         .accessibilityElement(children: .contain)
+        .sheet(isPresented: $showingLog) {
+            if let log {
+                SessionLogView(log: log)
+            }
+        }
     }
 }
 

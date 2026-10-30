@@ -70,11 +70,13 @@ public struct TimingProfile: Equatable, Sendable {
     )
 
     /// First cue around half a minute: a latch inside a few seconds, then the 20 s head start.
+    /// Heartbeats stay at 8 s: model calls serialize the frame loop, so a 4 s
+    /// cadence spends the session awaiting calls instead of watching frames.
     public static let quick = TimingProfile(
         latchMinIntervalSeconds: 4,
         latchMinKeyframes: 2,
         latchMinKeyframeSpacingSeconds: 2,
-        heartbeatSeconds: 4,
+        heartbeatSeconds: 8,
         defaultHeadStartSeconds: 20,
         headStartCapSeconds: 40,
         cueRateLimitSeconds: 30,
