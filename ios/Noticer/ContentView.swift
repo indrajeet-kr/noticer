@@ -11,10 +11,10 @@ struct ContentView: View {
     @FocusState private var focusedNeedField: NeedField?
 
     private enum NeedField: Hashable {
-        case words(String)
-        case whisper(String)
+        case words(UUID)
+        case whisper(UUID)
 
-        var needID: String {
+        var uiID: UUID {
             switch self {
             case .words(let id), .whisper(let id):
                 return id
@@ -60,10 +60,13 @@ struct ContentView: View {
             model.saveNeeds()
         }
         .onChange(of: focusedNeedField) { previous, current in
-            guard let previous, previous.needID != current?.needID else {
+            guard let previous, previous.uiID != current?.uiID else {
                 return
             }
-            model.nameNeed(id: previous.needID)
+            guard model.needs.contains(where: { $0.uiID == previous.uiID }) else {
+                return
+            }
+            model.nameNeed(uiID: previous.uiID)
         }
     }
 
@@ -209,18 +212,22 @@ struct ContentView: View {
             Text("Up to \(SessionLimits.maxAuthoredNeeds). Write what she needs in her own words. Leave the whisper blank to say that same line.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
-            ForEach($model.needs) { $need in
+            ForEach($model.needs, id: \.uiID) { $need in
                 VStack(alignment: .leading, spacing: 8) {
                     TextField("What she needs", text: $need.authorText, axis: .vertical)
-                        .focused($focusedNeedField, equals: .words(need.id))
+                        .focused($focusedNeedField, equals: .words(need.uiID))
                         .textInputAutocapitalization(.sentences)
                     TextField("What to whisper, if it should differ", text: $need.cueWording, axis: .vertical)
-                        .focused($focusedNeedField, equals: .whisper(need.id))
+                        .focused($focusedNeedField, equals: .whisper(need.uiID))
                         .textInputAutocapitalization(.sentences)
                     Stepper("Priority \(need.priority)", value: $need.priority, in: 0...5)
                     Toggle("Allow a check-in if a re-check is inconclusive", isOn: $need.allowsCheckIn)
                     Button("Remove") {
-                        model.deleteNeed(id: need.id)
+                        let uiID = need.uiID
+                        focusedNeedField = nil
+                        Task { @MainActor in
+                            model.deleteNeed(uiID: uiID)
+                        }
                     }
                     .foregroundStyle(.red)
                 }

@@ -161,25 +161,17 @@ final class PhoneSessionModel {
 
     /// Turns a freshly added need's UUID into a slug from her words. Existing ids such as
     /// `take-baby` stay put. Called when she leaves the card, and again when a session starts.
-    func nameNeed(id: String) {
-        guard let index = needs.firstIndex(where: { $0.id == id }),
-              UUID(uuidString: needs[index].id) != nil
-        else {
+    /// A row that was already removed is left alone.
+    func nameNeed(uiID: UUID) {
+        guard NeedListEditing.nameNeed(&needs, uiID: uiID) else {
             return
         }
-        let taken = Set(needs.enumerated().compactMap { offset, need in
-            offset == index ? nil : need.id
-        })
-        guard let slug = NeedListStore.readableID(from: needs[index].authorText, avoiding: taken) else {
-            return
-        }
-        needs[index].id = slug
         saveNeeds()
     }
 
     func nameUnnamedNeeds() {
-        for id in needs.map(\.id) {
-            nameNeed(id: id)
+        for uiID in needs.map(\.uiID) {
+            nameNeed(uiID: uiID)
         }
     }
 
@@ -203,8 +195,10 @@ final class PhoneSessionModel {
         saveNeeds()
     }
 
-    func deleteNeed(id: String) {
-        needs.removeAll { $0.id == id }
+    func deleteNeed(uiID: UUID) {
+        guard NeedListEditing.delete(&needs, uiID: uiID) else {
+            return
+        }
         saveNeeds()
     }
 
