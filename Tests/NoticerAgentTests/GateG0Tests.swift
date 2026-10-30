@@ -65,7 +65,7 @@ final class GateG0Tests: XCTestCase {
         XCTAssertEqual(passClient.calls(), 2)
         let passText = passLines.text()
         XCTAssertTrue(passText.contains("reasoning_effort: low"))
-        XCTAssertTrue(passText.contains("max_tokens: 1024"))
+        XCTAssertTrue(passText.contains("max_tokens: unset"))
         XCTAssertTrue(passText.contains("tool_choice: auto"))
         XCTAssertTrue(passText.contains("endpoint: https://api.meta.ai/v1/chat/completions"))
         XCTAssertTrue(passText.contains("finish_reason: tool_calls"))
