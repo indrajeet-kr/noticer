@@ -614,6 +614,23 @@ public enum NeedsIntentConversion {
         }
     }
 
+    /// Saved needs back into drafts, so the open screen can seed one
+    /// "Your list tonight" card from the stored or default list. Inverse of
+    /// `toNeeds` for the authored fields; mastery and row identity stay with
+    /// the saved need and are re-attached on accept.
+    public static func fromNeeds(_ needs: [Need]) -> [NeedsIntentDraft] {
+        needs.map {
+            NeedsIntentDraft(
+                id: $0.id,
+                authorText: $0.authorText,
+                whisper: $0.cueWording,
+                priority: NeedsIntentPriority.word(forNeedPriority: $0.priority),
+                allowsCheckIn: $0.allowsCheckIn,
+                visualCue: $0.visualCondition ?? ""
+            )
+        }
+    }
+
     /// Compact CURRENT_LIST payload: only what the model needs to apply an edit.
     public static func currentListJSON(_ needs: [Need]) -> String {
         struct Entry: Encodable {

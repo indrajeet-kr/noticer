@@ -96,6 +96,7 @@ final class PhoneSessionModel {
     private var loop: Task<Void, Never>?
     private var liveSource: DATFrameSource?
     private var pipeline: SessionPipeline?
+    private var replaceTask: Task<Void, Never>?
     private let speaker = GlassesCueSpeaker()
     private let gate = SignalFrameGate()
     private var watching = false
@@ -219,14 +220,22 @@ final class PhoneSessionModel {
     /// Saves the authored list and, when a live or clip session is already
     /// running, swaps that list into the engine. A scenario replay keeps its
     /// own needs. Without this, "Looks right" updated the phone list and the
-    /// running session kept the list it started with.
+    /// running session kept the list it started with. Swaps serialize: each
+    /// commit waits for the previous swap to land, so accept-then-undo can't
+    /// apply out of order.
     func commitNeeds() {
         let snapshot = needsForSession()
         saveNeeds()
         guard let pipeline, sessionUsesAuthoredNeeds else {
             return
         }
-        Task {
+        let previous = replaceTask
+        previous?.cancel()
+        replaceTask = Task {
+            _ = await previous?.result
+            guard !Task.isCancelled else {
+                return
+            }
             do {
                 try await pipeline.replaceNeeds(snapshot)
             } catch {

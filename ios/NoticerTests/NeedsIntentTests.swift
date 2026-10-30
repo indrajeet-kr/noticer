@@ -434,6 +434,33 @@ final class NeedsIntentTests: XCTestCase {
         XCTAssertEqual(saved.map(\.id), ["take-baby", "refill-water"], "a truncated turn never mutates the saved list")
     }
 
+    // MARK: Seeding: saved needs back into drafts.
+
+    func testFromNeedsMapsAuthoredFields() {
+        let needs = [
+            Need(id: "take-baby", authorText: "Take the baby", cueWording: "She could use a hand.", visualCondition: "eating one-handed", priority: 0, allowsCheckIn: true),
+            Need(id: "water", authorText: "Water", cueWording: "Water.", priority: 1),
+            Need(id: "dishes", authorText: "Dishes", cueWording: "Sink's full.", priority: 5),
+        ]
+        let drafts = NeedsIntentConversion.fromNeeds(needs)
+        XCTAssertEqual(drafts.map(\.id), ["take-baby", "water", "dishes"])
+        XCTAssertEqual(drafts.map(\.authorText), ["Take the baby", "Water", "Dishes"])
+        XCTAssertEqual(drafts.map(\.whisper), ["She could use a hand.", "Water.", "Sink's full."])
+        XCTAssertEqual(drafts.map(\.priority), [.important, .normal, .gentle])
+        XCTAssertEqual(drafts.map(\.allowsCheckIn), [true, false, false])
+        XCTAssertEqual(drafts.map(\.visualCue), ["eating one-handed", "", ""])
+        XCTAssertEqual(NeedsIntentPriority.word(forNeedPriority: -1), .important)
+    }
+
+    func testFromNeedsRoundTripsThroughToNeeds() {
+        let needs = [
+            Need(id: "take-baby", authorText: "Take the baby", cueWording: "She could use a hand.", priority: 0),
+            Need(id: "water", authorText: "Water", cueWording: "Water.", visualCondition: "glass on table", priority: 2, allowsCheckIn: true),
+        ]
+        let roundTripped = NeedsIntentConversion.toNeeds(NeedsIntentConversion.fromNeeds(needs), current: needs)
+        XCTAssertEqual(roundTripped, needs)
+    }
+
     // MARK: Live smoke (opt-in).
 
     /// Recorded tests above run on every build. This one hits the real API

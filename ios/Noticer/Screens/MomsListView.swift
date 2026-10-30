@@ -2,8 +2,8 @@ import SwiftUI
 
 /// Mom's List: natural language, no forms. She types or dictates freely in
 /// the one composer; Spark's read-back cards appear above it. Refinements go
-/// back through the same composer. The only shortcut is swipe-to-delete on
-/// a card, with an undo toast.
+/// back through the same composer. The only shortcut is long-press Remove on
+/// a card (plus an accessibility action), with an undo toast.
 struct MomsListView: View {
     @Bindable var model: PhoneSessionModel
     @State private var service = NeedsIntentService()
@@ -19,7 +19,7 @@ struct MomsListView: View {
                 ScrollView {
                     VStack(alignment: .leading, spacing: Theme.Space.s16) {
                         header
-                        if !service.hasConversation, !service.thinking {
+                        if model.needs.isEmpty, !service.hasConversation, !service.thinking {
                             emptyState
                         }
                         ForEach(service.entries) { entry in
@@ -57,6 +57,7 @@ struct MomsListView: View {
             .padding(.vertical, Theme.Space.s8)
         }
         .ambientScreen()
+        .task { service.seedIfNeeded(from: model) }
         .overlay(alignment: .top) { toast }
         .sensoryFeedback(.success, trigger: savedPulse)
         .sheet(isPresented: $showingKey) {
@@ -102,13 +103,17 @@ struct MomsListView: View {
     }
 
     private var thinkingBubble: some View {
-        HStack {
+        HStack(spacing: Theme.Space.s8) {
             ThinkingDots()
                 .padding(Theme.Space.s12)
                 .background(Theme.bgElevated)
                 .clipShape(Theme.Radius.rect(Theme.Radius.row))
+            Text("Listening to your list…")
+                .font(Theme.Font.body)
+                .foregroundStyle(Theme.textSecondary)
             Spacer()
         }
+        .accessibilityElement(children: .combine)
     }
 
     private var offlineSection: some View {
@@ -152,7 +157,14 @@ struct MomsListView: View {
             }
             .transition(.opacity.combined(with: .move(edge: .bottom)))
         case .readBack(let id, let drafts, let readBack, let changed, let accepted):
-            readBackView(id: id, drafts: drafts, readBack: readBack, changed: changed, accepted: accepted)
+            readBackView(
+                id: id,
+                drafts: drafts,
+                readBack: readBack,
+                changed: changed,
+                accepted: accepted,
+                seeded: service.seededEntryID == id
+            )
         case .question(_, let text, let suggestions):
             VStack(alignment: .leading, spacing: Theme.Space.s8) {
                 SparkBubble(text: text)
@@ -176,10 +188,11 @@ struct MomsListView: View {
         drafts: [NeedsIntentDraft],
         readBack: String,
         changed: Set<String>,
-        accepted: Bool
+        accepted: Bool,
+        seeded: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            SparkBubble(text: accepted ? "Saved:" : "Got it:")
+            SparkBubble(text: seeded ? "Your list tonight:" : (accepted ? "Saved:" : "Got it:"))
             if !readBack.isEmpty, !accepted {
                 Text(readBack)
                     .font(Theme.Font.body)
@@ -191,21 +204,28 @@ struct MomsListView: View {
                     .foregroundStyle(Theme.textSecondary)
             } else {
                 ForEach(Array(drafts.enumerated()), id: \.element.id) { number, draft in
-                    NeedReadBackCard(number: number + 1, draft: draft, changed: changed.contains(draft.id))
+                    let card = NeedReadBackCard(number: number + 1, draft: draft, changed: changed.contains(draft.id))
                         // Scoped by entry: the same need id can appear in
                         // several read-backs as she refines the list.
                         .matchedGeometryEffect(id: "\(id.uuidString)-\(draft.id)", in: cards)
-                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
-                            Button("Remove", role: .destructive) {
-                                composerFocused = false
-                                withAnimation(Theme.spring) {
-                                    service.removeDraft(entryID: id, draftID: draft.id, model: model)
+                    // ScrollView rows can't swipe; long-press plus an
+                    // accessibility action instead. Stale cards offer neither.
+                    if service.canRemove(entryID: id) {
+                        card
+                            .contextMenu {
+                                Button("Remove", role: .destructive) {
+                                    remove(entryID: id, draftID: draft.id)
                                 }
                             }
-                        }
+                            .accessibilityAction(named: "Remove") {
+                                remove(entryID: id, draftID: draft.id)
+                            }
+                    } else {
+                        card
+                    }
                 }
             }
-            if accepted {
+            if accepted, !seeded {
                 HStack(spacing: Theme.Space.s4) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(Theme.gotIt)
@@ -253,7 +273,7 @@ struct MomsListView: View {
             .padding(.horizontal, Theme.Space.screenMargin)
             .padding(.top, Theme.Space.s8)
             .transition(.opacity.combined(with: .move(edge: .top)))
-            .task(id: notice) {
+            .task(id: service.noticeID) {
                 try? await Task.sleep(for: .seconds(3))
                 service.dismissNotice()
             }
@@ -261,6 +281,13 @@ struct MomsListView: View {
     }
 
     // MARK: - Send
+
+    private func remove(entryID: UUID, draftID: String) {
+        composerFocused = false
+        withAnimation(Theme.spring) {
+            service.removeDraft(entryID: entryID, draftID: draftID, model: model)
+        }
+    }
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
