@@ -6,7 +6,7 @@ struct NoticerApp: App {
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
+            RootView(model: model)
                 .task {
                     model.configureWearables()
                 }

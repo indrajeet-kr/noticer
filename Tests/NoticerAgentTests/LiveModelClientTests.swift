@@ -44,7 +44,7 @@ final class LiveModelClientTests: XCTestCase {
         XCTAssertEqual(root["tool_choice"], .some(.string("auto")))
         XCTAssertEqual(root["parallel_tool_calls"], .some(.bool(false)))
         XCTAssertEqual(root["reasoning_effort"], .some(.string("low")))
-        XCTAssertEqual(root["max_tokens"], .some(.number(1024)))
+        XCTAssertNil(root["max_tokens"])
         guard case .array(let messages)? = root["messages"] else {
             return XCTFail("missing messages")
         }

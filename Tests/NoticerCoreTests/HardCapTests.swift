@@ -84,8 +84,12 @@ final class HardCapTests: EngineTestCase {
     func testTheModelCallBudgetIsThreeHundred() throws {
         try latch("take-baby")
         XCTAssertEqual(engine.modelCallsIssued, 1)
+        var frame = 0
         while engine.modelCallsIssued < SessionLimits.maxModelCallsPerSession {
-            see([mom()], handsEdge: true)
+            // Same glance, new pixels each turn: the heartbeat fires without
+            // advancing the clock past the head-start deadline.
+            see([mom()], sharpness: Double(frame), jpeg: UInt8(frame % 2), handsEdge: true)
+            frame += 1
             let call = try XCTUnwrap(engine.pendingModelCall)
             engine.handle(callID: call.id, verdict: noTransition("take-baby"))
         }
@@ -117,7 +121,7 @@ final class HardCapTests: EngineTestCase {
         engine.tick()
         XCTAssertNil(engine.pendingModelCall)
         advance(1)
-        engine.tick()
+        see([mom()])
         let call = try XCTUnwrap(engine.pendingModelCall)
         XCTAssertEqual(call.purpose, .heartbeat)
         XCTAssertEqual(call.request.needs.count, 2)

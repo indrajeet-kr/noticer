@@ -119,6 +119,40 @@ final class StaleNeedTests: EngineTestCase {
         XCTAssertEqual(events(.closedUnknown).last?.detail, "no-person")
     }
 
+    func testAbsentLatchSurvivesTheNoPersonWindowAndCues() throws {
+        // A person seen a minute ago arms the no-person clock, then the room
+        // goes empty: the absent latch must survive and still cue.
+        glancePair()
+        let seen = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: seen.id, verdict: ModelVerdict(
+            finishReason: .toolCalls,
+            tool: .reportNoTransition,
+            assessment: SceneAssessment(partnerInView: true)
+        ))
+        advance(60)
+
+        glancePair()
+        let call = try XCTUnwrap(engine.pendingModelCall)
+        var latch = latchVerdict("take-baby")
+        latch.assessment.partnerInView = false
+        engine.handle(callID: call.id, verdict: latch)
+        engine.tick()
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"], "an absent latch never dies instantly")
+
+        advance(60)
+        engine.tick()
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"], "absence does not close what holds without her")
+
+        let open = try XCTUnwrap(engine.openNeeds.first)
+        advance(to: open.cueDeadline)
+        engine.tick()
+        let recheck = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(recheck.purpose, .recheck)
+        engine.handle(callID: recheck.id, verdict: noTransition("take-baby", sustained: true))
+        XCTAssertEqual(engine.cues.first?.kind, .whisper)
+        XCTAssertTrue(events(.closedUnknown).filter { $0.detail == "no-person" }.isEmpty)
+    }
+
     private func latch(_ id: String) throws {
         glancePair()
         let call = try XCTUnwrap(engine.pendingModelCall)

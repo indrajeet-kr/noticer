@@ -23,7 +23,7 @@ public enum GateG0 {
     Options:
       --reasoning-effort <minimal|low|medium|high|xhigh|max>   default low
           API field reasoning_effort. "none" is rejected locally. The API returns HTTP 400 for it.
-      --max-tokens <int|unset>   default 1024
+      --max-tokens <int|unset>   default unset
           API field max_tokens. Reasoning tokens count toward this cap. Values under 1024 are rejected. "unset" omits the field.
       --model <id>               default muse-spark-1.3
       --base-url <url>           default https://api.meta.ai/v1
@@ -316,7 +316,7 @@ private struct Parsed {
 
     private static func maxTokens(from raw: String?) throws -> Int? {
         guard let raw else {
-            return MuseSparkModelClient.minimumMaxTokens
+            return nil
         }
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.isEmpty || trimmed == "unset" || trimmed == "omit" {

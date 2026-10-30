@@ -128,7 +128,7 @@ final class MasteryTests: EngineTestCase {
 
     private func heartbeat(_ verdict: ModelVerdict) throws {
         advance(SessionLimits.heartbeatSeconds)
-        engine.tick()
+        see([mom()])
         let call = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: call.id, verdict: verdict)
     }

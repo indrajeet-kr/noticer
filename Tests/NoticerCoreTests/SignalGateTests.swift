@@ -168,6 +168,7 @@ final class SparkPresenceTests: EngineTestCase {
         try latch("take-baby")
         let seen = clock.now()
         advance(40)
+        see([], sceneActive: true)
         engine.tick()
         let call = try XCTUnwrap(engine.pendingModelCall)
         XCTAssertEqual(call.purpose, .heartbeat)
@@ -185,6 +186,7 @@ final class SparkPresenceTests: EngineTestCase {
         try latch("take-baby")
         let seen = clock.now()
         advance(40)
+        see([], sceneActive: true)
         engine.tick()
         let call = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: call.id, verdict: report(partnerInView: false))
@@ -195,11 +197,11 @@ final class SparkPresenceTests: EngineTestCase {
 
     func testAnActivityEdgeHeartbeatsBeforeTheIdleInterval() throws {
         try latch("take-baby")
-        advance(1)
-        see([], activityEdge: true)
+        advance(2)
+        see([], sceneActive: true, activityEdge: true)
         let call = try XCTUnwrap(engine.pendingModelCall)
         XCTAssertEqual(call.purpose, .heartbeat)
-        XCTAssertLessThan(1, SessionLimits.heartbeatSeconds)
+        XCTAssertLessThan(2, SessionLimits.heartbeatSeconds)
     }
 
     private func latch(_ id: String) throws {

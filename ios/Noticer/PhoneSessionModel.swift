@@ -58,6 +58,37 @@ final class PhoneSessionModel {
     /// Shorter waits for a test or a demo. The running session keeps the profile it started with.
     var quickTiming = UserDefaults.standard.bool(forKey: PhoneSessionModel.quickTimingKey)
 
+    // MARK: - Live display state (additive; the engine never reads these)
+
+    /// Timing the running session started with, for display math.
+    var runTiming = TimingProfile.standard
+    var liveOpenNeedID: String?
+    var liveHeadStartRemaining: TimeInterval?
+    var liveHeadStartTotal: TimeInterval?
+    var liveLastCueText = ""
+    var liveLastCueIsChime = false
+    var liveLastCueAt: Date?
+    var liveNoticedAt: Date?
+    var liveSelfNoticeAt: Date?
+    var liveSelfNoticeNeedID: String?
+    /// Ids the engine dropped as unknown, oldest first. Shows what the model
+    /// actually sent when a turn names an id that isn't on mom's list.
+    var liveDroppedNeedIDs: [String] = []
+    /// Last model turn or engine event. Drives "Checking the scene…".
+    var liveLastModelActivityAt: Date?
+    /// Last latch, kept after the need closes so a completed cycle reads.
+    var liveLastLatchedNeedID: String?
+    var liveLastLatchedAt: Date?
+    /// Engine event timeline for the dev panel, oldest first, capped.
+    var liveEventTimeline: [String] = []
+    /// Developer-mode transcript: lifecycle, frames, model turns, engine
+    /// events, speech, errors. Cleared on start, kept after stop for review.
+    var sessionLog = SessionLog()
+    /// Tonight's wins for the Wins tab. Saved on the phone only.
+    var moments: [SessionMoment] = SessionMomentsStore.loadTonight()
+    /// Per-need mastery samples, oldest first, capped. For the Learning sparklines.
+    var masterySamples: [String: [Double]] = [:]
+
     private static let quickTimingKey = "noticer.timing.quick"
 
     private var clips: [URL] = []
@@ -69,6 +100,9 @@ final class PhoneSessionModel {
     private let gate = SignalFrameGate()
     private var watching = false
     private var activeTiming = TimingProfile.standard
+    private var seenCueIDs: Set<String> = []
+    private var seenLogCount = 0
+    private var lastSeenModelCalls = 0
 
     var replayOptions: [ReplayOption] {
         let scenarioOptions = scenarios.map { ReplayOption(kind: .scenario, name: $0.scenarioID) }
@@ -118,15 +152,18 @@ final class PhoneSessionModel {
             try Wearables.configure()
             configured = true
             registration = Self.registrationLabel(Wearables.shared.registrationState)
+            sessionLog.append("WEAR", "configured (\(registration))")
             watchWearables()
         } catch {
             if case .alreadyConfigured = error {
                 configured = true
                 registration = Self.registrationLabel(Wearables.shared.registrationState)
+                sessionLog.append("WEAR", "already configured (\(registration))")
                 watchWearables()
                 return
             }
             registration = error.description
+            sessionLog.append("ERROR", "wearables: \(error.description)")
         }
     }
 
@@ -152,6 +189,7 @@ final class PhoneSessionModel {
         else {
             return
         }
+        sessionLog.append("WEAR", "openURL metaWearablesAction")
         Task {
             do {
                 _ = try await Wearables.shared.handleUrl(url)
@@ -176,6 +214,32 @@ final class PhoneSessionModel {
 
     func saveNeeds() {
         NeedListStore.save(needs)
+    }
+
+    /// Saves the authored list and, when a live or clip session is already
+    /// running, swaps that list into the engine. A scenario replay keeps its
+    /// own needs. Without this, "Looks right" updated the phone list and the
+    /// running session kept the list it started with.
+    func commitNeeds() {
+        let snapshot = needsForSession()
+        saveNeeds()
+        guard let pipeline, sessionUsesAuthoredNeeds else {
+            return
+        }
+        Task {
+            do {
+                try await pipeline.replaceNeeds(snapshot)
+            } catch {
+                self.runError = String(describing: error)
+            }
+        }
+    }
+
+    private var sessionUsesAuthoredNeeds: Bool {
+        if mode == .replay, selectedOption?.kind == .scenario {
+            return false
+        }
+        return true
     }
 
     /// Turns a freshly added need's UUID into a slug from her words. Existing ids such as
@@ -248,6 +312,15 @@ final class PhoneSessionModel {
         headStartLine = "Head start not running"
         keepsScreenOn = true
         activeTiming = timing
+        runTiming = activeTiming
+        resetLiveState()
+        sessionLog.clear()
+        sessionLog.append("SESSION", "start mode=\(mode == .replay ? "replay" : "live") timing=\(quickTiming ? "quick" : "standard") needs=\(needsForSession().count) key=\(ModelKeyStore.currentKey() == nil ? "missing" : "saved")")
+        for need in needsForSession() {
+            let dwell = need.dwellSeconds.map { String(Int($0)) } ?? "—"
+            let signal = need.selfNoticeSignal ?? "—"
+            sessionLog.append("SESSION", "need \(need.id) author=\(Self.truncate(need.authorText)) whisper=\(Self.truncate(need.cueWording)) visual=\(Self.truncate(need.visualCondition ?? "—")) checkin=\(need.allowsCheckIn) dwell=\(dwell) signal=\(signal)")
+        }
         phase = mode == .replay ? "Reading the replay" : "Starting glasses"
         loop = Task {
             await self.run()
@@ -261,6 +334,11 @@ final class PhoneSessionModel {
         loop = nil
         keepsScreenOn = false
         phase = "Idle"
+        sessionLog.append("SESSION", "stop frames=\(framesSeen)/\(framesPassed) calls=\(modelCalls)")
+        SessionLogStore.save(sessionLog.text)
+        resetLiveState()
+        saveNeeds()
+        SessionMomentsStore.save(moments)
         Task {
             await source?.stop()
         }
@@ -268,11 +346,13 @@ final class PhoneSessionModel {
 
     func resumeGlasses() {
         let source = liveSource
+        sessionLog.append("WEAR", "resume requested")
         Task {
             do {
                 try await source?.resume()
             } catch {
                 self.runError = error.localizedDescription
+                self.sessionLog.append("ERROR", "resume: \(error.localizedDescription)")
             }
         }
     }
@@ -303,6 +383,7 @@ final class PhoneSessionModel {
             outcome = "Idle"
         } catch {
             runError = error.localizedDescription
+            sessionLog.append("ERROR", "run: \(error.localizedDescription)")
             outcome = "Stopped"
         }
         let source = liveSource
@@ -315,6 +396,10 @@ final class PhoneSessionModel {
         if !Task.isCancelled {
             phase = outcome
             loop = nil
+            sessionLog.append("SESSION", "end: \(outcome) frames=\(framesSeen)/\(framesPassed) calls=\(modelCalls)")
+            SessionLogStore.save(sessionLog.text)
+            saveNeeds()
+            SessionMomentsStore.save(moments)
         }
     }
 
@@ -384,7 +469,9 @@ final class PhoneSessionModel {
         let session = try SessionPipeline(
             clock: .wall(),
             needs: needsForSession(),
-            model: AgentSeam.makeLiveClient(),
+            model: AgentSeam.makeLiveClient(log: { [log = sessionLog] tag, message in
+                Task { await MainActor.run { log.append(tag, message) } }
+            }),
             speaker: speaker,
             timing: activeTiming
         )
@@ -414,6 +501,10 @@ final class PhoneSessionModel {
         gateLine = Self.describe(decision)
         if decision.passes {
             framesPassed += 1
+            sessionLog.append("FRAME", "#\(framesSeen) admitted \(Self.describe(decision)) \(frame.jpegData.count / 1024)KB")
+        }
+        if framesSeen % 30 == 0 {
+            sessionLog.append("FRAME", "summary seen=\(framesSeen) passed=\(framesPassed) calls=\(modelCalls)")
         }
         let step = try await session.ingest(frame: frame, gate: decision.snapshot)
         apply(step, await session.view())
@@ -422,26 +513,175 @@ final class PhoneSessionModel {
         }
     }
 
+    private func resetLiveState() {
+        liveOpenNeedID = nil
+        liveHeadStartRemaining = nil
+        liveHeadStartTotal = nil
+        liveLastCueText = ""
+        liveLastCueIsChime = false
+        liveLastCueAt = nil
+        liveNoticedAt = nil
+        liveSelfNoticeAt = nil
+        liveSelfNoticeNeedID = nil
+        liveDroppedNeedIDs = []
+        liveLastModelActivityAt = nil
+        liveLastLatchedNeedID = nil
+        liveLastLatchedAt = nil
+        liveEventTimeline = []
+        seenCueIDs = []
+        seenLogCount = 0
+        lastSeenModelCalls = 0
+    }
+
     private func apply(_ step: PipelineStep, _ view: SessionView) {
         masteryLine = view.masterySummary
         headStartLine = view.headStartSummary
         if let cue = step.spoken.last {
-            cueLine = cue.kind == .chime ? "Chime" : cue.text
+            let text = cue.kind == .chime ? "Chime" : cue.text
+            cueLine = "\(text)\(SessionTelemetry.timeSuffix(Date()))"
+            sessionLog.append("SPEAK", cue.kind == .chime ? "chime" : "whisper \"\(Self.truncate(cue.text, limit: 120))\"")
         }
+        applyLiveState(view)
         modelCalls = view.modelCalls
+        // Sticky: a step without a model turn keeps the last verdict line
+        // instead of burying it under a per-frame event describe.
         if let error = step.modelError {
             toolLine = error
+            sessionLog.append("ERROR", "model: \(error)")
         } else if let summary = step.modelSummary {
             toolLine = summary
-        } else if let event = view.log.last {
+        } else if toolLine == "No model turn yet", let event = view.log.last {
             toolLine = Self.describe(event)
         }
         if let speech = step.speechError {
             addNotice("Cue audio failed: \(speech)")
+            sessionLog.append("ERROR", "speech: \(speech)")
         }
     }
 
+    private static func truncate(_ text: String, limit: Int = 100) -> String {
+        guard text.count > limit else {
+            return text
+        }
+        return String(text.prefix(limit)) + "…"
+    }
+
+    /// Display-only mirror of the pipeline view. Writes the live display
+    /// state, tonight's wins, and the authored list's mastery. Never feeds
+    /// anything back into the session.
+    private func applyLiveState(_ view: SessionView) {
+        if view.modelCalls != lastSeenModelCalls {
+            lastSeenModelCalls = view.modelCalls
+            liveLastModelActivityAt = Date()
+        }
+        if let open = view.openNeeds.first {
+            if liveOpenNeedID != open.needID {
+                liveOpenNeedID = open.needID
+                liveNoticedAt = Date()
+                liveLastLatchedNeedID = open.needID
+                liveLastLatchedAt = Date()
+            }
+            liveHeadStartRemaining = max(0, open.cueDeadline.timeIntervalSince(view.now))
+            liveHeadStartTotal = max(1, open.cueDeadline.timeIntervalSince(open.latchedAt))
+        } else {
+            liveOpenNeedID = nil
+            liveHeadStartRemaining = nil
+            liveHeadStartTotal = nil
+        }
+        for cue in view.cues where !seenCueIDs.contains(cue.id) {
+            seenCueIDs.insert(cue.id)
+            liveLastCueText = cue.kind == .chime ? "Chime" : cue.text
+            liveLastCueIsChime = cue.kind == .chime
+            liveLastCueAt = Date()
+        }
+        let fresh = Array(view.log.dropFirst(seenLogCount))
+        for event in fresh {
+            sessionLog.append("ENGINE", Self.describeLogEvent(event))
+            switch event.kind {
+            case .caughtHimself:
+                liveSelfNoticeAt = Date()
+                liveSelfNoticeNeedID = event.needID
+                if let needID = event.needID {
+                    moments.append(SessionMoment(
+                        at: Date(),
+                        needID: needID,
+                        kind: .selfNotice,
+                        text: Self.words(for: needID, in: view)
+                    ))
+                }
+            case .cueFired:
+                if let needID = event.needID {
+                    moments.append(SessionMoment(
+                        at: Date(),
+                        needID: needID,
+                        kind: .cued,
+                        text: Self.words(for: needID, in: view)
+                    ))
+                }
+            case .needLatched:
+                // Event-driven: a snapshot between ingests can miss a whole
+                // open→close cycle, but the log never does.
+                if let needID = event.needID {
+                    liveLastLatchedNeedID = needID
+                    liveLastLatchedAt = event.at
+                }
+            default:
+                break
+            }
+        }
+        liveEventTimeline.append(contentsOf: SessionTelemetry.eventTimeline(from: fresh, cap: fresh.count))
+        liveEventTimeline = Array(liveEventTimeline.suffix(12))
+        for dropped in SessionTelemetry.droppedNeedIDs(from: fresh) {
+            if liveDroppedNeedIDs.last != dropped {
+                liveDroppedNeedIDs.append(dropped)
+            }
+        }
+        liveDroppedNeedIDs = Array(liveDroppedNeedIDs.suffix(8))
+        if !fresh.isEmpty {
+            liveLastModelActivityAt = Date()
+        }
+        seenLogCount = view.log.count
+        if moments.count > 200 {
+            moments = Array(moments.suffix(200))
+        }
+        for need in view.needs {
+            guard let index = needs.firstIndex(where: { $0.id == need.id }) else {
+                continue
+            }
+            needs[index].mastery = need.mastery
+            var samples = masterySamples[need.id] ?? []
+            if samples.last != need.mastery.score {
+                samples.append(need.mastery.score)
+                masterySamples[need.id] = Array(samples.suffix(30))
+            }
+        }
+    }
+
+    private static func describeLogEvent(_ event: EngineEvent) -> String {
+        // The line stamp is drain time; the event stamp is record time. Both
+        // matter: a late drain looks identical to a late event otherwise.
+        var parts = ["@\(SessionLog.stamp(event.at))", event.kind.rawValue]
+        if let needID = event.needID {
+            parts.append(needID)
+        }
+        if let detail = event.detail {
+            parts.append(detail)
+        }
+        return parts.joined(separator: " ")
+    }
+
+    private static func words(for needID: String, in view: SessionView) -> String {
+        if let need = view.needs.first(where: { $0.id == needID }),
+           !need.authorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return need.authorText
+        }
+        return needID
+    }
+
     private func apply(_ status: DATLiveStatus) {
+        if status.stream != dat.stream {
+            sessionLog.append("WEAR", "stream: \(dat.stream) → \(status.stream)")
+        }
         dat = status
         for notice in status.notices {
             addNotice(notice)
@@ -453,6 +693,7 @@ final class PhoneSessionModel {
             return
         }
         notices.append(message)
+        sessionLog.append("NOTICE", message)
     }
 
     private func watchWearables() {
@@ -462,7 +703,11 @@ final class PhoneSessionModel {
         watching = true
         Task {
             for await state in Wearables.shared.registrationStateStream() {
-                self.registration = Self.registrationLabel(state)
+                let label = Self.registrationLabel(state)
+                if label != self.registration {
+                    self.sessionLog.append("WEAR", "registration: \(label)")
+                }
+                self.registration = label
             }
         }
     }

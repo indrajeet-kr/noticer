@@ -13,7 +13,31 @@ enum NeedListStore {
         else {
             return defaultNeeds
         }
-        return Array(needs.prefix(SessionLimits.maxAuthoredNeeds))
+        let repaired = repairIDs(needs)
+        if repaired.map(\.id) != needs.map(\.id) {
+            save(repaired)
+        }
+        return Array(repaired.prefix(SessionLimits.maxAuthoredNeeds))
+    }
+
+    /// Repairs ids the model typo'd on an earlier edit (e.g. "takeq-baby")
+    /// by snapping single-typo slugs back to the canonical pair. Anything
+    /// else, including her custom ids, passes through untouched. Merges drop
+    /// the later duplicate and keep the first row.
+    static func repairIDs(_ needs: [Need]) -> [Need] {
+        var seen = Set<String>()
+        var out: [Need] = []
+        for var need in needs {
+            need.id = NeedsIntentSlug.repair(
+                need.id,
+                against: [NeedsIntentSlug.takeBaby, NeedsIntentSlug.refillWater]
+            )
+            guard seen.insert(need.id).inserted else {
+                continue
+            }
+            out.append(need)
+        }
+        return out
     }
 
     static func save(_ needs: [Need]) {
