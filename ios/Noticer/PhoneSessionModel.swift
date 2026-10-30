@@ -44,6 +44,7 @@ final class PhoneSessionModel {
     var framesPassed = 0
     var gateLine = "No frame yet"
     var toolLine = "No model turn yet"
+    var modelCalls = 0
     var cueLine = "No cue yet"
     var masteryLine = "Mastery not running"
     var headStartLine = "Head start not running"
@@ -158,6 +159,42 @@ final class PhoneSessionModel {
         NeedListStore.save(needs)
     }
 
+    /// Turns a freshly added need's UUID into a slug from her words. Existing ids such as
+    /// `take-baby` stay put. Called when she leaves the card, and again when a session starts.
+    func nameNeed(id: String) {
+        guard let index = needs.firstIndex(where: { $0.id == id }),
+              UUID(uuidString: needs[index].id) != nil
+        else {
+            return
+        }
+        let taken = Set(needs.enumerated().compactMap { offset, need in
+            offset == index ? nil : need.id
+        })
+        guard let slug = NeedListStore.readableID(from: needs[index].authorText, avoiding: taken) else {
+            return
+        }
+        needs[index].id = slug
+        saveNeeds()
+    }
+
+    func nameUnnamedNeeds() {
+        for id in needs.map(\.id) {
+            nameNeed(id: id)
+        }
+    }
+
+    /// Blank whisper uses her words. The list on screen can leave that line empty.
+    func needsForSession() -> [Need] {
+        nameUnnamedNeeds()
+        return needs.map { need in
+            var copy = need
+            if copy.cueWording.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                copy.cueWording = copy.authorText.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+            return copy
+        }
+    }
+
     func addNeed() {
         guard needs.count < SessionLimits.maxAuthoredNeeds else {
             return
@@ -192,6 +229,7 @@ final class PhoneSessionModel {
         framesPassed = 0
         gateLine = "No frame yet"
         toolLine = "No model turn yet"
+        modelCalls = 0
         cueLine = "No cue yet"
         masteryLine = "Mastery not running"
         headStartLine = "Head start not running"
@@ -300,7 +338,7 @@ final class PhoneSessionModel {
             let clock = SessionClock.manual(startingAt: first.capturedAt)
             let session = try SessionPipeline(
                 clock: clock,
-                needs: needs,
+                needs: needsForSession(),
                 model: recording.client,
                 speaker: speaker
             )
@@ -330,7 +368,7 @@ final class PhoneSessionModel {
         try await live.start()
         let session = try SessionPipeline(
             clock: .wall(),
-            needs: needs,
+            needs: needsForSession(),
             model: AgentSeam.makeLiveClient(),
             speaker: speaker
         )
@@ -374,8 +412,11 @@ final class PhoneSessionModel {
         if let cue = step.spoken.last {
             cueLine = cue.kind == .chime ? "Chime" : cue.text
         }
+        modelCalls = view.modelCalls
         if let error = step.modelError {
             toolLine = error
+        } else if let summary = step.modelSummary {
+            toolLine = summary
         } else if let event = view.log.last {
             toolLine = Self.describe(event)
         }

@@ -8,6 +8,19 @@ struct ContentView: View {
     @Environment(\.scenePhase) private var scenePhase
     @State private var apiKeyDraft = ""
     @State private var keyMessage: String?
+    @FocusState private var focusedNeedField: NeedField?
+
+    private enum NeedField: Hashable {
+        case words(String)
+        case whisper(String)
+
+        var needID: String {
+            switch self {
+            case .words(let id), .whisper(let id):
+                return id
+            }
+        }
+    }
 
     var body: some View {
         ScrollView {
@@ -46,6 +59,12 @@ struct ContentView: View {
         .onChange(of: model.needs) { _, _ in
             model.saveNeeds()
         }
+        .onChange(of: focusedNeedField) { previous, current in
+            guard let previous, previous.needID != current?.needID else {
+                return
+            }
+            model.nameNeed(id: previous.needID)
+        }
     }
 
     private var header: some View {
@@ -82,6 +101,7 @@ struct ContentView: View {
             Text("Glasses \(model.dat.deviceType) · battery \(model.dat.battery) · thermal \(model.dat.thermal) · hinge \(model.dat.hinge)")
             Text("Stream \(model.dat.stream)")
             Text("Frames \(model.framesSeen) seen, \(model.framesPassed) passed")
+            Text("Model calls \(model.modelCalls)")
             Text(model.gateLine)
             Text(model.toolLine)
             Text(model.cueLine)
@@ -186,14 +206,17 @@ struct ContentView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Mom's list")
                 .font(.headline)
-            Text("Up to \(SessionLimits.maxAuthoredNeeds). Scenarios use take-baby and refill-water.")
+            Text("Up to \(SessionLimits.maxAuthoredNeeds). Write what she needs in her own words. Leave the whisper blank to say that same line.")
                 .font(.footnote)
                 .foregroundStyle(.secondary)
             ForEach($model.needs) { $need in
                 VStack(alignment: .leading, spacing: 8) {
-                    TextField("Id", text: $need.id)
                     TextField("What she needs", text: $need.authorText, axis: .vertical)
-                    TextField("Cue", text: $need.cueWording, axis: .vertical)
+                        .focused($focusedNeedField, equals: .words(need.id))
+                        .textInputAutocapitalization(.sentences)
+                    TextField("What to whisper, if it should differ", text: $need.cueWording, axis: .vertical)
+                        .focused($focusedNeedField, equals: .whisper(need.id))
+                        .textInputAutocapitalization(.sentences)
                     Stepper("Priority \(need.priority)", value: $need.priority, in: 0...5)
                     Toggle("Allow a check-in if a re-check is inconclusive", isOn: $need.allowsCheckIn)
                     Button("Remove") {
