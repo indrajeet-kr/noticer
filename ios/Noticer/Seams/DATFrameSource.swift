@@ -133,6 +133,11 @@ private actor DATEngine {
         do {
             try await openSessionIfNeeded()
             try attachFreshCamera(allowNewSession: true)
+        } catch is CancellationError {
+            running = false
+            acceptingFrames = false
+            errorTask?.cancel()
+            throw CancellationError()
         } catch {
             let wrapped = Self.wrap(error)
             running = false
@@ -253,8 +258,16 @@ private actor DATEngine {
             }
         }
         // No device filter. `.rayBanMetaOptics` must be eligible.
+        // Permission can return before the glasses link is up. Creating a session
+        // in that gap throws noEligibleDevice even though Meta AI just showed them.
         let selector = AutoDeviceSelector(wearables: wearables)
-        let created = try wearables.createSession(deviceSelector: selector)
+        try await waitForActiveDevice(selector, wearables: wearables)
+        let created: DeviceSession
+        do {
+            created = try wearables.createSession(deviceSelector: selector)
+        } catch DeviceSessionError.noEligibleDevice {
+            throw DATSourceError.message(Self.noGlassesMessage(wearables))
+        }
         session = created
         errorTask?.cancel()
         errorTask = Task {
@@ -268,6 +281,71 @@ private actor DATEngine {
             try await waitForTransition(states)
         }
         refreshDevice(created)
+    }
+
+    /// `AutoDeviceSelector` only exposes a device whose link is `.connected`.
+    private func waitForActiveDevice(
+        _ selector: AutoDeviceSelector,
+        wearables: any WearablesInterface
+    ) async throws {
+        if selector.activeDevice != nil {
+            return
+        }
+        status.stream = "Waiting for glasses"
+        publish()
+        let stream = selector.activeDeviceStream()
+        let becameActive = await withTaskGroup(of: Bool?.self) { group in
+            group.addTask {
+                for await identifier in stream {
+                    if identifier != nil {
+                        return true
+                    }
+                }
+                return false
+            }
+            group.addTask {
+                do {
+                    try await Task.sleep(for: .seconds(20))
+                    return nil
+                } catch {
+                    return nil
+                }
+            }
+            for await value in group {
+                if let value {
+                    group.cancelAll()
+                    return value
+                }
+            }
+            return false
+        }
+        try Task.checkCancellation()
+        if becameActive || selector.activeDevice != nil {
+            return
+        }
+        throw DATSourceError.message(Self.noGlassesMessage(wearables))
+    }
+
+    private static func noGlassesMessage(_ wearables: any WearablesInterface) -> String {
+        let seen = wearables.devices.compactMap { wearables.deviceForIdentifier($0) }
+        if seen.isEmpty {
+            return "No glasses are connected. Put them on and unfold them. In Meta AI, open Settings → App Info, tap the version five times, turn Developer Mode on, and install the Device Access Toolkit."
+        }
+        let details = seen.map { device in
+            "\(device.nameOrId()) is \(linkLabel(device.linkState))"
+        }.joined(separator: ". ")
+        return "No glasses are connected. \(details). Keep them unfolded and connected in the Meta AI app, then tap Start again."
+    }
+
+    private static func linkLabel(_ state: LinkState) -> String {
+        switch state {
+        case .connected:
+            return "connected"
+        case .connecting:
+            return "connecting"
+        case .disconnected:
+            return "disconnected"
+        }
     }
 
     private func waitForTransition(_ states: AsyncStream<DeviceSessionState>) async throws {
@@ -540,7 +618,7 @@ private actor DATEngine {
         }
         switch error {
         case .noEligibleDevice:
-            return "No glasses are connected. Turn them on and connect them in the Meta AI app."
+            return "No glasses are connected. Put them on and unfold them, and install the Device Access Toolkit from Developer Mode in the Meta AI app."
         case .sessionAlreadyExists:
             return "A glasses session is already open."
         case .sessionAlreadyStopped:

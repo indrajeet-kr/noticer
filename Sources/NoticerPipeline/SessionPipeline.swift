@@ -8,17 +8,21 @@ public struct PipelineStep: Equatable, Sendable {
     public var decisions: [ToolHandlerResult]
     public var modelError: String?
     public var speechError: String?
+    /// The tool Meta just returned. A no-change reply does not write an engine event.
+    public var modelSummary: String?
 
     public init(
         spoken: [Cue],
         decisions: [ToolHandlerResult],
         modelError: String? = nil,
-        speechError: String? = nil
+        speechError: String? = nil,
+        modelSummary: String? = nil
     ) {
         self.spoken = spoken
         self.decisions = decisions
         self.modelError = modelError
         self.speechError = speechError
+        self.modelSummary = modelSummary
     }
 }
 
@@ -91,7 +95,6 @@ public actor SessionPipeline {
     private let clock: SessionClock
     private var engine: NeedEngine<SessionClock>
     private var spokenCueIDs: Set<String> = []
-    private var failedCallID: String?
     private var modelInFlight = false
 
     public init(
@@ -147,10 +150,8 @@ public actor SessionPipeline {
         }
         var decisions: [ToolHandlerResult] = []
         var modelError: String?
+        var modelSummary: String?
         while let call = engine.pendingModelCall {
-            if failedCallID == call.id {
-                break
-            }
             modelInFlight = true
             let verdict: ModelVerdict
             do {
@@ -165,12 +166,11 @@ public actor SessionPipeline {
                 break
             } catch {
                 modelInFlight = false
-                failedCallID = call.id
+                engine.abandonInFlightCall()
                 modelError = String(describing: error)
                 break
             }
             modelInFlight = false
-            failedCallID = nil
             let decision = caps.decide(
                 verdict: verdict,
                 session: capSession(),
@@ -178,14 +178,31 @@ public actor SessionPipeline {
             )
             engine.handle(callID: call.id, verdict: verdict)
             decisions.append(decision)
+            modelSummary = Self.summary(verdict)
         }
         let (spoken, speechError) = try await speakNewCues()
         return PipelineStep(
             spoken: spoken,
             decisions: decisions,
             modelError: modelError,
-            speechError: speechError
+            speechError: speechError,
+            modelSummary: modelSummary
         )
+    }
+
+    /// One line for the phone. `report_no_transition` does not latch, so the engine log stays empty.
+    private static func summary(_ verdict: ModelVerdict) -> String {
+        let need = verdict.assessment.needID ?? "no need"
+        let partner: String
+        if verdict.assessment.partnerInView == true {
+            partner = "partner in view"
+        } else if verdict.assessment.partnerInView == false {
+            partner = "partner not in view"
+        } else {
+            partner = "partner unset"
+        }
+        let sustained = verdict.assessment.sustainedAcrossStrip == true ? "sustained" : "not sustained"
+        return "Meta \(verdict.tool.rawValue) \(need), \(partner), \(sustained)"
     }
 
     /// Races the model call against the engine's in-flight stale window.
