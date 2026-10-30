@@ -1,15 +1,22 @@
 import Foundation
 
-/// Glance keyframes. One sharp frame per glance, and one every 4 s while the
-/// scene stays active. History older than 60 s is dropped.
+/// Glance keyframes. One sharp frame per glance, and one every
+/// `continuousPresenceKeyframeSeconds` while the scene stays active.
+/// History older than the profile's buffer window is dropped.
 ///
-/// A glance starts after at least 2 s without an admitted frame. A person rect
-/// from replay or a test counts, and so does `sceneActive` from the signal gate.
-/// Only a person rect updates `lastPersonSeenAt`. Spark's `partner_in_view`
-/// does that later, through `notePersonSeen`. Inside a glance, a sharper frame
-/// (higher Laplacian variance) replaces the current slot until the next 4 s
-/// boundary. Callers pass `sharpness`; this type does not decode JPEG.
+/// A glance starts after `glanceAbsentSeconds` without an admitted frame.
+/// A person rect from replay or a test counts, and so does `sceneActive`
+/// from the signal gate. Only a person rect updates `lastPersonSeenAt`.
+/// Spark's `partner_in_view` does that later, through `notePersonSeen`.
+/// Inside a glance, a sharper frame (higher Laplacian variance) replaces
+/// the current slot until the next presence boundary. Callers pass
+/// `sharpness`; this type does not decode JPEG.
 struct KeyframeBuffer {
+    var timing: TimingProfile
+
+    init(timing: TimingProfile = .standard) {
+        self.timing = timing
+    }
     private struct Slot {
         var id: String
         var episodeID: String
@@ -41,7 +48,7 @@ struct KeyframeBuffer {
         if active {
             let newEpisode: Bool
             if let lastActiveAt {
-                newEpisode = time.timeIntervalSince(lastActiveAt) >= SessionLimits.glanceAbsentSeconds
+                newEpisode = time.timeIntervalSince(lastActiveAt) >= timing.glanceAbsentSeconds
             } else {
                 newEpisode = true
             }
@@ -50,7 +57,7 @@ struct KeyframeBuffer {
                     freezeOpenSlot()
                     beginSlot(episodeID: nextEpisodeID(), at: time, frame: frame, sharpness: sharpness)
                 } else if let slot = openSlot,
-                          time.timeIntervalSince(slot.slotStartedAt) >= SessionLimits.continuousPresenceKeyframeSeconds {
+                          time.timeIntervalSince(slot.slotStartedAt) >= timing.continuousPresenceKeyframeSeconds {
                     let episodeID = slot.episodeID
                     freezeOpenSlot()
                     beginSlot(episodeID: episodeID, at: time, frame: frame, sharpness: sharpness)
@@ -65,7 +72,7 @@ struct KeyframeBuffer {
                 lastPersonSeenAt = time
             }
         } else if let lastActiveAt,
-                  time.timeIntervalSince(lastActiveAt) >= SessionLimits.glanceAbsentSeconds {
+                  time.timeIntervalSince(lastActiveAt) >= timing.glanceAbsentSeconds {
             freezeOpenSlot()
         }
         expire(now: max(now, time))
@@ -81,17 +88,17 @@ struct KeyframeBuffer {
     }
 
     mutating func expire(now: Date) {
-        committed.removeAll { now.timeIntervalSince($0.capturedAt) > SessionLimits.keyframeBufferSeconds }
-        if let open = openSlot, now.timeIntervalSince(open.capturedAt) > SessionLimits.keyframeBufferSeconds {
+        committed.removeAll { now.timeIntervalSince($0.capturedAt) > timing.keyframeBufferSeconds }
+        if let open = openSlot, now.timeIntervalSince(open.capturedAt) > timing.keyframeBufferSeconds {
             openSlot = nil
         }
     }
 
     func keyframes(now: Date) -> [Keyframe] {
         var slots = committed.filter {
-            now.timeIntervalSince($0.capturedAt) <= SessionLimits.keyframeBufferSeconds
+            now.timeIntervalSince($0.capturedAt) <= timing.keyframeBufferSeconds
         }
-        if let openSlot, now.timeIntervalSince(openSlot.capturedAt) <= SessionLimits.keyframeBufferSeconds {
+        if let openSlot, now.timeIntervalSince(openSlot.capturedAt) <= timing.keyframeBufferSeconds {
             slots.append(openSlot)
         }
         slots.sort { $0.capturedAt < $1.capturedAt }
@@ -108,14 +115,14 @@ struct KeyframeBuffer {
         }
     }
 
-    /// Up to three keyframes, newest biased, each at least 4 s from the last pick.
+    /// Up to three keyframes, newest biased, each at least one spacing interval from the last pick.
     func modelStrip(now: Date) -> [Keyframe] {
         let frames = keyframes(now: now)
         var newestFirst: [Keyframe] = []
         for frame in frames.reversed() {
             if let newer = newestFirst.last {
                 let gap = newer.capturedAt.timeIntervalSince(frame.capturedAt)
-                if gap >= SessionLimits.latchMinKeyframeSpacingSeconds {
+                if gap >= timing.latchMinKeyframeSpacingSeconds {
                     newestFirst.append(frame)
                 }
             } else {

@@ -3,17 +3,17 @@ import Foundation
 /// Pure fade math. `MasteryState.phase` only classifies; these functions write
 /// the stored score and streaks the phase reads.
 enum MasteryMath {
-    /// `H = H0 * (1 + 2m)`, then the 120 s cap.
+    /// `H = H0 * (1 + 2m)`, then the profile's head-start cap.
     /// `dwellSeconds` overrides H0 only when mom set it (non-nil).
-    static func headStartSeconds(for need: Need) -> TimeInterval {
+    static func headStartSeconds(for need: Need, timing: TimingProfile = .standard) -> TimeInterval {
         let base: TimeInterval
         if let dwell = need.dwellSeconds {
             base = max(0, dwell)
         } else {
-            base = SessionLimits.defaultHeadStartSeconds
+            base = timing.defaultHeadStartSeconds
         }
         let scaled = base * (1 + CueFadeSpec.headStartMasteryCoefficient * need.mastery.score)
-        return min(scaled, SessionLimits.headStartCapSeconds)
+        return min(scaled, timing.headStartCapSeconds)
     }
 
     static func applySelfNotice(_ state: MasteryState) -> MasteryState {

@@ -73,8 +73,9 @@ public struct NeedEngine<TimeSource: Clock> {
     }
 
     private let clock: TimeSource
+    private let timing: TimingProfile
     private var catalog: Catalog
-    private var buffer = KeyframeBuffer()
+    private var buffer: KeyframeBuffer
     private var visitor = VisitorMonitor()
     private var tracked: [TrackedNeed] = []
     private var choreMark: ChoreMark?
@@ -99,8 +100,10 @@ public struct NeedEngine<TimeSource: Clock> {
     public private(set) var pendingModelCall: PendingModelCall?
     public private(set) var visitorUploadPaused = false
 
-    public init(clock: TimeSource, needs: [Need] = []) throws {
+    public init(clock: TimeSource, needs: [Need] = [], timing: TimingProfile = .standard) throws {
         self.clock = clock
+        self.timing = timing
+        buffer = KeyframeBuffer(timing: timing)
         catalog = try Catalog(needs)
         sessionStartedAt = clock.now()
     }
@@ -283,12 +286,12 @@ public struct NeedEngine<TimeSource: Clock> {
     }
 
     private func sessionIsOver(_ now: Date) -> Bool {
-        now.timeIntervalSince(sessionStartedAt) >= SessionLimits.maxSessionSeconds
+        now.timeIntervalSince(sessionStartedAt) >= timing.maxSessionSeconds
     }
 
     private mutating func closeNeedsWithNoPerson(now: Date) {
         guard let lastPerson = buffer.lastPersonSeenAt else { return }
-        guard now.timeIntervalSince(lastPerson) >= SessionLimits.noPersonKeyframeCloseSeconds else {
+        guard now.timeIntervalSince(lastPerson) >= timing.noPersonKeyframeCloseSeconds else {
             return
         }
         let expiring = tracked.filter { !sameChoreHolds($0, now: now) }.map(\.needID)
@@ -336,7 +339,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
         if tracked[index].pendingCueKind == nil {
             let evidenceAge = now.timeIntervalSince(tracked[index].evidenceAt)
-            if evidenceAge > SessionLimits.staleEvidenceSeconds && !tracked[index].recheckUsed {
+            if evidenceAge > timing.staleEvidenceSeconds && !tracked[index].recheckUsed {
                 beginRecheck(at: index, now: now)
                 return
             }
@@ -368,7 +371,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private func rateLimitAllows(_ now: Date) -> Bool {
         guard let lastCueAt else { return true }
-        return now.timeIntervalSince(lastCueAt) >= SessionLimits.cueRateLimitSeconds
+        return now.timeIntervalSince(lastCueAt) >= timing.cueRateLimitSeconds
     }
 
     private mutating func beginRecheck(at index: Int, now: Date) {
@@ -479,7 +482,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
         if !tracked.isEmpty {
             let heartbeatDue = lastModelCallAt.map {
-                now.timeIntervalSince($0) >= SessionLimits.heartbeatSeconds
+                now.timeIntervalSince($0) >= timing.heartbeatSeconds
             } ?? true
             if heartbeatDue || handEdgePending {
                 issue(.heartbeat, now: now)
@@ -490,11 +493,11 @@ public struct NeedEngine<TimeSource: Clock> {
         guard tracked.count < SessionLimits.maxOpenNeeds else { return }
         guard buffer.revision > revisionAtLastLatchCall else { return }
         if let lastLatchCallAt,
-           now.timeIntervalSince(lastLatchCallAt) < SessionLimits.latchMinIntervalSeconds {
+           now.timeIntervalSince(lastLatchCallAt) < timing.latchMinIntervalSeconds {
             return
         }
         let strip = buffer.modelStrip(now: now)
-        guard strip.count >= SessionLimits.latchMinKeyframes else { return }
+        guard strip.count >= timing.latchMinKeyframes else { return }
         issue(.latch, now: now)
     }
 
@@ -634,17 +637,17 @@ public struct NeedEngine<TimeSource: Clock> {
             return
         }
         if let closed = closedAt[needID],
-           now.timeIntervalSince(closed) < SessionLimits.relatchCooldownSeconds {
+           now.timeIntervalSince(closed) < timing.relatchCooldownSeconds {
             record(.latchRejected, needID: needID, detail: "cooldown")
             return
         }
         if let lastSuccessfulLatchAt,
-           now.timeIntervalSince(lastSuccessfulLatchAt) < SessionLimits.latchMinIntervalSeconds {
+           now.timeIntervalSince(lastSuccessfulLatchAt) < timing.latchMinIntervalSeconds {
             record(.latchRejected, needID: needID, detail: "latch-interval")
             return
         }
         let strip = buffer.modelStrip(now: now)
-        if strip.count < SessionLimits.latchMinKeyframes {
+        if strip.count < timing.latchMinKeyframes {
             record(.latchRejected, needID: needID, detail: "strip-too-thin")
             return
         }
@@ -666,14 +669,14 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private mutating func open(_ needID: String, now: Date) {
         guard let need = catalog.need(id: needID) else { return }
-        let headStart = MasteryMath.headStartSeconds(for: need)
+        let headStart = MasteryMath.headStartSeconds(for: need, timing: timing)
         let choreID = freshChoreID(now: now)
         tracked.append(
             TrackedNeed(
                 needID: needID,
                 latchedAt: now,
                 cueDeadline: now.addingTimeInterval(headStart),
-                hardCapAt: now.addingTimeInterval(SessionLimits.headStartCapSeconds),
+                hardCapAt: now.addingTimeInterval(timing.headStartCapSeconds),
                 evidenceAt: now,
                 handsBusy: false,
                 awaitingRecheck: false,

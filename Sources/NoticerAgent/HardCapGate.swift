@@ -132,16 +132,22 @@ public enum WearerActionRule {
 /// Visitor counts and mastery math stay on the core track.
 public struct HardCapGate: Equatable, Sendable {
     public var extensionStepSeconds: TimeInterval?
+    public var timing: TimingProfile
 
-    public init(extensionStepSeconds: TimeInterval? = nil) {
+    public init(extensionStepSeconds: TimeInterval? = nil, timing: TimingProfile = .standard) {
         self.extensionStepSeconds = extensionStepSeconds
+        self.timing = timing
     }
 
-    public static func isCueRateLimited(lastCueAt: Date?, now: Date) -> Bool {
+    public static func isCueRateLimited(
+        lastCueAt: Date?,
+        now: Date,
+        timing: TimingProfile = .standard
+    ) -> Bool {
         guard let lastCueAt else {
             return false
         }
-        return now.timeIntervalSince(lastCueAt) < SessionLimits.cueRateLimitSeconds
+        return now.timeIntervalSince(lastCueAt) < timing.cueRateLimitSeconds
     }
 
     public func decide(
@@ -185,20 +191,20 @@ public struct HardCapGate: Equatable, Sendable {
                 message: "A latch needs sustained_across_strip to be true. Confidence is not a gate."
             )
         }
-        guard keyframes.count >= SessionLimits.latchMinKeyframes else {
+        guard keyframes.count >= timing.latchMinKeyframes else {
             return reject(
                 verdict,
                 code: ToolRejectionCode.keyframeCount,
-                message: "A latch needs at least \(SessionLimits.latchMinKeyframes) keyframes."
+                message: "A latch needs at least \(timing.latchMinKeyframes) keyframes."
             )
         }
         let ages = keyframes.map(\.ageSeconds)
         let span = (ages.max() ?? 0) - (ages.min() ?? 0)
-        guard span >= SessionLimits.latchMinKeyframeSpacingSeconds else {
+        guard span >= timing.latchMinKeyframeSpacingSeconds else {
             return reject(
                 verdict,
                 code: ToolRejectionCode.keyframeSpacing,
-                message: "A latch needs keyframes at least \(Int(SessionLimits.latchMinKeyframeSpacingSeconds)) seconds apart."
+                message: "A latch needs keyframes at least \(Int(timing.latchMinKeyframeSpacingSeconds)) seconds apart."
             )
         }
         if session.openNeedIDs.contains(needID) {
@@ -216,11 +222,11 @@ public struct HardCapGate: Equatable, Sendable {
             )
         }
         if let lastLatchAt = session.lastLatchAt,
-           session.now.timeIntervalSince(lastLatchAt) < SessionLimits.latchMinIntervalSeconds {
+           session.now.timeIntervalSince(lastLatchAt) < timing.latchMinIntervalSeconds {
             return reject(
                 verdict,
                 code: ToolRejectionCode.latchInterval,
-                message: "Latch calls are at least \(Int(SessionLimits.latchMinIntervalSeconds)) seconds apart."
+                message: "Latch calls are at least \(Int(timing.latchMinIntervalSeconds)) seconds apart."
             )
         }
         if let notBefore = session.relatchNotBefore[needID], session.now < notBefore {
@@ -251,14 +257,15 @@ public struct HardCapGate: Equatable, Sendable {
                 message: "There is no open head start to defer."
             )
         }
-        if session.now >= window.hardCapAt {
+        let hardCapAt = window.startedAt.addingTimeInterval(timing.headStartCapSeconds)
+        if session.now >= hardCapAt {
             return reject(
                 verdict,
                 code: ToolRejectionCode.hardCapFiresCue,
-                message: "The \(Int(SessionLimits.headStartCapSeconds))s head-start cap has been reached, so the cue still fires."
+                message: "The \(Int(timing.headStartCapSeconds))s head-start cap has been reached, so the cue still fires."
             )
         }
-        return accept(verdict, .deferCue(needID: needID, hardCapAt: window.hardCapAt))
+        return accept(verdict, .deferCue(needID: needID, hardCapAt: hardCapAt))
     }
 
     private func wearer(_ verdict: ModelVerdict, session: CapSession) -> ToolHandlerResult {
@@ -291,7 +298,7 @@ public struct HardCapGate: Equatable, Sendable {
             return reject(
                 verdict,
                 code: ToolRejectionCode.extensionStepNotConfigured,
-                message: "No head-start extension step is configured. The step size is not a shared constant; the caller passes one. The cap stays \(Int(SessionLimits.headStartCapSeconds)) seconds."
+                message: "No head-start extension step is configured. The step size is not a shared constant; the caller passes one. The cap stays \(Int(timing.headStartCapSeconds)) seconds."
             )
         }
         guard let reason = verdict.extensionReason?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -310,12 +317,12 @@ public struct HardCapGate: Equatable, Sendable {
             )
         }
         let current = max(0, window.endsAt.timeIntervalSince(window.startedAt))
-        let room = SessionLimits.headStartCapSeconds - current
+        let room = timing.headStartCapSeconds - current
         if room <= 0 {
             return reject(
                 verdict,
                 code: ToolRejectionCode.headStartCap,
-                message: "The head start is already at the \(Int(SessionLimits.headStartCapSeconds))s cap."
+                message: "The head start is already at the \(Int(timing.headStartCapSeconds))s cap."
             )
         }
         let granted = min(step, room)

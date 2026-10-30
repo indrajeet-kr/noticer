@@ -101,15 +101,16 @@ public actor SessionPipeline {
         clock: SessionClock,
         needs: [Need],
         model: any ModelClient,
-        speaker: any CueSpeaker
+        speaker: any CueSpeaker,
+        timing: TimingProfile = .standard
     ) throws {
         let step = EngineTuning.headStartExtensionStepSeconds
         self.extensionStepSeconds = step
-        self.caps = HardCapGate(extensionStepSeconds: step)
+        self.caps = HardCapGate(extensionStepSeconds: step, timing: timing)
         self.model = model
         self.speaker = speaker
         self.clock = clock
-        self.engine = try NeedEngine(clock: clock, needs: needs)
+        self.engine = try NeedEngine(clock: clock, needs: needs, timing: timing)
     }
 
     public func view() -> SessionView {
