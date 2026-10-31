@@ -24,6 +24,13 @@ enum NeedListStore {
                 logger.notice("[NEEDS] needs-polarity-review \(reviewID, privacy: .public)")
             }
         }
+        for rewrittenID in migrated.polarityRewrittenIDs {
+            if let log {
+                log("NEEDS", "needs-polarity-rewrite \(rewrittenID)")
+            } else {
+                logger.notice("[NEEDS] needs-polarity-rewrite \(rewrittenID, privacy: .public)")
+            }
+        }
         if migrated.needs != needs {
             save(migrated.needs)
         }

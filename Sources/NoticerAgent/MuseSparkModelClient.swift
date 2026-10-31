@@ -42,6 +42,12 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
         return request.keyframes.reduce(0) { $0 + $1.jpegData.count }
     }
 
+    public static func estimatedRequestBytes(_ request: ModelRequest) -> Int {
+        let keyframesBytes = request.keyframes.reduce(0) { $0 + $1.jpegData.count }
+        let textBytes = ChatCompletionRequest.sceneText(request).utf8.count
+        return keyframesBytes + textBytes
+    }
+
     public var backend: ModelBackend
     public let configuration: MuseSparkConfiguration
     private let apiKey: String?

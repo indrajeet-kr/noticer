@@ -503,6 +503,7 @@ final class FastCuesCoreTests: EngineTestCase {
     }
 
     func testLostSceneIsNotResolution() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerHandsReceivingBaby)])
         glancePair()
         let latch = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
@@ -607,6 +608,7 @@ final class FastCuesCoreTests: EngineTestCase {
     }
 
     func testMatchingSignalCredits() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerHandsReceivingBaby)])
         glancePair()
         let latch = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
@@ -1044,5 +1046,139 @@ final class FastCuesCoreTests: EngineTestCase {
         advance(4.0)
         see([], sharpness: 0.04, jpeg: 5, sceneActive: true)
         XCTAssertEqual(engine.pendingModelCall?.purpose, .heartbeat)
+    }
+
+    func testUnclearResolutionWithHandsVisibleDoesNotCredit() throws {
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+        let initialMastery = mastery(of: "take-baby")
+
+        advance(SessionLimits.heartbeatSeconds)
+        see([mom()], jpeg: 3)
+        let hb = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(
+            callID: hb.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .reportNeedResolved,
+                assessment: SceneAssessment(
+                    needID: "take-baby",
+                    sustainedAcrossStrip: false,
+                    wearerHandsOccupied: false,
+                    partnerInView: false,
+                    wearerHandsVisible: true,
+                    resolution: .unknown,
+                    actionCode: nil,
+                    confidence: 0.8
+                )
+            )
+        )
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(mastery(of: "take-baby"), initialMastery)
+        XCTAssertEqual(events(.stillOpen).last?.detail, "unclear")
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+    }
+
+    func testUnclearResolutionAfterCueDoesNotCredit() throws {
+        engine = try NeedEngine(clock: clock, needs: [Self.takeBaby()], timing: .quick)
+        see([mom()], jpeg: 1)
+        advance(2)
+        see([mom()], jpeg: 2)
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        var v = latchVerdict("take-baby")
+        v.assessment.partnerInView = true
+        engine.handle(callID: latch.id, verdict: v)
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+
+        let open = try XCTUnwrap(engine.openNeeds.first)
+        advance(to: open.cueDeadline)
+        engine.tick()
+        XCTAssertFalse(engine.cues.isEmpty, "cue must have fired")
+        XCTAssertTrue(events(.cueFired).contains { $0.needID == "take-baby" })
+        let masteryAfterCue = mastery(of: "take-baby")
+
+        advance(SessionLimits.heartbeatSeconds)
+        see([mom()], jpeg: 3)
+        let hb = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(
+            callID: hb.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .reportNeedResolved,
+                assessment: SceneAssessment(
+                    needID: "take-baby",
+                    sustainedAcrossStrip: false,
+                    wearerHandsOccupied: false,
+                    partnerInView: false,
+                    wearerHandsVisible: true,
+                    resolution: .unknown,
+                    actionCode: nil,
+                    confidence: 0.8
+                )
+            )
+        )
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(mastery(of: "take-baby"), masteryAfterCue)
+        XCTAssertEqual(events(.stillOpen).last?.detail, "unclear")
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+    }
+
+    func testNilSignalNeedNeverCreditsFromIntervention() throws {
+        let needWithoutSignal = EngineTestCase.takeBaby(selfNotice: nil)
+        engine = try NeedEngine(clock: clock, needs: [needWithoutSignal], timing: .quick)
+        see([], sharpness: 0.04, jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], sharpness: 0.05, jpeg: 2, sceneActive: true)
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+
+        advance(SessionLimits.heartbeatSeconds)
+        see([], sharpness: 0.04, jpeg: 3, sceneActive: true)
+        let call = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(
+            callID: call.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .logWearerIntervention,
+                assessment: SceneAssessment(
+                    needID: "take-baby",
+                    sustainedAcrossStrip: true,
+                    wearerHandsOccupied: false,
+                    partnerInView: false,
+                    wearerHandsVisible: true,
+                    resolution: nil,
+                    actionCode: "wearer_anything",
+                    confidence: 0.8
+                )
+            )
+        )
+        XCTAssertEqual(events(.actionRejected).last?.detail, "unrelated-wearer-action")
+        XCTAssertNil(engine.openNeeds.first?.pendingWearerAction)
+
+        advance(SessionLimits.heartbeatSeconds)
+        see([], sharpness: 0.04, jpeg: 4, sceneActive: true)
+        let nextCall = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(
+            callID: nextCall.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .reportNeedResolved,
+                assessment: SceneAssessment(
+                    needID: "take-baby",
+                    sustainedAcrossStrip: false,
+                    wearerHandsOccupied: false,
+                    partnerInView: false,
+                    wearerHandsVisible: true,
+                    resolution: .unknown,
+                    actionCode: nil,
+                    confidence: 0.8
+                )
+            )
+        )
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(mastery(of: "take-baby").score, 0)
     }
 }

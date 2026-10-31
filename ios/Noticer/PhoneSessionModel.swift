@@ -110,6 +110,7 @@ final class PhoneSessionModel {
     private var seenCueIDs: Set<String> = []
     private var seenLogCount = 0
     private var lastSeenModelCalls = 0
+    private var activeIngestTasks: [UUID: Task<Void, Never>] = [:]
 
     var replayOptions: [ReplayOption] {
         let scenarioOptions = scenarios.map { ReplayOption(kind: .scenario, name: $0.scenarioID) }
@@ -353,10 +354,6 @@ final class PhoneSessionModel {
         }
         let activeNeeds = needsForSession()
         sessionLog.append("SESSION", "start mode=\(mode == .replay ? "replay" : "live") timing=\(quickTiming ? "quick" : "standard") needs=\(activeNeeds.count) key=\(ModelKeyStore.currentKey() == nil ? "missing" : "saved")")
-        let migrated = NeedPolarityMigration.migrate(activeNeeds)
-        for reviewID in migrated.needsPolarityReviewIDs {
-            sessionLog.append("NEEDS", "needs-polarity-review \(reviewID)")
-        }
         for need in activeNeeds {
             let dwell = need.dwellSeconds.map { String(Int($0)) } ?? "—"
             let signal = need.selfNoticeSignal ?? "—"
@@ -526,11 +523,12 @@ final class PhoneSessionModel {
         await gate.reset()
         await session.prepareSpeaker()
         phase = "Watching"
-        var ingestTasks: [Task<Void, Never>] = []
+        var lastDroppedBusyLog: Date?
         let ticker = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
                 guard let self, self.isRunning, self.sceneActive, !Task.isCancelled else { continue }
+                guard self.activeIngestTasks.isEmpty else { continue }
                 if let step = try? await session.tick() {
                     self.apply(step, await session.view())
                 }
@@ -538,7 +536,7 @@ final class PhoneSessionModel {
         }
         defer {
             ticker.cancel()
-            for task in ingestTasks {
+            for task in activeIngestTasks.values {
                 task.cancel()
             }
         }
@@ -554,8 +552,20 @@ final class PhoneSessionModel {
             guard let frame = try await live.nextFrame() else {
                 break
             }
+            if activeIngestTasks.count >= (session.latency.maxInFlight + 1) {
+                let now = Date()
+                if lastDroppedBusyLog == nil || now.timeIntervalSince(lastDroppedBusyLog!) >= 1.0 {
+                    lastDroppedBusyLog = now
+                    sessionLog.append("FRAME", "dropped busy")
+                }
+                continue
+            }
             let snapshot = await evaluateFrame(frame, session: session)
+            let taskID = UUID()
             let ingestTask = Task { @MainActor [weak self] in
+                defer {
+                    self?.activeIngestTasks.removeValue(forKey: taskID)
+                }
                 do {
                     let step = try await session.ingest(frame: frame, gate: snapshot)
                     if let self, self.isRunning, !Task.isCancelled {
@@ -572,20 +582,16 @@ final class PhoneSessionModel {
                     }
                 }
             }
-            ingestTasks.append(ingestTask)
-            if ingestTasks.count > 8 {
-                ingestTasks.removeFirst()
-            }
+            activeIngestTasks[taskID] = ingestTask
         }
         ticker.cancel()
-        if Task.isCancelled || !isRunning {
-            for task in ingestTasks {
-                task.cancel()
-            }
+        for task in activeIngestTasks.values {
+            task.cancel()
         }
-        for task in ingestTasks {
+        for task in activeIngestTasks.values {
             await task.value
         }
+        activeIngestTasks.removeAll()
     }
 
     private func evaluateFrame(_ frame: CameraFrame, session: SessionPipeline) async -> FrameGateSnapshot {

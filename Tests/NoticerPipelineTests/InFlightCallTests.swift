@@ -325,6 +325,28 @@ final class InFlightCallTests: XCTestCase {
         }
         XCTFail("timed out waiting for the in-flight call")
     }
+
+    func testOutOfOrderFrameIgnored() async throws {
+        let origin = Date(timeIntervalSince1970: 1_700_000_000)
+        let clock = SessionClock.manual(startingAt: origin)
+        let pipeline = try SessionPipeline(
+            clock: clock,
+            needs: [MVPNeedList.takeBaby],
+            model: ScriptedModelClient(responses: []),
+            speaker: RecordingCueSpeaker(),
+            timing: .quick
+        )
+        let t2 = origin.addingTimeInterval(2)
+        let t1 = origin.addingTimeInterval(1)
+
+        _ = try await pipeline.ingest(frame: frame(at: t2, marker: 2), gate: gate(at: t2))
+        let revAfterT2 = await pipeline.bufferRevision
+        XCTAssertGreaterThan(revAfterT2, 0)
+
+        _ = try await pipeline.ingest(frame: frame(at: t1, marker: 1), gate: gate(at: t1))
+        let revAfterT1 = await pipeline.bufferRevision
+        XCTAssertEqual(revAfterT1, revAfterT2, "out-of-order frame must not advance buffer revision")
+    }
 }
 
 private struct ThrowingClient: ModelClient, Sendable {

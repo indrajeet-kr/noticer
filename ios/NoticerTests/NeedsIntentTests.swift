@@ -499,6 +499,45 @@ final class NeedsIntentTests: XCTestCase {
         XCTAssertEqual(need.selfNoticeSignal, "wearer_placing_water_bottle_on_table")
     }
 
+    func testInvalidWearerSignalRejectedAndFallsBackToOldNeed() async throws {
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            toolName: "set_needs",
+            arguments: toolArguments([
+                "needs": [
+                    [
+                        "id": "water",
+                        "authorText": "Keep water bottle on dining table",
+                        "whisper": "Maybe set water on the table?",
+                        "priority": "normal",
+                        "allowsCheckIn": false,
+                        "problem_visual": "dining table visible with no water bottle",
+                        "handled_visual": "water bottle on the dining table",
+                        "wearer_signal": "invalid signal with spaces",
+                    ],
+                ],
+                "readBack": "I'll help him keep water on the dining table.",
+            ])
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "test")
+        guard case .needs(let drafts, _) = result else {
+            return XCTFail("expected set_needs, got \(result)")
+        }
+        let draft = try XCTUnwrap(drafts.first)
+        XCTAssertEqual(draft.wearerSignal, "", "invalid wearer_signal must be normalized to empty")
+
+        let existing = Need(
+            id: "water",
+            authorText: "Keep water bottle on dining table",
+            cueWording: "Maybe set water on the table?",
+            selfNoticeSignal: "wearer_placing_water_bottle_on_table",
+            priority: 0
+        )
+        let converted = NeedsIntentConversion.toNeeds(drafts, current: [existing])
+        let need = try XCTUnwrap(converted.first)
+        XCTAssertEqual(need.selfNoticeSignal, "wearer_placing_water_bottle_on_table", "empty signal must fall back to existing need")
+    }
+
     func testLegacyVisualCueStillDecodes() async throws {
         let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
             toolName: "set_needs",

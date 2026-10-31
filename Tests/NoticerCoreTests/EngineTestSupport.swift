@@ -19,7 +19,7 @@ class EngineTestCase: XCTestCase {
         dwell: TimeInterval? = nil,
         mastery: MasteryState = .initial,
         allowsCheckIn: Bool = false,
-        selfNotice: String? = ActionCodeExamples.wearerHandsReceivingBaby,
+        selfNotice: String? = nil,
         wording: String = "Her plate's getting cold, maybe take the baby?"
     ) -> Need {
         Need(

@@ -7,10 +7,13 @@ public enum NeedPolarityMigration {
         public var needs: [Need]
         /// Need ids whose text did not match the small keyword map and stayed `nil`.
         public var needsPolarityReviewIDs: [String]
+        /// Need ids whose visualCondition was rewritten to invert polarity.
+        public var polarityRewrittenIDs: [String]
 
-        public init(needs: [Need], needsPolarityReviewIDs: [String]) {
+        public init(needs: [Need], needsPolarityReviewIDs: [String], polarityRewrittenIDs: [String] = []) {
             self.needs = needs
             self.needsPolarityReviewIDs = needsPolarityReviewIDs
+            self.polarityRewrittenIDs = polarityRewrittenIDs
         }
     }
 
@@ -18,6 +21,7 @@ public enum NeedPolarityMigration {
         var output: [Need] = []
         output.reserveCapacity(input.count)
         var reviewIDs: [String] = []
+        var rewrittenIDs: [String] = []
 
         for var need in input {
             let trimmedHandled = need.handledCondition?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
@@ -47,6 +51,7 @@ public enum NeedPolarityMigration {
                        !visual.contains("empty"),
                        !visual.contains("missing") {
                         need.visualCondition = "dining table visible with no water bottle"
+                        rewrittenIDs.append(need.id)
                     }
                 } else {
                     need.handledCondition = "glass or bottle of water within reach"
@@ -66,6 +71,6 @@ public enum NeedPolarityMigration {
             output.append(need)
         }
 
-        return Result(needs: output, needsPolarityReviewIDs: reviewIDs)
+        return Result(needs: output, needsPolarityReviewIDs: reviewIDs, polarityRewrittenIDs: rewrittenIDs)
     }
 }

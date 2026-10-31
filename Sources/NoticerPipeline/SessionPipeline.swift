@@ -105,6 +105,7 @@ public actor SessionPipeline {
     private var pendingSpeechError: String?
     private var speakerPrepared = false
     private var lastRateSummaryAt: Date
+    private var newestIngestedCapturedAt: Date?
 
     public init(
         clock: SessionClock,
@@ -150,7 +151,13 @@ public actor SessionPipeline {
         )
     }
 
+    public var bufferRevision: Int { engine.bufferRevision }
+
     public func ingest(frame: CameraFrame, gate: FrameGateSnapshot) async throws -> PipelineStep {
+        if let newest = newestIngestedCapturedAt, frame.capturedAt < newest {
+            return PipelineStep(spoken: [], decisions: [])
+        }
+        newestIngestedCapturedAt = frame.capturedAt
         engine.ingest(frame: frame, gate: gate)
         noteIssuedTimestamps()
         noteCueWallTimestamps()
@@ -328,7 +335,7 @@ public actor SessionPipeline {
     }
 
     private static func estimateRequestBytes(_ request: ModelRequest) -> Int {
-        MuseSparkModelClient.encodedRequestByteCount(request)
+        MuseSparkModelClient.estimatedRequestBytes(request)
     }
 
     /// One line for the phone. `report_no_transition` does not latch, so the engine log stays empty.

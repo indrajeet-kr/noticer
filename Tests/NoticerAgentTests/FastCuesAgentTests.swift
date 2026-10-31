@@ -1,8 +1,3 @@
-#if canImport(CoreGraphics)
-import CoreGraphics
-import ImageIO
-import UniformTypeIdentifiers
-#endif
 import Foundation
 import XCTest
 @testable import NoticerAgent
@@ -13,9 +8,13 @@ final class FastCuesAgentTests: XCTestCase {
     // MARK: - Payload Bounds (448 px JPEGs)
 
     func testScoutingPayloadUnderBound() throws {
-        let jpeg1 = try make448FixtureJPEG(seed: 17)
-        let jpeg2 = try make448FixtureJPEG(seed: 53)
-        let jpeg3 = try make448FixtureJPEG(seed: 91)
+        let jpeg1 = try loadKeyframeFixture("scout-448-a.jpg")
+        let jpeg2 = try loadKeyframeFixture("scout-448-b.jpg")
+        let jpeg3 = try loadKeyframeFixture("scout-448-c.jpg")
+
+        XCTAssertGreaterThanOrEqual(jpeg1.count, 12 * 1024)
+        XCTAssertGreaterThanOrEqual(jpeg2.count, 12 * 1024)
+        XCTAssertGreaterThanOrEqual(jpeg3.count, 12 * 1024)
 
         let needs = [
             Need(
@@ -242,85 +241,17 @@ final class FastCuesAgentTests: XCTestCase {
         XCTAssertNil(parsedTrue.assessment.actionCode)
     }
 
+    func testDeveloperPromptWearerRuleMatchesPlan() {
+        let prompt = DeveloperPrompt.text
+        XCTAssertTrue(prompt.contains("or the item appeared without the wearer"))
+        XCTAssertFalse(prompt.contains("right in front of the wearer"))
+    }
+
     // MARK: - Helpers
 
-    private func make448FixtureJPEG(seed: UInt64) throws -> Data {
-        #if canImport(CoreGraphics)
-        let width = LatencyTuning.default.uploadMaxEdge
-        let height = 336 // 4:3 glasses aspect ratio at 448 max edge
-        var pixels = [UInt8](repeating: 255, count: width * height * 4)
-        let offset = Int(seed % 40)
-        for y in 0..<height {
-            let isFloor = y > (height * 2) / 3
-            for x in 0..<width {
-                // Coarse 16x16 room lighting + table/couch/person geometry matching indoor frames.
-                let bx = (x + offset) / 16
-                let by = y / 16
-                let patch = ((bx &* 13 &+ by &* 7 &+ Int(seed)) & 0x0F) - 8
-                let inTable = (x > 90 + offset && x < 310 + offset && y > 180 && y < 270)
-                let inPerson = (x > 160 && x < 250 && y > 80 && y < 230)
-                let baseR: Int
-                let baseG: Int
-                let baseB: Int
-                if inPerson {
-                    baseR = 95; baseG = 115; baseB = 145
-                } else if inTable {
-                    baseR = 155; baseG = 120; baseB = 85
-                } else if isFloor {
-                    baseR = 135; baseG = 125; baseB = 110
-                } else {
-                    baseR = 205 - (y * 30) / height
-                    baseG = 200 - (y * 25) / height
-                    baseB = 192 - (y * 20) / height
-                }
-                let idx = (y * width + x) * 4
-                pixels[idx] = UInt8(clamping: baseR + patch)
-                pixels[idx + 1] = UInt8(clamping: baseG + patch)
-                pixels[idx + 2] = UInt8(clamping: baseB + patch)
-                pixels[idx + 3] = 255
-            }
-        }
-        let colorSpace = CGColorSpaceCreateDeviceRGB()
-        let bitmapInfo = CGImageAlphaInfo.premultipliedLast.rawValue
-        let provider = try XCTUnwrap(CGDataProvider(data: Data(pixels) as CFData))
-        let cgImage = try XCTUnwrap(
-            CGImage(
-                width: width,
-                height: height,
-                bitsPerComponent: 8,
-                bitsPerPixel: 32,
-                bytesPerRow: width * 4,
-                space: colorSpace,
-                bitmapInfo: CGBitmapInfo(rawValue: bitmapInfo),
-                provider: provider,
-                decode: nil,
-                shouldInterpolate: true,
-                intent: .defaultIntent
-            )
-        )
-        let out = NSMutableData()
-        let dest = try XCTUnwrap(
-            CGImageDestinationCreateWithData(out, UTType.jpeg.identifier as CFString, 1, nil)
-        )
-        let opts: [CFString: Any] = [
-            kCGImageDestinationLossyCompressionQuality: CGFloat(LatencyTuning.default.jpegQuality)
-        ]
-        CGImageDestinationAddImage(dest, cgImage, opts as CFDictionary)
-        XCTAssertTrue(CGImageDestinationFinalize(dest))
-        return out as Data
-        #else
-        // Deterministic synthetic JPEG payload (~8.3 KB) for non-Darwin environments (Linux CI)
-        var data = Data([0xFF, 0xD8, 0xFF, 0xE0])
-        data.append(contentsOf: [0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00])
-        let targetSize = 8_200 + Int(seed % 400)
-        let remaining = targetSize - data.count - 2
-        var val = UInt8(seed & 0xFF)
-        for _ in 0..<remaining {
-            val = val &* 31 &+ 17
-            data.append(val == 0xFF ? 0x00 : val)
-        }
-        data.append(contentsOf: [0xFF, 0xD9])
-        return data
-        #endif
+    private func loadKeyframeFixture(_ name: String) throws -> Data {
+        let root = repositoryRoot()
+        let url = root.appendingPathComponent("fixtures/keyframes/\(name)")
+        return try Data(contentsOf: url)
     }
 }

@@ -150,6 +150,8 @@ public struct NeedEngine<TimeSource: Clock> {
 
     public var cueTimings: [CueTimingSnapshot] { recordedCueTimings }
 
+    public var bufferRevision: Int { buffer.revision }
+
     public var openNeedIDs: [String] { tracked.map(\.needID) }
 
     public func callsInLastMinute(now: Date? = nil) -> Int {
@@ -921,11 +923,18 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         let pendingAction = tracked[index].pendingWearerAction
         let cleared = assessment.sustainedAcrossStrip != true
-        let wearerResolved = assessment.resolution == .caughtHimself
-            || (pendingAction != nil && cleared)
-            || (MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) && cleared)
-            || (assessment.sustainedAcrossStrip == false && assessment.wearerHandsVisible == true && assessment.partnerInView == false)
-            || (tracked[index].cueDelivered && assessment.sustainedAcrossStrip == false)
+        let wearerResolved: Bool
+        if latency.strictCredit {
+            wearerResolved = assessment.resolution == .caughtHimself
+                || (pendingAction != nil && assessment.resolution != .resolvedByPartner)
+                || (MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) && assessment.resolution != .resolvedByPartner)
+        } else {
+            wearerResolved = assessment.resolution == .caughtHimself
+                || (pendingAction != nil && cleared)
+                || (MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) && cleared)
+                || (assessment.sustainedAcrossStrip == false && assessment.wearerHandsVisible == true && assessment.partnerInView == false)
+                || (tracked[index].cueDelivered && assessment.sustainedAcrossStrip == false)
+        }
         if wearerResolved {
             if tracked[index].cueDelivered {
                 // The cue already applied applyCueFired: no self-notice step,

@@ -3,6 +3,7 @@ import XCTest
 
 final class CaughtHimselfTests: EngineTestCase {
     func testHisActionThenAClearNeedCreditsTheCatch() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerHandsReceivingBaby)])
         try latch("take-baby")
         try arm("take-baby", action: ActionCodeExamples.wearerHandsReceivingBaby)
         XCTAssertEqual(mastery(of: "take-baby").score, 0)
@@ -20,6 +21,7 @@ final class CaughtHimselfTests: EngineTestCase {
     }
 
     func testOneCallThatSeesBothTheActionAndTheClearDoesNotCreditYet() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerHandsReceivingBaby)])
         try latch("take-baby")
         try heartbeat(intervention(
             "take-baby",
@@ -55,6 +57,7 @@ final class CaughtHimselfTests: EngineTestCase {
     }
 
     func testCaughtHimselfWhileTheNeedIsStillSustainedDoesNotCredit() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerCarryingWaterTowardPartner)])
         try latch("take-baby")
         try arm("take-baby", action: ActionCodeExamples.wearerCarryingWaterTowardPartner)
         try heartbeat(noTransition("take-baby", sustained: true, resolution: .caughtHimself))

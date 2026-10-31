@@ -533,7 +533,13 @@ public enum NeedsIntentResponse {
                 throw NeedsIntentError.invalidNeeds("A need came back without an observable cue.")
             }
             let handledVisual = (raw.handledVisual ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let wearerSignal = (raw.wearerSignal ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedSignal = (raw.wearerSignal ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let wearerSignal: String
+            if trimmedSignal.range(of: #"^wearer_[a-z0-9_]+$"#, options: .regularExpression) != nil {
+                wearerSignal = trimmedSignal
+            } else {
+                wearerSignal = ""
+            }
             let whisper = NeedsIntentWhisper.clamp(raw.whisper)
             guard !whisper.isEmpty else {
                 throw NeedsIntentError.invalidNeeds("A need came back without a whisper.")
@@ -667,7 +673,13 @@ public enum NeedsIntentConversion {
             taken.insert(id)
             let old = existing[id]
             let handled = draft.handledVisual.trimmingCharacters(in: .whitespacesAndNewlines)
-            let signal = draft.wearerSignal.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedSignal = draft.wearerSignal.trimmingCharacters(in: .whitespacesAndNewlines)
+            let signal: String
+            if trimmedSignal.range(of: #"^wearer_[a-z0-9_]+$"#, options: .regularExpression) != nil {
+                signal = trimmedSignal
+            } else {
+                signal = ""
+            }
             return Need(
                 id: id,
                 authorText: draft.authorText,
