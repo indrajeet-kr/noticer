@@ -327,7 +327,7 @@ final class NeedsIntentTests: XCTestCase {
         XCTAssertEqual(NeedsIntentPriority.lenient("urgent"), .normal)
     }
 
-    func testTooManyNeedsFailsTheTurn() async throws {
+    func testTooManyNeedsAsksWhichMatter() async throws {
         var needs: [[String: Any]] = []
         for index in 0..<8 {
             needs.append([
@@ -344,12 +344,86 @@ final class NeedsIntentTests: XCTestCase {
             arguments: toolArguments(["needs": needs, "readBack": "Too many."])
         )))])
         let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
-        await XCTAssertIntentThrows(
-            try await client.interpret(currentList: [], message: "everything")
-        ) { error in
-            guard case .invalidNeeds = error else { return false }
-            return true
+        let result = try await client.interpret(currentList: [], message: "everything")
+
+        // Over capacity is a clarifying turn, not a turn failure: the sheet
+        // shows a question with her own words back as chips.
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a clarifying question, got \(result)")
         }
+        XCTAssertTrue(question.contains("6"), "the question names the list cap")
+        XCTAssertEqual(suggestions, ["need 0", "need 1", "need 2", "need 3", "need 4", "need 5"])
+    }
+
+    // MARK: Tool arguments smuggled in `content` still parse.
+
+    func testQuestionJSONInContentDecodesWithChips() async throws {
+        let content = #"{"question":"Which one?","suggestions":["Water","Baby"]}"#
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "something vague")
+
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a question, got \(result)")
+        }
+        XCTAssertEqual(question, "Which one?")
+        XCTAssertEqual(suggestions, ["Water", "Baby"])
+    }
+
+    func testFencedQuestionJSONInContentDecodes() async throws {
+        let content = "```json\n{\"question\":\"Which one?\",\"suggestions\":[\"Water\"]}\n```"
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "something vague")
+
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a question, got \(result)")
+        }
+        XCTAssertEqual(question, "Which one?")
+        XCTAssertEqual(suggestions, ["Water"])
+    }
+
+    func testSetNeedsJSONInContentDecodes() async throws {
+        let content = toolArguments([
+            "needs": [[
+                "id": "take-baby",
+                "authorText": "Take the baby",
+                "whisper": "She could use a hand.",
+                "priority": "normal",
+                "allowsCheckIn": false,
+                "visualCue": "adult eating while holding an infant in one arm",
+            ]],
+            "readBack": "One thing tonight.",
+        ])
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "take the baby")
+
+        guard case .needs(let drafts, _) = result else {
+            return XCTFail("expected needs, got \(result)")
+        }
+        XCTAssertEqual(drafts.map(\.id), ["take-baby"])
+    }
+
+    func testPlainProseInContentStaysProse() async throws {
+        let content = "Could you tell me a little more about bedtime?"
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "bedtime")
+
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a question, got \(result)")
+        }
+        XCTAssertEqual(question, content)
+        XCTAssertTrue(suggestions.isEmpty)
     }
 
     // MARK: Typo repair ("takeq-baby" snaps to "take-baby").
