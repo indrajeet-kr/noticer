@@ -1,7 +1,9 @@
+#if canImport(CoreGraphics)
 import CoreGraphics
-import Foundation
 import ImageIO
 import UniformTypeIdentifiers
+#endif
+import Foundation
 import XCTest
 @testable import NoticerAgent
 import NoticerCore
@@ -243,6 +245,7 @@ final class FastCuesAgentTests: XCTestCase {
     // MARK: - Helpers
 
     private func make448FixtureJPEG(seed: UInt64) throws -> Data {
+        #if canImport(CoreGraphics)
         let width = LatencyTuning.default.uploadMaxEdge
         let height = 336 // 4:3 glasses aspect ratio at 448 max edge
         var pixels = [UInt8](repeating: 255, count: width * height * 4)
@@ -305,5 +308,19 @@ final class FastCuesAgentTests: XCTestCase {
         CGImageDestinationAddImage(dest, cgImage, opts as CFDictionary)
         XCTAssertTrue(CGImageDestinationFinalize(dest))
         return out as Data
+        #else
+        // Deterministic synthetic JPEG payload (~8.3 KB) for non-Darwin environments (Linux CI)
+        var data = Data([0xFF, 0xD8, 0xFF, 0xE0])
+        data.append(contentsOf: [0x00, 0x10, 0x4A, 0x46, 0x49, 0x46, 0x00, 0x01, 0x01, 0x01, 0x00, 0x48, 0x00, 0x48, 0x00, 0x00])
+        let targetSize = 8_200 + Int(seed % 400)
+        let remaining = targetSize - data.count - 2
+        var val = UInt8(seed & 0xFF)
+        for _ in 0..<remaining {
+            val = val &* 31 &+ 17
+            data.append(val == 0xFF ? 0x00 : val)
+        }
+        data.append(contentsOf: [0xFF, 0xD9])
+        return data
+        #endif
     }
 }
