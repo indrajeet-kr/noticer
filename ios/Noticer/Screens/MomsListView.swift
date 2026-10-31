@@ -55,6 +55,7 @@ struct MomsListView: View {
                 .padding(.top, Theme.Space.s16)
                 .padding(.bottom, Theme.Space.s32)
             }
+            .contentMargins(.bottom, 96, for: .scrollContent)
             .ambientScreen()
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {

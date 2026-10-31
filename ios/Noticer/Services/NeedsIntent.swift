@@ -481,6 +481,16 @@ public enum NeedsIntentResponse {
             guard !text.isEmpty else {
                 throw NeedsIntentError.malformedResponse("The reply was empty.")
             }
+            // The model sometimes puts tool arguments in `content` instead of
+            // a tool call. Decode those first so chips render; plain prose
+            // still falls through to a text question.
+            let payload = Self.unfenced(text)
+            if let question = try? parseQuestion(payload) {
+                return question
+            }
+            if let needs = try? parseSetNeeds(payload) {
+                return needs
+            }
             return .question(question: text, suggestions: [])
         }
         guard calls.count == 1, let call = calls.first else {
@@ -498,6 +508,24 @@ public enum NeedsIntentResponse {
         }
     }
 
+    /// Strips one leading/trailing Markdown code fence so fenced JSON
+    /// payloads decode. Plain prose passes through untouched.
+    private static func unfenced(_ text: String) -> String {
+        var payload = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if payload.hasPrefix("```") {
+            if let newline = payload.firstIndex(of: "\n") {
+                payload = String(payload[payload.index(after: newline)...])
+            } else {
+                payload = String(payload.dropFirst(3))
+            }
+        }
+        if let fence = payload.range(of: "```", options: .backwards),
+           payload[fence.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            payload = String(payload[..<fence.lowerBound])
+        }
+        return payload.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     private static func parseSetNeeds(_ arguments: String) throws -> NeedsIntentResult {
         guard let data = arguments.data(using: .utf8) else {
             throw NeedsIntentError.malformedResponse("The set_needs arguments were not text.")
@@ -508,9 +536,15 @@ public enum NeedsIntentResponse {
         } catch {
             throw NeedsIntentError.malformedResponse("The set_needs arguments were not readable.")
         }
-        guard decoded.needs.count <= SessionLimits.maxAuthoredNeeds else {
-            throw NeedsIntentError.invalidNeeds(
-                "The model returned \(decoded.needs.count) needs. The list holds \(SessionLimits.maxAuthoredNeeds)."
+        if decoded.needs.count > SessionLimits.maxAuthoredNeeds {
+            // Over capacity is a clarifying turn, not a failure: ask which
+            // ones matter most, offering her own words back as chips.
+            let suggestions = decoded.needs.map {
+                $0.authorText.trimmingCharacters(in: .whitespacesAndNewlines)
+            }.filter { !$0.isEmpty }
+            return .question(
+                question: "That's more than we can watch at once — which \(SessionLimits.maxAuthoredNeeds) matter most tonight?",
+                suggestions: Array(suggestions.prefix(SessionLimits.maxAuthoredNeeds))
             )
         }
         var drafts: [NeedsIntentDraft] = []

@@ -15,13 +15,14 @@ final class NeedsIntentService {
             drafts: [NeedsIntentDraft],
             readBack: String,
             changed: Set<String>,
-            accepted: Bool
+            accepted: Bool,
+            superseded: Bool
         )
         case question(id: UUID, text: String, suggestions: [String])
 
         var id: UUID {
             switch self {
-            case .her(let id, _), .readBack(let id, _, _, _, _), .question(let id, _, _):
+            case .her(let id, _), .readBack(let id, _, _, _, _, _), .question(let id, _, _):
                 return id
             }
         }
@@ -65,8 +66,55 @@ final class NeedsIntentService {
             drafts: NeedsIntentConversion.fromNeeds(model.needs),
             readBack: "",
             changed: [],
-            accepted: true
+            accepted: true,
+            superseded: false
         )]
+    }
+
+    /// Rebuilds the seeded "current list" entry from the screen's list, so a
+    /// removal outside the sheet never leaves the sheet showing a stale list.
+    /// Called each time the sheet opens. When a newer accepted list already
+    /// superseded the seed, there is nothing to rebuild.
+    func refreshSheetList(from model: PhoneSessionModel) {
+        if entries.isEmpty {
+            seedIfNeeded(from: model)
+            return
+        }
+        guard let seed = seededEntryID,
+              let index = entries.firstIndex(where: { $0.id == seed }),
+              case .readBack = entries[index]
+        else {
+            return
+        }
+        entries[index] = .readBack(
+            id: seed,
+            drafts: NeedsIntentConversion.fromNeeds(model.needs),
+            readBack: "",
+            changed: [],
+            accepted: true,
+            superseded: false
+        )
+    }
+
+    /// Marks every pending (unaccepted) read-back as superseded: the list
+    /// changed outside the chat, so those drafts no longer apply. Called on
+    /// remove, undo, pause, and after an accept lands a different entry.
+    func markPendingSuperseded(except keepID: UUID? = nil) {
+        for (index, entry) in entries.enumerated() {
+            guard case .readBack(let id, let drafts, let readBack, let changed, false, _) = entry,
+                  id != keepID
+            else {
+                continue
+            }
+            entries[index] = .readBack(
+                id: id,
+                drafts: drafts,
+                readBack: readBack,
+                changed: changed,
+                accepted: false,
+                superseded: true
+            )
+        }
     }
 
     /// Remove is offered only on the live list: the seeded card, or the
@@ -77,7 +125,7 @@ final class NeedsIntentService {
             return true
         }
         let latest = entries.compactMap { entry -> UUID? in
-            if case .readBack(let id, _, _, _, _) = entry {
+            if case .readBack(let id, _, _, _, _, _) = entry {
                 return id
             }
             return nil
@@ -136,7 +184,8 @@ final class NeedsIntentService {
                     drafts: drafts,
                     readBack: readBack,
                     changed: changed,
-                    accepted: false
+                    accepted: false,
+                    superseded: false
                 ))
             case .question(let question, let suggestions):
                 entries.append(.question(id: UUID(), text: question, suggestions: suggestions))
@@ -163,7 +212,7 @@ final class NeedsIntentService {
         guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
             return
         }
-        guard case .readBack(_, let drafts, _, let changed, false) = entries[index] else {
+        guard case .readBack(_, let drafts, _, let changed, false, false) = entries[index] else {
             return
         }
         model.needs = NeedsIntentConversion.toNeeds(drafts, current: model.needs)
@@ -173,11 +222,13 @@ final class NeedsIntentService {
             drafts: drafts,
             readBack: "",
             changed: changed,
-            accepted: true
+            accepted: true,
+            superseded: false
         )
         if seededEntryID != entryID {
             seededEntryID = nil
         }
+        markPendingSuperseded(except: entryID)
         postNotice("Saved. He'll get a head start on these.", undo: false)
     }
 
@@ -190,7 +241,7 @@ final class NeedsIntentService {
         guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
             return
         }
-        guard case .readBack(_, var drafts, let readBack, var changed, let accepted) = entries[index] else {
+        guard case .readBack(_, var drafts, let readBack, var changed, let accepted, let superseded) = entries[index] else {
             return
         }
         guard let draftIndex = drafts.firstIndex(where: { $0.id == draftID }) else {
@@ -203,11 +254,13 @@ final class NeedsIntentService {
             drafts: drafts,
             readBack: readBack,
             changed: changed,
-            accepted: accepted
+            accepted: accepted,
+            superseded: superseded
         )
         if accepted, let savedIndex = model.needs.firstIndex(where: { $0.id == draftID }) {
             removed = (model.needs.remove(at: savedIndex), savedIndex)
             model.commitNeeds()
+            markPendingSuperseded()
         } else {
             removed = nil
         }
@@ -220,7 +273,7 @@ final class NeedsIntentService {
     /// same undo toast as the composer flow.
     func removeSavedNeed(id: String, model: PhoneSessionModel) {
         for (index, entry) in entries.enumerated() {
-            guard case .readBack(let entryID, var drafts, let readBack, var changed, true) = entry,
+            guard case .readBack(let entryID, var drafts, let readBack, var changed, true, _) = entry,
                   canRemove(entryID: entryID),
                   let draftIndex = drafts.firstIndex(where: { $0.id == id })
             else {
@@ -233,7 +286,8 @@ final class NeedsIntentService {
                 drafts: drafts,
                 readBack: readBack,
                 changed: changed,
-                accepted: true
+                accepted: true,
+                superseded: false
             )
         }
         guard let savedIndex = model.needs.firstIndex(where: { $0.id == id }) else {
@@ -241,6 +295,7 @@ final class NeedsIntentService {
         }
         let need = model.needs.remove(at: savedIndex)
         model.commitNeeds()
+        markPendingSuperseded()
         removed = (need, savedIndex)
         let words = need.authorText.trimmingCharacters(in: .whitespacesAndNewlines)
         postNotice(words.isEmpty ? "Removed." : "Removed “\(words)”.", undo: true)
@@ -255,6 +310,7 @@ final class NeedsIntentService {
         let index = min(removed.index, model.needs.count)
         model.needs.insert(removed.need, at: index)
         model.commitNeeds()
+        markPendingSuperseded()
         self.removed = nil
         notice = nil
         noticeHasUndo = false

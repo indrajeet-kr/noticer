@@ -4,6 +4,8 @@ import SwiftUI
 /// highlighted; cued moments read "With a little nudge".
 struct WinRow: View {
     var moment: SessionMoment
+    /// One wording per need: callers pass the model's current words.
+    var wordsForMoment: (SessionMoment) -> String = { $0.text }
 
     var body: some View {
         HStack(spacing: Theme.Space.s12) {
@@ -11,7 +13,7 @@ struct WinRow: View {
                 .font(Theme.Font.caption)
                 .foregroundStyle(Theme.textSecondary)
                 .frame(minWidth: 64, alignment: .leading)
-            Text(moment.text)
+            Text(wordsForMoment(moment))
                 .font(Theme.Font.body)
             Spacer()
             if moment.kind == .selfNotice {
@@ -43,6 +45,8 @@ struct WinRow: View {
 struct ShareSummaryCard: View {
     var headline: String
     var wins: [SessionMoment]
+    /// One wording per need: callers pass the model's current words.
+    var wordsForMoment: (SessionMoment) -> String = { $0.text }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s16) {
@@ -53,7 +57,7 @@ struct ShareSummaryCard: View {
                 .font(Theme.Font.title)
             ForEach(wins.prefix(6)) { win in
                 HStack {
-                    Text(win.text)
+                    Text(wordsForMoment(win))
                         .font(Theme.Font.body)
                     Spacer()
                     Text(win.kind == .selfNotice ? "On his own" : "With a little nudge")

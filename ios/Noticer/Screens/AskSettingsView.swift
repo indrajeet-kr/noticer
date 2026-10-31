@@ -1,3 +1,4 @@
+import NoticerCore
 import SwiftUI
 
 /// Settings: Night look, quick timing, API key, and the session log — plus
@@ -14,6 +15,10 @@ struct AskSettingsView: View {
     @State private var showingKey = false
     @State private var showingLog = false
     @State private var confirmingIntro = false
+    @State private var confirmingReset = false
+    @State private var resetStash: [String: MasteryState]?
+    @State private var resetToastID = UUID()
+    @State private var dictation = DictationService()
     @AppStorage("noticer.onboarding.done") private var onboardingDone = false
 
     var body: some View {
@@ -34,12 +39,28 @@ struct AskSettingsView: View {
                 sessionSection
                 keySection
                 logSection
+                resetSection
                 introSection
             }
             .screenMargins()
             .padding(.bottom, Theme.Space.s32)
         }
+        .scrollDismissesKeyboard(.interactively)
+        .onAppear {
+            composerFocused = false
+            dictation.sessionRunning = model.isRunning
+        }
+        .onDisappear { dictation.stop() }
+        .onChange(of: model.isRunning) { _, running in
+            dictation.sessionRunning = running
+        }
+        .onChange(of: dictation.transcript) { _, transcript in
+            if !transcript.isEmpty {
+                draft = transcript
+            }
+        }
         .ambientScreen()
+        .overlay(alignment: .top) { resetToast }
         .sensoryFeedback(.success, trigger: acceptedPulse)
         .sheet(isPresented: $showingKey) {
             NavigationStack {
@@ -70,6 +91,77 @@ struct AskSettingsView: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Her list and the saved key stay. You'll begin again at the first screen.")
+        }
+        .confirmationDialog(
+            "Reset learning progress?",
+            isPresented: $confirmingReset,
+            titleVisibility: .visible
+        ) {
+            Button("Reset", role: .destructive) {
+                resetLearning()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This sets every need back to Learning. Tonight's wins stay.")
+        }
+    }
+
+    private var resetSection: some View {
+        GlassCard(padding: Theme.Space.card) {
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                Text("Developer")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                Button("Reset learning progress", role: .destructive) {
+                    confirmingReset = true
+                }
+                .font(Theme.Font.headline)
+                .disabled(model.isRunning)
+                Text("Sets every need back to Learning. Tonight's wins stay.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func resetLearning() {
+        guard let stash = model.resetLearningProgress() else {
+            return
+        }
+        resetStash = stash
+        resetToastID = UUID()
+    }
+
+    private func undoReset() {
+        if let stash = resetStash {
+            model.restoreMastery(stash)
+        }
+        resetStash = nil
+    }
+
+    @ViewBuilder
+    private var resetToast: some View {
+        if resetStash != nil {
+            HStack(spacing: Theme.Space.s8) {
+                Text("Learning reset.")
+                    .font(Theme.Font.footnote)
+                Button("Undo") {
+                    undoReset()
+                }
+                .font(Theme.Font.headline)
+                .foregroundStyle(Theme.sageStrong)
+            }
+            .padding(.horizontal, Theme.Space.s16)
+            .padding(.vertical, Theme.Space.s12)
+            .glassBackground(cornerRadius: 999)
+            .padding(.horizontal, Theme.Space.screenMargin)
+            .padding(.top, Theme.Space.s8)
+            .transition(.opacity.combined(with: .move(edge: .top)))
+            .task(id: resetToastID) {
+                try? await Task.sleep(for: .seconds(3))
+                resetStash = nil
+            }
         }
     }
 
@@ -116,10 +208,16 @@ struct AskSettingsView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
+            if let notice = dictation.notice {
+                Text(notice)
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
             NaturalLanguageComposer(
                 text: $draft,
                 focused: $composerFocused,
-                placeholder: "e.g. Use shorter head starts tonight…"
+                placeholder: "e.g. Use shorter head starts tonight…",
+                dictation: dictation
             ) {
                 send()
             }
@@ -261,6 +359,7 @@ struct AskSettingsView: View {
     // MARK: - Ask intents (unchanged)
 
     private func send() {
+        dictation.stop()
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return

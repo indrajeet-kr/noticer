@@ -91,7 +91,15 @@ final class PhoneSessionModel {
     /// events, speech, errors. Cleared on start, kept after stop for review.
     var sessionLog = SessionLog()
     /// Tonight's wins for the Wins tab. Saved on the phone only.
-    var moments: [SessionMoment] = SessionMomentsStore.loadTonight()
+    var moments: [SessionMoment] = SessionMomentsStore.loadRecent()
+    /// Latest session boundaries, persisted with the moments so the Wins
+    /// header can name the session's start after a restart.
+    var currentSessionID: UUID? = SessionMomentsStore.loadSessionInfo()?.id
+    var sessionStartedAt: Date? = SessionMomentsStore.loadSessionInfo()?.startedAt
+    var sessionEndedAt: Date? = SessionMomentsStore.loadSessionInfo()?.endedAt
+    /// Cue counts per day, loaded once and updated with each cue so
+    /// Learning re-renders. Persisted through `CueHistoryStore`.
+    var cueHistory: [String: Int] = CueHistoryStore.load()
     /// Per-need mastery samples, oldest first, capped. For the Learning sparklines.
     var masterySamples: [String: [Double]] = [:]
 
@@ -288,6 +296,34 @@ final class PhoneSessionModel {
             pausedNeedIDs.remove(needID)
         }
         PausedNeedsStore.save(pausedNeedIDs)
+        intentService.markPendingSuperseded()
+    }
+
+    /// Sets every need's mastery back to initial. Refused (nil) while a
+    /// session is running. Returns the prior mastery by need id for Undo.
+    /// Tonight's wins are untouched. Never called automatically.
+    @discardableResult
+    func resetLearningProgress() -> [String: MasteryState]? {
+        guard !isRunning else {
+            return nil
+        }
+        var stash: [String: MasteryState] = [:]
+        for index in needs.indices {
+            stash[needs[index].id] = needs[index].mastery
+            needs[index].mastery = .initial
+        }
+        saveNeeds()
+        return stash
+    }
+
+    /// Restores mastery stashed by `resetLearningProgress()`.
+    func restoreMastery(_ stash: [String: MasteryState]) {
+        for index in needs.indices {
+            if let mastery = stash[needs[index].id] {
+                needs[index].mastery = mastery
+            }
+        }
+        saveNeeds()
     }
 
     /// Blank whisper uses her words. The list on screen can leave that line empty.
@@ -348,6 +384,10 @@ final class PhoneSessionModel {
         activeTiming = timing
         runTiming = activeTiming
         resetLiveState()
+        currentSessionID = UUID()
+        sessionStartedAt = Date()
+        sessionEndedAt = nil
+        saveSessionInfo()
         sessionLog.clear()
         speaker.log = { [log = sessionLog] tag, message in
             Task { @MainActor in log.append(tag, message) }
@@ -381,10 +421,31 @@ final class PhoneSessionModel {
         resetLiveState()
         saveNeeds()
         SessionMomentsStore.save(moments)
-        CueHistoryStore.recordSessionDay()
+        sessionEndedAt = Date()
+        saveSessionInfo()
+        recordSessionDayHistory()
         Task {
             await source?.stop()
         }
+    }
+
+    private func saveSessionInfo() {
+        guard let id = currentSessionID, let startedAt = sessionStartedAt else {
+            return
+        }
+        SessionMomentsStore.saveSessionInfo(.init(id: id, startedAt: startedAt, endedAt: sessionEndedAt))
+    }
+
+    /// Records one fired cue into the observable history. Internal so
+    /// tests can drive the real wiring without running a session.
+    func recordCueHistory() {
+        cueHistory = CueHistoryStore.recordingCue(in: cueHistory)
+        CueHistoryStore.save(cueHistory)
+    }
+
+    func recordSessionDayHistory() {
+        cueHistory = CueHistoryStore.recordingSessionDay(in: cueHistory)
+        CueHistoryStore.save(cueHistory)
     }
 
     func resumeGlasses() {
@@ -443,7 +504,9 @@ final class PhoneSessionModel {
             SessionLogStore.save(sessionLog.text)
             saveNeeds()
             SessionMomentsStore.save(moments)
-            CueHistoryStore.recordSessionDay()
+            sessionEndedAt = Date()
+            saveSessionInfo()
+            recordSessionDayHistory()
         }
     }
 
@@ -715,17 +778,19 @@ final class PhoneSessionModel {
                         at: Date(),
                         needID: needID,
                         kind: event.detail == "after-cue" ? .nudge : .selfNotice,
-                        text: Self.words(for: needID, in: view)
+                        text: Self.words(for: needID, in: view),
+                        sessionID: currentSessionID
                     ))
                 }
             case .cueFired:
-                CueHistoryStore.recordCue()
+                recordCueHistory()
                 if let needID = event.needID {
                     moments.append(SessionMoment(
                         at: Date(),
                         needID: needID,
                         kind: .cued,
-                        text: Self.words(for: needID, in: view)
+                        text: Self.words(for: needID, in: view),
+                        sessionID: currentSessionID
                     ))
                 }
             case .needLatched:

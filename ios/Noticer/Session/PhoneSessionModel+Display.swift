@@ -49,6 +49,58 @@ extension PhoneSessionModel {
         return needID
     }
 
+    /// One wording per need: a moment displays the need's current words,
+    /// falling back to the recorded snapshot only when the need is gone.
+    func momentWords(for moment: SessionMoment) -> String {
+        MomentWords.text(for: moment, needs: needs)
+    }
+
+    /// Tonight = the latest session: the running session's moments, or the
+    /// most recent session's once it ends.
+    var tonightMoments: [SessionMoment] {
+        SessionMomentsStore.latestSessionMoments(from: moments)
+    }
+
+    /// True when the recorded session is the one on screen (as opposed to
+    /// restored moments from an older session after a restart).
+    private var shownSessionIsRecorded: Bool {
+        guard let current = currentSessionID else {
+            return false
+        }
+        return tonightMoments.contains { $0.sessionID == current }
+    }
+
+    /// The calendar day "tonight" counts belong to: the latest session's
+    /// start day, else the latest moment's day, else today.
+    var tonightSessionDay: Date {
+        let calendar = Calendar.current
+        if shownSessionIsRecorded, let started = sessionStartedAt {
+            return calendar.startOfDay(for: started)
+        }
+        if let last = tonightMoments.map(\.at).max() {
+            return calendar.startOfDay(for: last)
+        }
+        return calendar.startOfDay(for: Date())
+    }
+
+    /// Cues "tonight": the session window's moments win over the day count,
+    /// so sessions spanning midnight and pre-history moments still agree
+    /// with Wins. The two sources increment together going forward.
+    var tonightCueCount: Int {
+        let dayCount = CueHistoryStore.count(on: tonightSessionDay, in: cueHistory)
+        let momentCount = tonightMoments.filter { $0.kind != .selfNotice }.count
+        return max(dayCount, momentCount)
+    }
+
+    /// The latest session's start, for the Wins header. Prefers the
+    /// recorded start; falls back to the earliest shown moment.
+    var latestSessionStart: Date {
+        if shownSessionIsRecorded, let started = sessionStartedAt {
+            return started
+        }
+        return tonightMoments.map(\.at).min() ?? sessionStartedAt ?? Date()
+    }
+
     /// Display-only mirror of the engine's `H = H0 * (1 + 2m)`, capped.
     /// Read from the run timing; never written back anywhere.
     func displayHeadStart(for need: Need) -> TimeInterval {

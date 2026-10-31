@@ -4,9 +4,11 @@ import Foundation
 /// secondary. Pure so the copy is unit-testable.
 enum TimingWords {
     /// "He gets about a minute and a half to notice first", plus "90 seconds".
-    static func headStartSentence(seconds: TimeInterval) -> (main: String, detail: String) {
+    /// The detail is nil when the main sentence already states the exact
+    /// seconds (under a minute), so the sheet never shows "20 seconds" twice.
+    static func headStartSentence(seconds: TimeInterval) -> (main: String, detail: String?) {
         let total = max(0, Int(seconds.rounded()))
-        let detail = total == 1 ? "1 second" : "\(total) seconds"
+        let detail: String? = total < 60 ? nil : "\(total) seconds"
         return ("He gets \(amount(total)) to notice first", detail)
     }
 
@@ -39,6 +41,34 @@ enum ListHeader {
             return "1 thing she's shared"
         default:
             return "\(count) things she's shared"
+        }
+    }
+}
+
+/// Wins header day line from the session's start: "Friday evening" when it
+/// started at 17:00 or later, else "Friday morning"/"Friday afternoon".
+enum DayPart {
+    static func line(for date: Date) -> String {
+        let namer = DateFormatter()
+        namer.locale = Locale(identifier: "en_US_POSIX")
+        namer.dateFormat = "EEEE"
+        let hour = Calendar.current.component(.hour, from: date)
+        let part = hour >= 17 ? "evening" : hour >= 12 ? "afternoon" : "morning"
+        return "\(namer.string(from: date)) \(part)"
+    }
+}
+
+/// Learning week sentence: "3 cues tonight, down from 7."
+enum CueWeekSentence {
+    static func text(tonight: Int, prior: Int?) -> String {
+        let noun = tonight == 1 ? "1 cue" : "\(tonight) cues"
+        switch (tonight, prior) {
+        case (0, _):
+            return "No cues tonight."
+        case (_, let prior?) where prior > tonight:
+            return "\(noun) tonight, down from \(prior)."
+        default:
+            return "\(noun) tonight."
         }
     }
 }

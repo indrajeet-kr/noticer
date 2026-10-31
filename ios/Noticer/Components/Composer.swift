@@ -1,29 +1,35 @@
 import SwiftUI
 
 /// The one chat-like composer in the app, docked at the bottom: multiline
-/// text, a mic button for system dictation, and a send arrow.
+/// text, a mic button for dictation, and a send arrow.
 /// No forms anywhere else; this plus the API-key field are the only inputs.
 struct NaturalLanguageComposer: View {
     @Binding var text: String
     var focused: FocusState<Bool>.Binding
     var placeholder: String
     var isSending: Bool = false
+    /// On-device dictation. When nil, the mic focuses the keyboard as before.
+    var dictation: DictationService?
     var onSend: () -> Void
 
     var body: some View {
         HStack(alignment: .bottom, spacing: Theme.Space.s8) {
-            Button {
-                focused.wrappedValue = true
-            } label: {
-                Image(systemName: "mic.fill")
-                    .font(.title3)
-                    .fontWeight(.light)
-                    .foregroundStyle(Theme.textPrimary)
-                    .frame(width: 46, height: 46)
-                    .background(Theme.bgCard, in: Circle())
-                    .overlay(Circle().stroke(Theme.Shadow.hairline, lineWidth: 1))
+            if let dictation {
+                DictationMicButton(dictation: dictation, focused: focused)
+            } else {
+                Button {
+                    focused.wrappedValue = true
+                } label: {
+                    Image(systemName: "mic.fill")
+                        .font(.title3)
+                        .fontWeight(.light)
+                        .foregroundStyle(Theme.textPrimary)
+                        .frame(width: 46, height: 46)
+                        .background(Theme.bgCard, in: Circle())
+                        .overlay(Circle().stroke(Theme.Shadow.hairline, lineWidth: 1))
+                }
+                .accessibilityLabel("Dictate. Uses the keyboard microphone.")
             }
-            .accessibilityLabel("Dictate. Uses the keyboard microphone.")
 
             HStack(spacing: Theme.Space.s8) {
                 Image(systemName: "sparkles")
@@ -61,6 +67,34 @@ struct NaturalLanguageComposer: View {
 
     private var canSend: Bool {
         !isSending && !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+}
+
+/// The mic button with on-device dictation: toggles recording, shows a stop
+/// glyph while listening, and falls back to the keyboard when dictation
+/// declines (a session is running, permissions denied, unavailable).
+private struct DictationMicButton: View {
+    var dictation: DictationService
+    var focused: FocusState<Bool>.Binding
+
+    var body: some View {
+        Button {
+            Task {
+                guard await dictation.toggle() == false else {
+                    return
+                }
+                focused.wrappedValue = true
+            }
+        } label: {
+            Image(systemName: dictation.isRecording ? "stop.fill" : "mic.fill")
+                .font(.title3)
+                .fontWeight(.light)
+                .foregroundStyle(dictation.isRecording ? Theme.terracotta : Theme.textPrimary)
+                .frame(width: 46, height: 46)
+                .background(Theme.bgCard, in: Circle())
+                .overlay(Circle().stroke(Theme.Shadow.hairline, lineWidth: 1))
+        }
+        .accessibilityLabel(dictation.isRecording ? "Stop dictation" : "Dictate by voice")
     }
 }
 

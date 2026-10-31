@@ -12,6 +12,7 @@ struct AddNeedSheet: View {
     @FocusState private var composerFocused: Bool
     @Namespace private var cards
     @State private var showingKey = false
+    @State private var dictation = DictationService()
 
     private var service: NeedsIntentService {
         model.intentService
@@ -60,11 +61,19 @@ struct AddNeedSheet: View {
                 }
             }
 
+            if let notice = dictation.notice {
+                Text(notice)
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Theme.Space.s16)
+            }
             NaturalLanguageComposer(
                 text: $draft,
                 focused: $composerFocused,
                 placeholder: "Tell me in your own words…",
-                isSending: service.thinking
+                isSending: service.thinking,
+                dictation: dictation
             ) {
                 send()
             }
@@ -72,7 +81,17 @@ struct AddNeedSheet: View {
             .padding(.vertical, Theme.Space.s8)
         }
         .ambientScreen()
-        .task { service.seedIfNeeded(from: model) }
+        .task { service.refreshSheetList(from: model) }
+        .onAppear { dictation.sessionRunning = model.isRunning }
+        .onDisappear { dictation.stop() }
+        .onChange(of: model.isRunning) { _, running in
+            dictation.sessionRunning = running
+        }
+        .onChange(of: dictation.transcript) { _, transcript in
+            if !transcript.isEmpty {
+                draft = transcript
+            }
+        }
         .sheet(isPresented: $showingKey) {
             NavigationStack {
                 APIKeyStep(model: model) {
@@ -143,13 +162,14 @@ struct AddNeedSheet: View {
                     .clipShape(Theme.Radius.rect(Theme.Radius.row))
             }
             .transition(.opacity.combined(with: .move(edge: .bottom)))
-        case .readBack(let id, let drafts, let readBack, let changed, let accepted):
+        case .readBack(let id, let drafts, let readBack, let changed, let accepted, let superseded):
             readBackView(
                 id: id,
                 drafts: drafts,
                 readBack: readBack,
                 changed: changed,
                 accepted: accepted,
+                superseded: superseded,
                 seeded: service.seededEntryID == id
             )
         case .question(_, let text, let suggestions):
@@ -176,6 +196,7 @@ struct AddNeedSheet: View {
         readBack: String,
         changed: Set<String>,
         accepted: Bool,
+        superseded: Bool,
         seeded: Bool
     ) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
@@ -217,6 +238,11 @@ struct AddNeedSheet: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
                 .padding(.top, Theme.Space.s4)
+            } else if superseded {
+                Text("This list changed — send again to update.")
+                    .font(Theme.Font.footnote)
+                    .foregroundStyle(Theme.textSecondary)
+                    .padding(.top, Theme.Space.s4)
             } else if !drafts.isEmpty {
                 Button("Looks right") {
                     composerFocused = false
@@ -230,6 +256,7 @@ struct AddNeedSheet: View {
                     .foregroundStyle(Theme.textSecondary)
             }
         }
+        .opacity(superseded && !accepted ? 0.55 : 1)
         .transition(.opacity.combined(with: .move(edge: .bottom)))
     }
 
@@ -243,6 +270,7 @@ struct AddNeedSheet: View {
     }
 
     private func send() {
+        dictation.stop()
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return

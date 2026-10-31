@@ -56,6 +56,10 @@
 	<string>Noticer connects to your glasses over Bluetooth. It does not use the glasses microphone.</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Noticer can use the local network when the glasses stream video over Wi-Fi.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Noticer uses the iPhone microphone only while you hold the mic button to type her needs by voice.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Your words are turned into text on this iPhone when possible.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_bonjour._tcp</string>

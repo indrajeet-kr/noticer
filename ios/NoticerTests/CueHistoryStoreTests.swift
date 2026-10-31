@@ -97,6 +97,29 @@ final class CueHistoryStoreTests: XCTestCase {
         XCTAssertLessThan(days[1].date, days[2].date)
     }
 
+    func testLastDaysReturnsSevenDistinctDates() {
+        let days = CueHistoryStore.lastDays(7, ending: day(0), in: [:])
+        XCTAssertEqual(days.count, 7)
+        XCTAssertEqual(Set(days.map { CueHistoryStore.dayKey(for: $0.date) }).count, 7)
+    }
+
+    func testWeeklyBucketsCarryDistinctDatesOldestFirst() {
+        let buckets = CueHistoryStore.weeklyBuckets(6, ending: day(0), in: [:])
+        XCTAssertEqual(buckets.count, 6)
+        XCTAssertEqual(Set(buckets.map { CueHistoryStore.dayKey(for: $0.date) }).count, 6)
+        XCTAssertLessThan(buckets.first!.date, buckets.last!.date)
+        XCTAssertFalse(buckets.flatMap { [$0.label] }.contains(""))
+    }
+
+    func testMonthlyBucketsCarryMonthStarts() {
+        let buckets = CueHistoryStore.monthlyBuckets(6, ending: day(0), in: [:])
+        XCTAssertEqual(buckets.count, 6)
+        for bucket in buckets {
+            XCTAssertEqual(Calendar.current.component(.day, from: bucket.date), 1)
+        }
+        XCTAssertLessThan(buckets.first!.date, buckets.last!.date)
+    }
+
     func testPersistenceRoundTrip() {
         let defaults = UserDefaults(suiteName: "CueHistoryStoreTests")!
         defaults.removePersistentDomain(forName: "CueHistoryStoreTests")

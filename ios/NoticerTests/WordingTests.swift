@@ -8,7 +8,10 @@ final class WordingTests: XCTestCase {
             TimingWords.headStartSentence(seconds: 40).main,
             "He gets about 40 seconds to notice first"
         )
-        XCTAssertEqual(TimingWords.headStartSentence(seconds: 40).detail, "40 seconds")
+        XCTAssertNil(
+            TimingWords.headStartSentence(seconds: 40).detail,
+            "under a minute the main sentence already states the seconds"
+        )
     }
 
     func testHeadStartMinuteAndHalf() {
@@ -24,10 +27,26 @@ final class WordingTests: XCTestCase {
             TimingWords.headStartSentence(seconds: 60).main,
             "He gets about a minute to notice first"
         )
+        XCTAssertEqual(TimingWords.headStartSentence(seconds: 60).detail, "60 seconds")
         XCTAssertEqual(
             TimingWords.headStartSentence(seconds: 120).main,
             "He gets about 2 minutes to notice first"
         )
+        XCTAssertEqual(TimingWords.headStartSentence(seconds: 120).detail, "120 seconds")
+    }
+
+    func testDayPartLine() {
+        var parts = DateComponents()
+        parts.year = 2026
+        parts.month = 10
+        parts.day = 30
+        parts.hour = 20
+        let evening = Calendar.current.date(from: parts)!
+        XCTAssertEqual(DayPart.line(for: evening), "Friday evening")
+        parts.hour = 9
+        XCTAssertEqual(DayPart.line(for: Calendar.current.date(from: parts)!), "Friday morning")
+        parts.hour = 14
+        XCTAssertEqual(DayPart.line(for: Calendar.current.date(from: parts)!), "Friday afternoon")
     }
 
     func testListHeaderCounts() {
@@ -52,6 +71,13 @@ final class WordingTests: XCTestCase {
 
     func testWinsSentenceQuietNight() {
         XCTAssertEqual(WinsSummary.sentence(selfNotices: 0, cues: 0, priorCues: nil), "A quiet night together.")
+    }
+
+    func testCueWeekSentence() {
+        XCTAssertEqual(CueWeekSentence.text(tonight: 3, prior: 7), "3 cues tonight, down from 7.")
+        XCTAssertEqual(CueWeekSentence.text(tonight: 1, prior: nil), "1 cue tonight.")
+        XCTAssertEqual(CueWeekSentence.text(tonight: 2, prior: 2), "2 cues tonight.")
+        XCTAssertEqual(CueWeekSentence.text(tonight: 0, prior: 5), "No cues tonight.")
     }
 
     func testWinsHeadlines() {

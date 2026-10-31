@@ -20,7 +20,11 @@ struct LiveSessionView: View {
                         if model.runError != nil || !model.notices.isEmpty {
                             attentionCard
                         }
-                        TonightTimeline(moments: model.moments, isRunning: model.isRunning)
+                        TonightTimeline(
+                            moments: model.tonightMoments,
+                            isRunning: model.isRunning,
+                            wordsForMoment: { model.momentWords(for: $0) }
+                        )
                         quickTiming
                         auxiliaryActions
                     }
@@ -28,6 +32,7 @@ struct LiveSessionView: View {
                     .padding(.top, Theme.Space.s16)
                     .padding(.bottom, Theme.Space.s32)
                 }
+                .contentMargins(.bottom, 96, for: .scrollContent)
             }
             .ambientScreen()
             .toolbar {
