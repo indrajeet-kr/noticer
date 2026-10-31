@@ -61,17 +61,15 @@ targets:
     platform: iOS
     sources:
       - path: NoticerTests
-      - path: Noticer/Services/NeedsIntent.swift
-      - path: Noticer/Services/SessionTelemetry.swift
-      - path: Noticer/Services/SessionStatus.swift
-      - path: Noticer/Services/SessionLog.swift
-      - path: Noticer/Seams/LoggingModelClient.swift
-      - path: Noticer/Theme/Theme.swift
-      - path: Noticer/Session/NeedListStore.swift
-      - path: Noticer/Session/NeedIcon.swift
-      - path: Noticer/Session/PausedNeedsStore.swift
-      - path: Noticer/Session/CueHistoryStore.swift
-      - path: Noticer/Session/Wording.swift
+      - path: Noticer/PhoneSessionModel.swift
+      - path: Noticer/Services
+      - path: Noticer/Session
+      - path: Noticer/Seams
+      - path: Noticer/Signal
+      - path: Noticer/Support
+      - path: Noticer/Replay
+      - path: Noticer/Components/ReplayScrubber.swift
+      - path: Noticer/Theme
     dependencies:
       - package: NoticerPackage
         product: NoticerCore
@@ -79,6 +77,10 @@ targets:
         product: NoticerAgent
       - package: NoticerPackage
         product: NoticerPipeline
+      - package: MetaWearablesDAT
+        product: MWDATCore
+      - package: MetaWearablesDAT
+        product: MWDATCamera
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.noticer.NoticerTests
