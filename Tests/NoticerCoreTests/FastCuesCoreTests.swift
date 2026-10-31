@@ -818,4 +818,108 @@ final class FastCuesCoreTests: EngineTestCase {
         engine.tick()
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
     }
+
+    // MARK: - Live Glasses Real-World Edge Cases
+
+    func testKeepSharperAtSlotEndDoesNotStarveTwoSecondLatchSpacing() throws {
+        // Real glasses send `people: []` with `sceneActive: true`. As the wearer steadies
+        // their head at +1.5s, `keepSharper` replaces the 0.0s slot's JPEG and `capturedAt`.
+        // When the next slot opens at +2.0s, spacing must still read 2.0s from `slotStartedAt`.
+        engine = try NeedEngine(clock: clock, needs: [Self.takeBaby()], timing: .quick)
+        see([], sharpness: 0.02, jpeg: 1, sceneActive: true)
+        advance(0.8)
+        see([], sharpness: 0.04, jpeg: 2, sceneActive: true)
+        advance(0.7) // t = 1.5s: sharper frame inside slot 1
+        see([], sharpness: 0.08, jpeg: 3, sceneActive: true)
+        XCTAssertNil(engine.pendingModelCall)
+
+        advance(0.5) // t = 2.0s: slot 2 opens
+        see([], sharpness: 0.05, jpeg: 4, sceneActive: true)
+        let latch = try XCTUnwrap(
+            engine.pendingModelCall,
+            "slot 2 at +2.0s must pair with slot 1 (started at 0.0s) despite keepSharper at +1.5s"
+        )
+        XCTAssertEqual(latch.request.keyframes.count, 2)
+    }
+
+    func testInconclusiveRecheckUnblocksWhenSustainedReturns() throws {
+        // If a stale-evidence recheck fires while the wearer glanced away (`sustained = nil`),
+        // `inconclusiveHold` pauses the cue, then must clear as soon as a later heartbeat
+        // confirms the need is visibly sustained again.
+        engine = try NeedEngine(clock: clock, needs: [Self.takeBaby(dwell: 20)], timing: .quick)
+        see([mom()], jpeg: 1)
+        advance(2)
+        see([mom()], jpeg: 2)
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
+
+        engine.noteSameChore("sink")
+        let open = try XCTUnwrap(engine.openNeeds.first)
+        advance(to: open.cueDeadline) // +20s > 15s staleEvidenceSeconds -> triggers recheck
+        engine.tick()
+        let recheck = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(recheck.purpose, .recheck)
+
+        // Wearer was facing the sink during recheck -> inconclusive (`sustained: nil`).
+        engine.handle(callID: recheck.id, verdict: noTransition("null", sustained: nil))
+        XCTAssertTrue(engine.cues.isEmpty, "inconclusive recheck holds the cue while facing away")
+
+        // Wearer turns back at +8s and heartbeat sees the unmet need (`sustained: true`) -> cues!
+        advance(8)
+        see([mom()], jpeg: 3)
+        let hb = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: hb.id, verdict: noTransition("take-baby", sustained: true))
+        XCTAssertEqual(engine.cues.map(\.needID), ["take-baby"])
+    }
+
+    func testEmptyRoomIdleWatchCapsAtSixCallsPerMinute() throws {
+        // Real glasses (`people: []`) staring at an empty room for 60s after warmup
+        // must stay <= 6 calls/min when no person or activity edge occurs.
+        engine = try NeedEngine(clock: clock, needs: [Self.takeBaby()], timing: .quick)
+        var gateState = SignalGateState()
+        let plane = LumaPlane(width: 8, height: 8, samples: Array(repeating: 120, count: 64))
+        for second in 0...66 {
+            if second > 0 { advance(1) }
+            let now = clock.now()
+            let dec = SignalGate.evaluate(
+                plane: plane,
+                at: now,
+                needOpen: false,
+                state: &gateState,
+                timing: .quick
+            )
+            let snap = FrameGateSnapshot(
+                capturedAt: now,
+                people: [],
+                wearerHandsVisible: false,
+                handGateRisingEdge: false,
+                motionScore: dec.motionScore,
+                sharpness: 0.04,
+                sceneActive: dec.sceneActive,
+                activityEdge: dec.activityEdge
+            )
+            engine.ingest(
+                frame: CameraFrame(capturedAt: now, jpegData: Data([UInt8(second % 250)]), width: 8, height: 8),
+                gate: snap,
+                sharpness: 0.04
+            )
+            if let call = engine.pendingModelCall {
+                engine.handle(
+                    callID: call.id,
+                    verdict: ModelVerdict(
+                        finishReason: .toolCalls,
+                        tool: .reportNoTransition,
+                        assessment: SceneAssessment(
+                            needID: nil,
+                            sustainedAcrossStrip: false,
+                            wearerHandsOccupied: false,
+                            partnerInView: false
+                        )
+                    )
+                )
+            }
+        }
+        let steadyCallsPerMin = engine.callsInLastMinute()
+        XCTAssertLessThanOrEqual(steadyCallsPerMin, 6, "empty-room idle watch (\(steadyCallsPerMin)/min) must be <= 6/min")
+    }
 }

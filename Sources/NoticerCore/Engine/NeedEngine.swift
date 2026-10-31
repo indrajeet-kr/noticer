@@ -641,8 +641,22 @@ public struct NeedEngine<TimeSource: Clock> {
         guard tracked.count < SessionLimits.maxOpenNeeds else { return }
         guard catalog.needs.contains(where: { indexOfOpen($0.id) == nil }) else { return }
         guard buffer.revision > revisionAtLastLatchCall else { return }
+        let recentPerson = buffer.lastPersonSeenAt.map {
+            now.timeIntervalSince($0) < timing.noPersonKeyframeCloseSeconds
+        } ?? false
+        let idleMinInterval: TimeInterval = {
+            if latency.dedupeAllPurposes,
+               tracked.isEmpty,
+               lastLatchCallAt != nil,
+               !recentPerson,
+               !handEdgePending,
+               now.timeIntervalSince(sessionStartedAt) >= latency.sessionWarmupSeconds {
+                return max(timing.latchMinIntervalSeconds, SessionLimits.latchMinIntervalSeconds)
+            }
+            return timing.latchMinIntervalSeconds
+        }()
         if let lastLatchCallAt,
-           now.timeIntervalSince(lastLatchCallAt) < timing.latchMinIntervalSeconds {
+           now.timeIntervalSince(lastLatchCallAt) < idleMinInterval {
             return
         }
         if !tracked.isEmpty,
@@ -934,6 +948,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
         if assessment.sustainedAcrossStrip == true {
             tracked[index].evidenceAt = now
+            tracked[index].inconclusiveHold = false
         }
         if let occupied = assessment.wearerHandsOccupied {
             tracked[index].handsBusy = occupied

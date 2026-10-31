@@ -126,7 +126,11 @@ struct KeyframeBuffer {
         } else {
             maxCount = latency.scoutingMaxKeyframes
         }
-        let picked = selectedSlots(now: now, maxCount: maxCount)
+        let picked = selectedSlots(
+            now: now,
+            maxCount: maxCount,
+            useSlotStartForSpacing: latency.dedupeAllPurposes
+        )
         guard let newest = picked.map(\.capturedAt).max() else { return [] }
         return picked.map { slot in
             Keyframe(
@@ -145,7 +149,11 @@ struct KeyframeBuffer {
     /// same identity; legacy mode includes `capturedAt` and `jpegData.hashValue`.
     func stripIdentity(now: Date, latency: LatencyTuning = .default) -> String {
         let maxCount = latency.smallerPayloads ? latency.confirmMaxKeyframes : 3
-        let picked = selectedSlots(now: now, maxCount: maxCount)
+        let picked = selectedSlots(
+            now: now,
+            maxCount: maxCount,
+            useSlotStartForSpacing: latency.dedupeAllPurposes
+        )
         if latency.dedupeAllPurposes {
             return picked.map {
                 "\($0.id)@\($0.slotStartedAt.timeIntervalSince1970)"
@@ -172,13 +180,19 @@ struct KeyframeBuffer {
         return slots
     }
 
-    private func selectedSlots(now: Date, maxCount: Int) -> [Slot] {
+    private func selectedSlots(
+        now: Date,
+        maxCount: Int,
+        useSlotStartForSpacing: Bool = false
+    ) -> [Slot] {
         let slots = activeSlots(now: now)
         guard maxCount > 0 else { return [] }
         var newestFirst: [Slot] = []
         for slot in slots.reversed() {
             if let newer = newestFirst.last {
-                let gap = newer.capturedAt.timeIntervalSince(slot.capturedAt)
+                let newerAnchor = useSlotStartForSpacing ? newer.slotStartedAt : newer.capturedAt
+                let olderAnchor = useSlotStartForSpacing ? slot.slotStartedAt : slot.capturedAt
+                let gap = newerAnchor.timeIntervalSince(olderAnchor)
                 if gap >= timing.latchMinKeyframeSpacingSeconds {
                     newestFirst.append(slot)
                 }
