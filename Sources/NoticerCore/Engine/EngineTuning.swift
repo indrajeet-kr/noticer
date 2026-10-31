@@ -47,4 +47,9 @@ public enum EngineTuning {
     /// this long instead of the full relatch cooldown, so one flaky
     /// no-transition cannot silence a need the next verdicts still see.
     public static let recheckRelatchGraceSeconds: TimeInterval = 10
+
+    /// A need stays open this long after its cue so a resolution verdict can
+    /// still credit it. Past this the need closes as unknown with the normal
+    /// cooldown. Long enough for "he did it right after the whisper".
+    public static let postCueResolveSeconds: TimeInterval = 120
 }

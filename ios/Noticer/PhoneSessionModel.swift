@@ -614,7 +614,7 @@ final class PhoneSessionModel {
                     moments.append(SessionMoment(
                         at: Date(),
                         needID: needID,
-                        kind: .selfNotice,
+                        kind: event.detail == "after-cue" ? .nudge : .selfNotice,
                         text: Self.words(for: needID, in: view)
                     ))
                 }

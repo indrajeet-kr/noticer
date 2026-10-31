@@ -173,6 +173,8 @@ public struct HardCapGate: Equatable, Sendable {
             return extend(verdict, session: session)
         case .reportNoTransition:
             return accept(verdict, .noTransition)
+        case .reportNeedResolved:
+            return accept(verdict, .noTransition)
         }
     }
 

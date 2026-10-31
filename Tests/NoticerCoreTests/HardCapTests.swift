@@ -44,14 +44,14 @@ final class HardCapTests: EngineTestCase {
         advance(to: waterDeadline)
         engine.tick()
         XCTAssertEqual(engine.cues.map(\.needID), ["baby"])
-        XCTAssertEqual(engine.openNeedIDs, ["water"])
+        XCTAssertEqual(engine.openNeedIDs, ["water", "baby"])
         XCTAssertEqual(events(.cueDeferredRateLimit).map(\.needID), ["water"])
 
         engine.noteSameChore("sink")
         advance(100)
         engine.tick()
         XCTAssertEqual(engine.cues.map(\.needID), ["baby"])
-        XCTAssertEqual(engine.openNeedIDs, ["water"])
+        XCTAssertEqual(engine.openNeedIDs, ["water", "baby"])
 
         // Refresh the chore mark so the 120 s window still covers the moment
         // the 3-minute rate limit lifts, 180 s after the baby cue.

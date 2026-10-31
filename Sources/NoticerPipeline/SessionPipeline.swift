@@ -160,6 +160,10 @@ public actor SessionPipeline {
             } catch is CancellationError {
                 modelInFlight = false
                 throw CancellationError()
+            } catch let error as URLError where error.code == .cancelled {
+                // A stop-time -999 is a cancel, not a model error.
+                modelInFlight = false
+                throw CancellationError()
             } catch is ModelCallTimeout {
                 modelInFlight = false
                 engine.abandonInFlightCall()
@@ -180,6 +184,17 @@ public actor SessionPipeline {
             engine.handle(callID: call.id, verdict: verdict)
             decisions.append(decision)
             modelSummary = Self.summary(verdict)
+        }
+        // A step that ran model turns returns before speech, so the phone
+        // reads the verdicts while the cue is still being spoken. Speech
+        // lands on the next step.
+        if !decisions.isEmpty || modelError != nil {
+            return PipelineStep(
+                spoken: [],
+                decisions: decisions,
+                modelError: modelError,
+                modelSummary: modelSummary
+            )
         }
         let (spoken, speechError) = try await speakNewCues()
         return PipelineStep(

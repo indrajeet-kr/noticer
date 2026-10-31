@@ -84,6 +84,7 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case sessionEnded
     case retiredMiss
     case callIssued
+    case stillOpen
 }
 
 public struct EngineEvent: Equatable, Sendable {

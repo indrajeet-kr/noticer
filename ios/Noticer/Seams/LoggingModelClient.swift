@@ -16,6 +16,13 @@ struct LoggingModelClient: ModelClient {
             let verdict = try await inner.complete(request)
             log("MODEL", "\(Self.describeVerdict(verdict)) [\(Self.latency(start))s]")
             return verdict
+        } catch is CancellationError {
+            // A stop-time cancel is not a model failure; say so plainly.
+            log("MODEL", "cancelled [\(Self.latency(start))s]")
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            log("MODEL", "cancelled [\(Self.latency(start))s]")
+            throw error
         } catch {
             log("MODEL", "error: \(String(describing: error)) [\(Self.latency(start))s]")
             throw error

@@ -19,6 +19,21 @@ struct ParsedToolCall: Equatable {
 }
 
 enum ChatCompletionResponse {
+    /// `resolved_by` onto the engine's resolution. Unknown strings pass
+    /// through raw; the engine validator drops what it doesn't recognize.
+    static func resolution(forResolvedBy raw: String) -> Resolution {
+        switch raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "wearer":
+            return .caughtHimself
+        case "other_adult":
+            return .resolvedByPartner
+        case "unclear":
+            return .unknown
+        default:
+            return Resolution(rawValue: raw)
+        }
+    }
+
     static func parse(data: Data, rates: UsageCostRates) throws -> DetailedModelCompletion {
         let raw: JSONValue
         do {
@@ -117,7 +132,7 @@ enum ChatCompletionResponse {
         }
         guard let name = ToolName(rawValue: nameRaw) else {
             throw ModelClientError.malformedResponse(
-                "Tool \(nameRaw) is not one of the five Noticer tools."
+                "Tool \(nameRaw) is not one of the six Noticer tools."
             )
         }
         let arguments = function["arguments"] ?? .object([:])
@@ -161,6 +176,19 @@ enum ChatCompletionResponse {
                 throw ModelClientError.malformedResponse("extension_reason was not a string.")
             }
         }
+        // Only the resolution tool sends this. It wins over a resolution
+        // riding alongside, so the engine API stays the same.
+        var resolvedBy: String?
+        if let raw = fields.removeValue(forKey: ToolCatalog.resolvedByField) {
+            switch raw {
+            case .string(let text):
+                resolvedBy = text
+            case .null:
+                resolvedBy = nil
+            default:
+                throw ModelClientError.malformedResponse("resolved_by was not a string.")
+            }
+        }
 
         let assessmentData: Data
         do {
@@ -169,7 +197,10 @@ enum ChatCompletionResponse {
             throw ModelClientError.malformedResponse("Tool arguments could not be read.")
         }
         do {
-            let assessment = try JSONDecoder().decode(SceneAssessment.self, from: assessmentData)
+            var assessment = try JSONDecoder().decode(SceneAssessment.self, from: assessmentData)
+            if let resolvedBy {
+                assessment.resolution = Self.resolution(forResolvedBy: resolvedBy)
+            }
             return (assessment, extensionReason)
         } catch {
             throw ModelClientError.malformedResponse(

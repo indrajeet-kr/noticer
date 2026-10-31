@@ -17,7 +17,7 @@ final class HeadStartTests: EngineTestCase {
         XCTAssertEqual(cue.kind, .whisper)
         XCTAssertEqual(cue.text, Self.takeBaby().cueWording)
         XCTAssertEqual(cue.createdAt, open.cueDeadline)
-        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"], "the need stays open after the cue for a resolution")
         XCTAssertTrue(events(.recheckRequested).isEmpty)
     }
 

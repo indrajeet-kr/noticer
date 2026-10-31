@@ -57,14 +57,17 @@ public struct ToolDefinition: Equatable, Sendable {
     }
 }
 
-/// The five tools. Schemas describe arguments. They do not enforce caps.
+/// The six tools. Schemas describe arguments. They do not enforce caps.
 ///
 /// Every tool's properties include the shared assessment fields. Required
-/// subsets differ. `extension_reason` exists only on the head-start tool.
+/// subsets differ. `extension_reason` exists only on the head-start tool and
+/// `resolved_by` only on the resolution tool.
 /// `strict` is true. Whether Meta requires every property to also be required
 /// is unconfirmed; see CONTRIBUTING.
 public enum ToolCatalog {
     public static let extensionReasonField = "extension_reason"
+    public static let resolvedByField = "resolved_by"
+    public static let resolvedByValues = ["wearer", "other_adult", "unclear"]
 
     public static let all: [ToolDefinition] = [
         latchNeedHypothesis,
@@ -72,6 +75,7 @@ public enum ToolCatalog {
         logWearerIntervention,
         requestHeadStartExtension,
         reportNoTransition,
+        reportNeedResolved,
     ]
 
     public static func chatCompletionsTools() -> [JSONValue] {
@@ -141,6 +145,20 @@ public enum ToolCatalog {
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: []
+        )
+    )
+
+    private static let reportNeedResolved = ToolDefinition(
+        name: .reportNeedResolved,
+        description: "An open need is handled. Say who handled it: the wearer's own hands, another adult, or unclear.",
+        parameters: objectSchema(
+            properties: assessmentProperties().merging([
+                resolvedByField: jsonStringEnum(resolvedByValues),
+            ]) { _, new in new },
+            required: [
+                AssessmentField.needID,
+                resolvedByField,
+            ]
         )
     )
 }
