@@ -530,7 +530,7 @@ final class PhoneSessionModel {
         let ticker = Task { @MainActor [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(for: .milliseconds(250))
-                guard let self, self.sceneActive, !Task.isCancelled else { continue }
+                guard let self, self.isRunning, self.sceneActive, !Task.isCancelled else { continue }
                 if let step = try? await session.tick() {
                     self.apply(step, await session.view())
                 }
@@ -558,7 +558,7 @@ final class PhoneSessionModel {
             let ingestTask = Task { @MainActor [weak self] in
                 do {
                     let step = try await session.ingest(frame: frame, gate: snapshot)
-                    if let self, !Task.isCancelled {
+                    if let self, self.isRunning, !Task.isCancelled {
                         self.apply(step, await session.view())
                     }
                 } catch is CancellationError {
@@ -566,7 +566,7 @@ final class PhoneSessionModel {
                 } catch let urlError as URLError where urlError.code == .cancelled {
                     // Normal stop cancellation.
                 } catch {
-                    if let self, !Task.isCancelled {
+                    if let self, self.isRunning, !Task.isCancelled {
                         self.runError = error.localizedDescription
                         self.sessionLog.append("ERROR", "ingest: \(error.localizedDescription)")
                     }
@@ -575,6 +575,12 @@ final class PhoneSessionModel {
             ingestTasks.append(ingestTask)
             if ingestTasks.count > 8 {
                 ingestTasks.removeFirst()
+            }
+        }
+        ticker.cancel()
+        if Task.isCancelled || !isRunning {
+            for task in ingestTasks {
+                task.cancel()
             }
         }
         for task in ingestTasks {
@@ -627,6 +633,7 @@ final class PhoneSessionModel {
     }
 
     private func apply(_ step: PipelineStep, _ view: SessionView) {
+        guard isRunning else { return }
         masteryLine = view.masterySummary
         headStartLine = view.headStartSummary
         for line in step.timingLines {

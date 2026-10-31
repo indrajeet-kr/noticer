@@ -922,4 +922,127 @@ final class FastCuesCoreTests: EngineTestCase {
         let steadyCallsPerMin = engine.callsInLastMinute()
         XCTAssertLessThanOrEqual(steadyCallsPerMin, 6, "empty-room idle watch (\(steadyCallsPerMin)/min) must be <= 6/min")
     }
+
+    func testInterventionFollowedByUnclearResolvedToolClosesAndCredits() throws {
+        let water = Need(
+            id: "water",
+            authorText: "Keep water bottle on dining table",
+            cueWording: "Water on the table helps.",
+            visualCondition: "dining table visible with no water bottle",
+            handledCondition: "water bottle on the dining table",
+            selfNoticeSignal: "wearer_placing_water_bottle_on_table",
+            priority: 0
+        )
+        engine = try NeedEngine(clock: clock, needs: [water], timing: .quick)
+
+        see([], sharpness: 0.04, jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], sharpness: 0.05, jpeg: 2, sceneActive: true)
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+
+        // Model sends literal `"null"` for resolution and action_code on latch: must not log assessmentDropped.
+        engine.handle(
+            callID: latch.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .latchNeedHypothesis,
+                assessment: SceneAssessment(
+                    needID: "water",
+                    sustainedAcrossStrip: true,
+                    wearerHandsOccupied: false,
+                    partnerInView: false,
+                    wearerHandsVisible: true,
+                    resolution: Resolution(rawValue: "null"),
+                    actionCode: "null",
+                    confidence: 0.85
+                )
+            )
+        )
+        XCTAssertEqual(engine.openNeedIDs, ["water"])
+        XCTAssertTrue(events(.assessmentDropped).isEmpty, "string 'null' resolution must not record assessmentDropped")
+
+        // Turn 1: `log_wearer_intervention` arms `pendingWearerAction`.
+        advance(8)
+        see([], sharpness: 0.04, jpeg: 3, sceneActive: true)
+        let hb1 = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(
+            callID: hb1.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .logWearerIntervention,
+                assessment: SceneAssessment(
+                    needID: "water",
+                    sustainedAcrossStrip: true,
+                    wearerHandsOccupied: false,
+                    partnerInView: false,
+                    wearerHandsVisible: true,
+                    resolution: Resolution(rawValue: "null"),
+                    actionCode: "wearer_placing_water_bottle_on_table",
+                    confidence: 0.85
+                )
+            )
+        )
+        XCTAssertEqual(engine.openNeeds.first?.pendingWearerAction, "wearer_placing_water_bottle_on_table")
+
+        // Turn 2: bottle is now on the table (`report_need_resolved` with `sustained=false, res=unknown`).
+        advance(2)
+        see([], sharpness: 0.05, jpeg: 4, handsEdge: true, sceneActive: true)
+        let hb2 = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(
+            callID: hb2.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .reportNeedResolved,
+                assessment: SceneAssessment(
+                    needID: "water",
+                    sustainedAcrossStrip: false,
+                    wearerHandsOccupied: false,
+                    partnerInView: false,
+                    wearerHandsVisible: true,
+                    resolution: .unknown,
+                    actionCode: "null",
+                    confidence: 0.75
+                )
+            )
+        )
+        XCTAssertTrue(engine.openNeedIDs.isEmpty, "open need must close when report_need_resolved confirms handled state")
+        XCTAssertEqual(events(.caughtHimself).last?.needID, "water")
+        XCTAssertEqual(mastery(of: "water").score, 0.25)
+    }
+
+    func testLiveGlassesOpenNeedDoesNotPingPongLatchAndHeartbeat() throws {
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [Self.takeBaby(), Self.refillWater()],
+            timing: .quick
+        )
+        see([], sharpness: 0.04, jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], sharpness: 0.05, jpeg: 2, sceneActive: true)
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(latch.purpose, .latch)
+
+        // Simulate a 3.5s in-flight model call on real glasses before the latch reply arrives.
+        advance(3.5)
+        var v = latchVerdict("refill-water")
+        v.assessment.partnerInView = false
+        engine.handle(callID: latch.id, verdict: v)
+        XCTAssertEqual(engine.openNeedIDs, ["refill-water"])
+
+        // 0.5s after the latch reply (4.0s after the latch call was issued), a new frame arrives.
+        // Must NOT fire an immediate `.latch` call!
+        advance(0.5)
+        see([], sharpness: 0.04, jpeg: 3, sceneActive: true)
+        XCTAssertNil(engine.pendingModelCall, "must not fire a latch call 0.5s after a latch succeeded")
+
+        // At +4.0s after the latch reply (no person rect, no activity edge), still waits for 8s heartbeat.
+        advance(3.5)
+        see([], sharpness: 0.04, jpeg: 4, sceneActive: true)
+        XCTAssertNil(engine.pendingModelCall, "must not fall through to 4s latch call while monitoring an open need")
+
+        // At +8.0s after the latch reply, the heartbeat fires cleanly.
+        advance(4.0)
+        see([], sharpness: 0.04, jpeg: 5, sceneActive: true)
+        XCTAssertEqual(engine.pendingModelCall?.purpose, .heartbeat)
+    }
 }

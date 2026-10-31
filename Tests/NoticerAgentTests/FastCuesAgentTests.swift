@@ -206,6 +206,40 @@ final class FastCuesAgentTests: XCTestCase {
         XCTAssertFalse(text2.contains("handled_when=\(problem)"))
     }
 
+    func testStringifiedNullAndBoolToolArgumentsDecodeCleanly() throws {
+        // Out-of-view reply where the model quotes `"null"` on `sustained_across_strip`,
+        // `resolution`, and `action_code`.
+        let outOfViewJSON: JSONValue = .object([
+            "need_id": .string("null"),
+            "sustained_across_strip": .string("null"),
+            "partner_in_view": .string("false"),
+            "wearer_hands_visible": .string("true"),
+            "wearer_hands_occupied": .string("false"),
+            "resolution": .string("null"),
+            "action_code": .string("null"),
+            "confidence": .string("0.85"),
+        ])
+        let parsedNull = try ChatCompletionResponse.parseArguments(outOfViewJSON)
+        XCTAssertNil(parsedNull.assessment.sustainedAcrossStrip)
+        XCTAssertEqual(parsedNull.assessment.partnerInView, false)
+        XCTAssertEqual(parsedNull.assessment.wearerHandsVisible, true)
+        XCTAssertEqual(parsedNull.assessment.wearerHandsOccupied, false)
+        XCTAssertNil(parsedNull.assessment.resolution)
+        XCTAssertNil(parsedNull.assessment.actionCode)
+        XCTAssertEqual(parsedNull.assessment.confidence ?? 0, 0.85, accuracy: 1e-6)
+
+        let sustainedJSON: JSONValue = .object([
+            "need_id": .string("water"),
+            "sustained_across_strip": .string("true"),
+            "resolution": .string("nil"),
+            "action_code": .string("none"),
+        ])
+        let parsedTrue = try ChatCompletionResponse.parseArguments(sustainedJSON)
+        XCTAssertEqual(parsedTrue.assessment.sustainedAcrossStrip, true)
+        XCTAssertNil(parsedTrue.assessment.resolution)
+        XCTAssertNil(parsedTrue.assessment.actionCode)
+    }
+
     // MARK: - Helpers
 
     private func make448FixtureJPEG(seed: UInt64) throws -> Data {

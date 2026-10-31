@@ -630,7 +630,8 @@ public struct NeedEngine<TimeSource: Clock> {
             let heartbeatDue = (lastHeartbeatAt ?? lastModelCallAt).map {
                 now.timeIntervalSince($0) >= timing.heartbeatSeconds
             } ?? true
-            if heartbeatDue || handEdgePending {
+            let edgeTrigger = handEdgePending && pendingModelCalls.isEmpty
+            if heartbeatDue || edgeTrigger {
                 if shouldIssue(purpose: .heartbeat, now: now) {
                     issue(.heartbeat, now: now)
                 }
@@ -644,6 +645,9 @@ public struct NeedEngine<TimeSource: Clock> {
         let recentPerson = buffer.lastPersonSeenAt.map {
             now.timeIntervalSince($0) < timing.noPersonKeyframeCloseSeconds
         } ?? false
+        if !tracked.isEmpty, latency.dedupeAllPurposes, !recentPerson {
+            return
+        }
         let idleMinInterval: TimeInterval = {
             if latency.dedupeAllPurposes,
                tracked.isEmpty,
@@ -657,6 +661,10 @@ public struct NeedEngine<TimeSource: Clock> {
         }()
         if let lastLatchCallAt,
            now.timeIntervalSince(lastLatchCallAt) < idleMinInterval {
+            return
+        }
+        if let lastSuccessfulLatchAt,
+           now.timeIntervalSince(lastSuccessfulLatchAt) < timing.latchMinIntervalSeconds {
             return
         }
         if !tracked.isEmpty,
@@ -726,9 +734,10 @@ public struct NeedEngine<TimeSource: Clock> {
         if purpose == .latch {
             lastLatchCallAt = now
             revisionAtLastLatchCall = buffer.revision
-            if tracked.isEmpty {
-                handEdgePending = false
+            if !tracked.isEmpty {
+                lastHeartbeatAt = now
             }
+            handEdgePending = false
         }
         if purpose == .heartbeat || purpose == .recheck {
             lastHeartbeatAt = now
@@ -834,9 +843,16 @@ public struct NeedEngine<TimeSource: Clock> {
                 record(.assessmentDropped, needID: needID, detail: "unknown-need")
             }
         }
-        if let resolution = assessment.resolution, !Resolution.recognized.contains(resolution) {
-            assessment.resolution = nil
-            record(.assessmentDropped, needID: assessment.needID, detail: "unknown-resolution")
+        if let resolution = assessment.resolution {
+            if omittedNeedID(resolution.rawValue) {
+                assessment.resolution = nil
+            } else if !Resolution.recognized.contains(resolution) {
+                assessment.resolution = nil
+                record(.assessmentDropped, needID: assessment.needID, detail: "unknown-resolution")
+            }
+        }
+        if let actionCode = assessment.actionCode, omittedNeedID(actionCode) {
+            assessment.actionCode = nil
         }
         return assessment
     }
@@ -897,8 +913,20 @@ public struct NeedEngine<TimeSource: Clock> {
     private mutating func resolve(_ needID: String, verdict: ModelVerdict, now: Date) {
         guard var need = catalog.need(id: needID) else { return }
         guard let index = indexOfOpen(needID) else { return }
-        switch verdict.assessment.resolution {
-        case .caughtHimself:
+        let assessment = verdict.assessment
+        if assessment.resolution == .resolvedByPartner {
+            close(needID, now: now, cooldown: true)
+            record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
+            return
+        }
+        let pendingAction = tracked[index].pendingWearerAction
+        let cleared = assessment.sustainedAcrossStrip != true
+        let wearerResolved = assessment.resolution == .caughtHimself
+            || (pendingAction != nil && cleared)
+            || (MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) && cleared)
+            || (assessment.sustainedAcrossStrip == false && assessment.wearerHandsVisible == true && assessment.partnerInView == false)
+            || (tracked[index].cueDelivered && assessment.sustainedAcrossStrip == false)
+        if wearerResolved {
             if tracked[index].cueDelivered {
                 // The cue already applied applyCueFired: no self-notice step,
                 // but the success still fires so the phone shows "You got it".
@@ -910,17 +938,15 @@ public struct NeedEngine<TimeSource: Clock> {
                 let becameRetired = before.phase != .retired && need.mastery.phase == .retired
                 catalog.update(need)
                 close(needID, now: now, cooldown: true)
-                record(.caughtHimself, needID: needID, detail: "before-cue")
+                let detail = assessment.resolution == .caughtHimself ? "before-cue" : (pendingAction ?? "before-cue")
+                record(.caughtHimself, needID: needID, detail: detail)
                 if becameRetired {
                     record(.masteryRetired, needID: needID, detail: nil)
                 }
             }
-        case .resolvedByPartner:
-            close(needID, now: now, cooldown: true)
-            record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
-        default:
-            record(.stillOpen, needID: needID, detail: "unclear")
+            return
         }
+        record(.stillOpen, needID: needID, detail: "unclear")
     }
 
     private mutating func applyAssessment(
