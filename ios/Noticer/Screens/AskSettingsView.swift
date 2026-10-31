@@ -13,6 +13,8 @@ struct AskSettingsView: View {
     @State private var acceptedPulse = 0
     @State private var showingKey = false
     @State private var showingLog = false
+    @State private var confirmingIntro = false
+    @AppStorage("noticer.onboarding.done") private var onboardingDone = false
 
     var body: some View {
         ScrollView {
@@ -32,6 +34,7 @@ struct AskSettingsView: View {
                 sessionSection
                 keySection
                 logSection
+                introSection
             }
             .screenMargins()
             .padding(.bottom, Theme.Space.s32)
@@ -56,6 +59,43 @@ struct AskSettingsView: View {
         .sheet(isPresented: $showingLog) {
             SessionLogView(log: model.sessionLog)
         }
+        .confirmationDialog(
+            "See the introduction again?",
+            isPresented: $confirmingIntro,
+            titleVisibility: .visible
+        ) {
+            Button("Start over") {
+                restartIntroduction()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Her list and the saved key stay. You'll begin again at the first screen.")
+        }
+    }
+
+    private var introSection: some View {
+        Button {
+            confirmingIntro = true
+        } label: {
+            VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                Text("See the introduction again")
+                    .font(Theme.Font.headline)
+                Text("Start over from the first screen. Her list and the key stay.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(Theme.textPrimary)
+        .padding(.top, Theme.Space.s8)
+    }
+
+    private func restartIntroduction() {
+        if model.isRunning {
+            model.stop()
+        }
+        onboardingDone = false
     }
 
     // MARK: - Ask
