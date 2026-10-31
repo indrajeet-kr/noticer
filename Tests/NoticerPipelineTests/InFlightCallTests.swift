@@ -89,17 +89,15 @@ final class InFlightCallTests: XCTestCase {
             frame: frame(at: clock.now(), marker: 3),
             gate: gate(at: clock.now())
         )
-        XCTAssertTrue(fired.spoken.isEmpty, "speech lands on the next step, not this one")
-        let startedBeforeSpeech = await speaker.startedCount()
-        XCTAssertEqual(startedBeforeSpeech, 0)
-        let logBeforeSpeech = await pipeline.view().log
-        XCTAssertTrue(logBeforeSpeech.contains { $0.kind == .cueFired })
+        XCTAssertEqual(fired.spoken.map(\.needID), [MVPNeedList.takeBabyID], "cue starts speaking on the same step without blocking step return")
+        let logBeforeSpeechFinishes = await pipeline.view().log
+        XCTAssertTrue(logBeforeSpeechFinishes.contains { $0.kind == .cueFired })
+        let finishedBeforeRelease = await speaker.spokenCues()
+        XCTAssertTrue(finishedBeforeRelease.isEmpty, "reply events publish before slow speech finishes")
 
-        let speech = Task { try await pipeline.tick() }
         try await waitUntil { await speaker.startedCount() == 1 }
         await speaker.release()
-        let spoken = try await speech.value
-        XCTAssertEqual(spoken.spoken.map(\.needID), [MVPNeedList.takeBabyID])
+        await pipeline.waitForSpeech()
         let cues = await speaker.spokenCues().map(\.needID)
         XCTAssertEqual(cues, [MVPNeedList.takeBabyID])
     }
@@ -128,6 +126,173 @@ final class InFlightCallTests: XCTestCase {
                 XCTFail("expected CancellationError, got \(error)")
             }
         }
+    }
+
+    func testCancelStillLoggedAsCancel() async throws {
+        for failure in [ThrowingClient.Failure.urlCancelled, .cancellation] {
+            let origin = Date(timeIntervalSince1970: 1_700_000_000)
+            let clock = SessionClock.manual(startingAt: origin)
+            let client = CapturingCancelClient(inner: ThrowingClient(failure: failure))
+            let pipeline = try SessionPipeline(
+                clock: clock,
+                needs: [MVPNeedList.takeBaby],
+                model: client,
+                speaker: RecordingCueSpeaker()
+            )
+            clock.advance(to: origin)
+            _ = try await pipeline.ingest(frame: frame(at: origin, marker: 1), gate: gate(at: origin))
+            clock.advance(to: origin.addingTimeInterval(5))
+            do {
+                _ = try await pipeline.ingest(
+                    frame: frame(at: clock.now(), marker: 2),
+                    gate: gate(at: clock.now())
+                )
+                XCTFail("expected CancellationError")
+            } catch is CancellationError {
+                let tags = await client.tags()
+                XCTAssertEqual(tags, ["call", "cancelled"])
+            }
+        }
+    }
+
+    func testStepPublishedBeforeFollowUpCall() async throws {
+        let origin = Date(timeIntervalSince1970: 1_700_000_000)
+        let clock = SessionClock.manual(startingAt: origin)
+        let client = ScriptedModelClient(verdicts: [
+            latchVerdict(),
+            ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .reportNoTransition,
+                assessment: SceneAssessment(needID: MVPNeedList.takeBabyID, sustainedAcrossStrip: true)
+            ),
+        ])
+        let pipeline = try SessionPipeline(
+            clock: clock,
+            needs: [MVPNeedList.takeBaby],
+            model: client,
+            speaker: RecordingCueSpeaker(),
+            timing: .quick
+        )
+
+        // Urgent/recheck follow-up scenario: latch at t=2s, then jump straight to cueDeadline (t=12s)
+        // where stale evidence wasn't hit yet, or jump to t=20s where recheck is requested.
+        clock.advance(to: origin)
+        _ = try await pipeline.ingest(frame: frame(at: origin, marker: 1), gate: gate(at: origin))
+        let latchTime = origin.addingTimeInterval(2)
+        clock.advance(to: latchTime)
+        let step1 = try await pipeline.ingest(frame: frame(at: latchTime, marker: 2), gate: gate(at: latchTime))
+        XCTAssertEqual(step1.decisions.count, 1, "one reply publishes one step immediately")
+        let viewAfterStep1 = await pipeline.view()
+        XCTAssertEqual(viewAfterStep1.openNeeds.map(\.needID), [MVPNeedList.takeBabyID])
+        XCTAssertEqual(viewAfterStep1.modelCalls, 1)
+
+        // Switch test: `oneReplyPerStep: false` loops pending calls in the same step when eligible.
+        let urgentNeed = Need(
+            id: "take-baby",
+            authorText: "Take the baby",
+            cueWording: "Maybe take the baby?",
+            dwellSeconds: 0,
+            priority: 0
+        )
+        let multiStepClient = ScriptedModelClient(verdicts: [
+            latchVerdict(),
+            ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .reportNoTransition,
+                assessment: SceneAssessment(needID: "take-baby", sustainedAcrossStrip: true)
+            ),
+        ])
+        let legacyClock = SessionClock.manual(startingAt: origin)
+        let legacyPipeline = try SessionPipeline(
+            clock: legacyClock,
+            needs: [urgentNeed],
+            model: multiStepClient,
+            speaker: RecordingCueSpeaker(),
+            latency: LatencyTuning(oneReplyPerStep: false, dedupeAllPurposes: false)
+        )
+        legacyClock.advance(to: origin)
+        _ = try await legacyPipeline.ingest(frame: frame(at: origin, marker: 1), gate: gate(at: origin))
+        let t5 = origin.addingTimeInterval(5)
+        legacyClock.advance(to: t5)
+        var risingGate = gate(at: t5)
+        risingGate.handGateRisingEdge = true
+        let legacyStep = try await legacyPipeline.ingest(frame: frame(at: t5, marker: 2), gate: risingGate)
+        XCTAssertGreaterThanOrEqual(legacyStep.decisions.count, 1)
+    }
+
+    func testPreparedSpeechUsedAndSpokenSameStep() async throws {
+        let origin = Date(timeIntervalSince1970: 1_700_000_000)
+        let clock = SessionClock.manual(startingAt: origin)
+        let speaker = OrderRecordingSpeaker()
+        let urgent = Need(
+            id: "silver-glass-floor",
+            authorText: "Take away the silver glass on the floor",
+            cueWording: "Could you move that glass from the baby?",
+            visualCondition: "silver glass on floor near baby",
+            handledCondition: "floor clear of silver glass",
+            selfNoticeSignal: "wearer_picking_up_glass",
+            priority: 0,
+            isUrgent: true
+        )
+        let client = ScriptedModelClient(verdicts: [
+            ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .latchNeedHypothesis,
+                assessment: SceneAssessment(
+                    needID: "silver-glass-floor",
+                    sustainedAcrossStrip: true,
+                    wearerHandsOccupied: false,
+                    partnerInView: true
+                )
+            )
+        ])
+        let pipeline = try SessionPipeline(
+            clock: clock,
+            needs: [urgent],
+            model: client,
+            speaker: speaker,
+            timing: .quick
+        )
+
+        clock.advance(to: origin)
+        let step = try await pipeline.ingest(frame: frame(at: origin, marker: 1), gate: gate(at: origin))
+        await pipeline.waitForSpeech()
+
+        XCTAssertEqual(step.spoken.map(\.needID), ["silver-glass-floor"], "spoken on the same step with no extra tick")
+        let events = await speaker.events()
+        XCTAssertEqual(events, ["prepare:1", "speak:silver-glass-floor"])
+        XCTAssertTrue(step.timingLines.contains { $0.contains("call=call-1 purpose=latch") })
+        XCTAssertTrue(step.timingLines.contains { $0.contains("need=silver-glass-floor visible→latch=") })
+
+        // Switch tests: `instantSpeech: false` defers speech to the next step; `timingTelemetry: false` omits timingLines.
+        let deferredClock = SessionClock.manual(startingAt: origin)
+        let deferredSpeaker = OrderRecordingSpeaker()
+        let deferredClient = ScriptedModelClient(verdicts: [
+            ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .latchNeedHypothesis,
+                assessment: SceneAssessment(
+                    needID: "silver-glass-floor",
+                    sustainedAcrossStrip: true,
+                    wearerHandsOccupied: false,
+                    partnerInView: true
+                )
+            )
+        ])
+        let deferredPipeline = try SessionPipeline(
+            clock: deferredClock,
+            needs: [urgent],
+            model: deferredClient,
+            speaker: deferredSpeaker,
+            timing: .quick,
+            latency: LatencyTuning(instantSpeech: false, timingTelemetry: false)
+        )
+        deferredClock.advance(to: origin)
+        let firstStep = try await deferredPipeline.ingest(frame: frame(at: origin, marker: 1), gate: gate(at: origin))
+        XCTAssertTrue(firstStep.spoken.isEmpty, "instantSpeech=false defers speech past model-turn step")
+        XCTAssertTrue(firstStep.timingLines.isEmpty, "timingTelemetry=false emits no timing lines")
+        let secondStep = try await deferredPipeline.tick()
+        XCTAssertEqual(secondStep.spoken.map(\.needID), ["silver-glass-floor"])
     }
 
     private func latchVerdict() -> ModelVerdict {
@@ -230,4 +395,49 @@ private actor HoldingClient: ModelClient {
         guard !waiters.isEmpty else { return }
         waiters.removeFirst().resume()
     }
+}
+
+private actor OrderRecordingSpeaker: CueSpeaker {
+    private var log: [String] = []
+
+    func prepare(needs: [Need]) async {
+        log.append("prepare:\(needs.count)")
+    }
+
+    func speak(_ cue: Cue) async throws {
+        log.append("speak:\(cue.needID)")
+    }
+
+    func stop() async {}
+
+    func events() -> [String] { log }
+}
+
+private actor CapturingCancelClient: ModelClient {
+    private let inner: any ModelClient
+    private var recorded: [String] = []
+
+    init(inner: any ModelClient) {
+        self.inner = inner
+    }
+
+    func complete(_ request: ModelRequest) async throws -> ModelVerdict {
+        recorded.append("call")
+        do {
+            let verdict = try await inner.complete(request)
+            recorded.append("ok")
+            return verdict
+        } catch is CancellationError {
+            recorded.append("cancelled")
+            throw CancellationError()
+        } catch let error as URLError where error.code == .cancelled {
+            recorded.append("cancelled")
+            throw error
+        } catch {
+            recorded.append("error")
+            throw error
+        }
+    }
+
+    func tags() -> [String] { recorded }
 }

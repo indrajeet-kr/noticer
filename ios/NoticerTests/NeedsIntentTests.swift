@@ -461,6 +461,132 @@ final class NeedsIntentTests: XCTestCase {
         XCTAssertEqual(roundTripped, needs)
     }
 
+    // MARK: Fast-cues polarity, validator, medical refusal, and role checks.
+
+    func testDiningTablePolarity() async throws {
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            toolName: "set_needs",
+            arguments: toolArguments([
+                "needs": [
+                    [
+                        "id": "water",
+                        "authorText": "Keep water bottle on dining table",
+                        "whisper": "Maybe set water on the table?",
+                        "priority": "normal",
+                        "allowsCheckIn": false,
+                        "problem_visual": "dining table visible with no water bottle",
+                        "handled_visual": "water bottle on the dining table",
+                        "wearer_signal": "wearer_placing_water_bottle_on_table",
+                    ],
+                ],
+                "readBack": "I'll help him keep water on the dining table.",
+            ])
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "Keep water bottle on dining table")
+        guard case .needs(let drafts, _) = result else {
+            return XCTFail("expected set_needs, got \(result)")
+        }
+        let draft = try XCTUnwrap(drafts.first)
+        XCTAssertTrue(draft.problemVisual.contains("with no water bottle"))
+        XCTAssertEqual(draft.handledVisual, "water bottle on the dining table")
+        XCTAssertEqual(draft.wearerSignal, "wearer_placing_water_bottle_on_table")
+
+        let converted = NeedsIntentConversion.toNeeds(drafts, current: [])
+        let need = try XCTUnwrap(converted.first)
+        XCTAssertEqual(need.visualCondition, "dining table visible with no water bottle")
+        XCTAssertEqual(need.handledCondition, "water bottle on the dining table")
+        XCTAssertEqual(need.selfNoticeSignal, "wearer_placing_water_bottle_on_table")
+    }
+
+    func testLegacyVisualCueStillDecodes() async throws {
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            toolName: "set_needs",
+            arguments: toolArguments([
+                "needs": [
+                    [
+                        "id": "couch-water",
+                        "authorText": "Bring me water on the couch",
+                        "whisper": "Grab her a water refill?",
+                        "priority": "normal",
+                        "allowsCheckIn": false,
+                        "visualCue": "partner sitting on couch with no water within reach",
+                    ],
+                ],
+                "readBack": "One need saved.",
+            ])
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "Bring me water on the couch")
+        guard case .needs(let drafts, _) = result else {
+            return XCTFail("expected legacy visualCue to decode, got \(result)")
+        }
+        XCTAssertEqual(drafts.first?.problemVisual, "partner sitting on couch with no water within reach")
+        XCTAssertEqual(drafts.first?.visualCue, "partner sitting on couch with no water within reach")
+    }
+
+    func testForbiddenWordsWholeWord() {
+        XCTAssertEqual(NeedsIntentWhisper.forbiddenWord(in: "He is watching the stove."), "watching")
+        XCTAssertEqual(NeedsIntentWhisper.forbiddenWord(in: "The cameras caught it."), "cameras")
+        XCTAssertEqual(NeedsIntentWhisper.forbiddenWord(in: "Seeing her plate get cold."), "seeing")
+
+        XCTAssertNil(NeedsIntentWhisper.forbiddenWord(in: "She dropped a seed."))
+        XCTAssertNil(NeedsIntentWhisper.forbiddenWord(in: "Stay watchful near the stairs."))
+        XCTAssertNil(NeedsIntentWhisper.forbiddenWord(in: "Could you move that glass from the baby?"))
+    }
+
+    func testMedicalRequestAsksClarifyingQuestion() async throws {
+        let saved = [Need(id: "take-baby", authorText: "Take the baby", cueWording: "Maybe take the baby?", priority: 0)]
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            toolName: "ask_clarifying_question",
+            arguments: toolArguments([
+                "question": "Noticer only helps with everyday household logistics, not medication or fever tracking. Would it help if he brings water to the bedside instead?",
+                "suggestions": ["Bring bedside water", "Skip this one"],
+            ])
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: saved, message: "remind him of her fever meds")
+        guard case .question(let question, _) = result else {
+            return XCTFail("expected .question, got \(result)")
+        }
+        XCTAssertTrue(question.contains("household"))
+        XCTAssertEqual(saved.map(\.id), ["take-baby"], "no need is added on a clarifying question")
+    }
+
+    func testNeedsIntentRoleMatchesScenePath() throws {
+        let bodyData = try NeedsIntentRequest.body(currentList: [], message: "hello")
+        let json = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        let messages = try XCTUnwrap(json["messages"] as? [[String: Any]])
+        XCTAssertEqual(messages.first?["role"] as? String, MuseSparkModelClient.instructionRole)
+        XCTAssertEqual(MuseSparkModelClient.instructionRole, "developer")
+    }
+
+    func testPromptSnapshotAndSchemaRequiredFields() throws {
+        let prompt = NeedsIntentSystemPrompt.text
+        XCTAssertTrue(prompt.contains("problem_visual"))
+        XCTAssertTrue(prompt.contains("handled_visual"))
+        XCTAssertTrue(prompt.contains("wearer_signal"))
+        XCTAssertTrue(prompt.contains("everyday household logistics"))
+        XCTAssertTrue(prompt.contains("Maybe offer to take the baby?"))
+        XCTAssertTrue(prompt.contains("Grab her a water refill?"))
+        XCTAssertTrue(prompt.contains("Keep water bottle on dining table"))
+
+        let bodyData = try NeedsIntentRequest.body(currentList: [], message: "check schema")
+        let root = try XCTUnwrap(JSONSerialization.jsonObject(with: bodyData) as? [String: Any])
+        let tools = try XCTUnwrap(root["tools"] as? [[String: Any]])
+        let setNeeds = try XCTUnwrap(tools.first { ($0["function"] as? [String: Any])?["name"] as? String == "set_needs" })
+        let function = try XCTUnwrap(setNeeds["function"] as? [String: Any])
+        let params = try XCTUnwrap(function["parameters"] as? [String: Any])
+        let props = try XCTUnwrap(params["properties"] as? [String: Any])
+        let needsProp = try XCTUnwrap(props["needs"] as? [String: Any])
+        let items = try XCTUnwrap(needsProp["items"] as? [String: Any])
+        let required = try XCTUnwrap(items["required"] as? [String])
+        XCTAssertTrue(required.contains("problem_visual"))
+        XCTAssertTrue(required.contains("handled_visual"))
+        XCTAssertTrue(required.contains("wearer_signal"))
+        XCTAssertFalse(required.contains("visualCue"))
+    }
+
     // MARK: Live smoke (opt-in).
 
     /// Recorded tests above run on every build. This one hits the real API

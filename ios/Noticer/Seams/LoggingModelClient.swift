@@ -30,10 +30,12 @@ struct LoggingModelClient: ModelClient {
     }
 
     static func describeRequest(_ request: ModelRequest) -> String {
+        let purpose = request.purpose?.rawValue ?? "—"
         let ages = request.keyframes.map { String(Int($0.ageSeconds.rounded())) }.joined(separator: ",")
         let bytes = request.keyframes.reduce(0) { $0 + $1.jpegData.count }
         let needs = request.needs.map(\.id).joined(separator: ",")
-        return "call keyframes=\(request.keyframes.count) ages=[\(ages)]s size=\(bytes / 1024)KB needs=[\(needs)]"
+        let open = request.openNeeds.map { "\($0.needID)\($0.cueSpoken ? ":spoken" : "")" }.joined(separator: ",")
+        return "call purpose=\(purpose) keyframes=\(request.keyframes.count) ages=[\(ages)]s bytes=\(bytes) size=\(bytes / 1024)KB open=[\(open)] needs=[\(needs)]"
     }
 
     static func describeVerdict(_ verdict: ModelVerdict) -> String {

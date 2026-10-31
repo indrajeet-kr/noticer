@@ -42,7 +42,7 @@ final class ResolutionTests: EngineTestCase {
         engine.handle(callID: call.id, verdict: noTransition("null", sustained: nil))
 
         XCTAssertTrue(events(.assessmentDropped).isEmpty)
-        XCTAssertEqual(events(.stillOpen).last?.detail, "no-change")
+        XCTAssertEqual(events(.stillOpen).last?.detail, "out-of-view")
         XCTAssertEqual(events(.stillOpen).last?.needID, "take-baby")
         let refreshed = try XCTUnwrap(engine.openNeeds.first).evidenceAt
         XCTAssertGreaterThan(refreshed, staleAt)

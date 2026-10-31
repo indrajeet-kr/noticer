@@ -23,6 +23,7 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
     public static let chatCompletionsURL = staticURL("https://api.meta.ai/v1/chat/completions")
     public static let modelID = "muse-spark-1.3"
     public static let apiKeyEnvironmentVariable = "META_API_KEY"
+    public static let instructionRole = "developer"
     public static let toolChoice = "auto"
     /// `required` is rejected by the API. Do not send it.
     public static let parallelToolCalls = false
@@ -30,6 +31,16 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
     public static let reasoningEffortCandidates = ["minimal", "low"]
     /// If `max_tokens` is set, use at least this. Leaving it unset is also allowed.
     public static let minimumMaxTokens = 1024
+
+    public static func encodedRequestByteCount(
+        _ request: ModelRequest,
+        configuration: MuseSparkConfiguration = MuseSparkConfiguration()
+    ) -> Int {
+        if let body = try? ChatCompletionRequest.body(request: request, configuration: configuration) {
+            return body.count
+        }
+        return request.keyframes.reduce(0) { $0 + $1.jpegData.count }
+    }
 
     public var backend: ModelBackend
     public let configuration: MuseSparkConfiguration

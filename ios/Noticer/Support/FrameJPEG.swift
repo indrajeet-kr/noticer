@@ -7,12 +7,14 @@ import UniformTypeIdentifiers
 
 /// JPEG bytes for an in-memory `CameraFrame`. Nothing here writes a file.
 enum FrameJPEG {
-    static let compressionQuality = CGFloat(SignalGateTuning.jpegQuality)
-    static let maxEdge = SignalGateTuning.uploadMaxEdge
+    static let compressionQuality = CGFloat(LatencyTuning.default.smallerPayloads ? LatencyTuning.default.jpegQuality : SignalGateTuning.jpegQuality)
+    static let maxEdge = LatencyTuning.default.smallerPayloads ? LatencyTuning.default.uploadMaxEdge : SignalGateTuning.uploadMaxEdge
 
-    static func data(from image: CGImage) -> Data? {
-        autoreleasepool {
-            let sized = resized(image, maxEdge: maxEdge)
+    static func data(from image: CGImage, latency: LatencyTuning = .default) -> Data? {
+        let targetEdge = latency.smallerPayloads ? latency.uploadMaxEdge : SignalGateTuning.uploadMaxEdge
+        let quality = CGFloat(latency.smallerPayloads ? latency.jpegQuality : SignalGateTuning.jpegQuality)
+        return autoreleasepool {
+            let sized = resized(image, maxEdge: targetEdge)
             let data = NSMutableData()
             guard let destination = CGImageDestinationCreateWithData(
                 data,
@@ -23,7 +25,7 @@ enum FrameJPEG {
                 return nil
             }
             let options: [CFString: Any] = [
-                kCGImageDestinationLossyCompressionQuality: compressionQuality
+                kCGImageDestinationLossyCompressionQuality: quality
             ]
             CGImageDestinationAddImage(destination, sized, options as CFDictionary)
             guard CGImageDestinationFinalize(destination) else {
@@ -33,13 +35,14 @@ enum FrameJPEG {
         }
     }
 
-    static func data(from image: UIImage) -> Data? {
+    static func data(from image: UIImage, latency: LatencyTuning = .default) -> Data? {
+        let quality = CGFloat(latency.smallerPayloads ? latency.jpegQuality : SignalGateTuning.jpegQuality)
         guard let cgImage = image.cgImage else {
             return autoreleasepool {
-                image.jpegData(compressionQuality: compressionQuality)
+                image.jpegData(compressionQuality: quality)
             }
         }
-        return data(from: cgImage)
+        return data(from: cgImage, latency: latency)
     }
 
     /// Longest side above `maxEdge` is scaled down. Smaller images are unchanged.

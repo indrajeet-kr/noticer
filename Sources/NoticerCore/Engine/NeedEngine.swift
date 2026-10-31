@@ -13,6 +13,10 @@ import Foundation
 /// on a gate snapshot are caller input. Live frames admit keyframes with
 /// `sceneActive`. Partner in view comes back on the model assessment.
 public struct NeedEngine<TimeSource: Clock> {
+    public static var unspecifiedResolutionSignal: String {
+        "unspecified — use report_need_resolved only when the problem state is clearly gone"
+    }
+
     private struct ChoreMark: Equatable {
         var id: String
         var at: Date
@@ -20,6 +24,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private struct TrackedNeed {
         var needID: String
+        var visibleAt: Date
         var latchedAt: Date
         var cueDeadline: Date
         var hardCapAt: Date
@@ -84,6 +89,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private let clock: TimeSource
     private let timing: TimingProfile
+    public let latency: LatencyTuning
     private var catalog: Catalog
     private var buffer: KeyframeBuffer
     private var visitor = VisitorMonitor()
@@ -91,6 +97,7 @@ public struct NeedEngine<TimeSource: Clock> {
     private var choreMark: ChoreMark?
     private var events: [EngineEvent] = []
     private var playedCues: [Cue] = []
+    private var recordedCueTimings: [CueTimingSnapshot] = []
     private var cueEffects: [String: CueEffect] = [:]
     private var closedAt: [String: Date] = [:]
     private var sessionStartedAt: Date
@@ -99,6 +106,7 @@ public struct NeedEngine<TimeSource: Clock> {
     private var callSerial = 0
     private var cueSerial = 0
     private var lastModelCallAt: Date?
+    private var lastHeartbeatAt: Date?
     private var lastLatchCallAt: Date?
     private var lastSuccessfulLatchAt: Date?
     private var revisionAtLastLatchCall = 0
@@ -106,14 +114,27 @@ public struct NeedEngine<TimeSource: Clock> {
     private var handEdgePending = false
     private var staleCallIDs: Set<String> = []
     private var callsIssued = 0
+    private var callIssuedTimestamps: [Date] = []
     private var stripSignatureAtLastCall: String?
+    private var newestSlotAtLastIssuedCall: Date?
+    private var newestAppliedIssuedAt: Date?
+    private var recheckSameStripBypassAvailable = true
+    private var latchConfirmPending = false
+    private var lastLoggedSkip: String?
 
-    public private(set) var pendingModelCall: PendingModelCall?
+    public private(set) var pendingModelCalls: [PendingModelCall] = []
+    public var pendingModelCall: PendingModelCall? { pendingModelCalls.first }
     public private(set) var visitorUploadPaused = false
 
-    public init(clock: TimeSource, needs: [Need] = [], timing: TimingProfile = .standard) throws {
+    public init(
+        clock: TimeSource,
+        needs: [Need] = [],
+        timing: TimingProfile = .standard,
+        latency: LatencyTuning = .default
+    ) throws {
         self.clock = clock
         self.timing = timing
+        self.latency = latency
         buffer = KeyframeBuffer(timing: timing)
         catalog = try Catalog(needs)
         sessionStartedAt = clock.now()
@@ -127,7 +148,14 @@ public struct NeedEngine<TimeSource: Clock> {
 
     public var cues: [Cue] { playedCues }
 
+    public var cueTimings: [CueTimingSnapshot] { recordedCueTimings }
+
     public var openNeedIDs: [String] { tracked.map(\.needID) }
+
+    public func callsInLastMinute(now: Date? = nil) -> Int {
+        let cutoff = (now ?? clock.now()).addingTimeInterval(-60)
+        return callIssuedTimestamps.filter { $0 > cutoff }.count
+    }
 
     public func keyframes(now: Date? = nil) -> [Keyframe] {
         buffer.keyframes(now: now ?? clock.now())
@@ -144,7 +172,8 @@ public struct NeedEngine<TimeSource: Clock> {
                 handsBusy: item.handsBusy,
                 awaitingRecheck: item.awaitingRecheck,
                 choreID: item.choreID,
-                pendingWearerAction: item.pendingWearerAction
+                pendingWearerAction: item.pendingWearerAction,
+                visibleAt: item.visibleAt
             )
         }
     }
@@ -213,6 +242,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
         let personPresent = !gate.people.isEmpty
         // A qualifying visitor frame is not a keyframe. It would leave the phone.
+        let prevRevision = buffer.revision
         buffer.ingest(
             frame: frame,
             personPresent: personPresent,
@@ -221,6 +251,9 @@ public struct NeedEngine<TimeSource: Clock> {
             now: clock.now(),
             recordKeyframe: !visitor.currentFrameQualifies
         )
+        if buffer.revision != prevRevision {
+            lastLoggedSkip = nil
+        }
         if gate.handGateRisingEdge || gate.activityEdge {
             handEdgePending = true
         }
@@ -238,11 +271,24 @@ public struct NeedEngine<TimeSource: Clock> {
 
     public mutating func handle(callID: String, verdict: ModelVerdict) {
         let now = clock.now()
-        if pendingModelCall?.id != callID {
+        guard let callIndex = pendingModelCalls.firstIndex(where: { $0.id == callID }) else {
             record(.staleReplyDropped, needID: verdict.assessment.needID, detail: callID)
             return
         }
-        pendingModelCall = nil
+        let completedCall = pendingModelCalls.remove(at: callIndex)
+        if latency.concurrentInFlight,
+           let newestAppliedIssuedAt,
+           completedCall.issuedAt < newestAppliedIssuedAt {
+            record(.staleReplyDropped, needID: verdict.assessment.needID, detail: callID)
+            return
+        }
+        if let currentNewest = newestAppliedIssuedAt {
+            if completedCall.issuedAt > currentNewest {
+                newestAppliedIssuedAt = completedCall.issuedAt
+            }
+        } else {
+            newestAppliedIssuedAt = completedCall.issuedAt
+        }
 
         let namedNeedID = verdict.assessment.needID
         var verdict = verdict
@@ -269,14 +315,14 @@ public struct NeedEngine<TimeSource: Clock> {
             effectiveSubjectID = tracked[0].needID
         }
         if let effectiveSubjectID, catalog.need(id: effectiveSubjectID) != nil {
-            applyAssessment(effectiveSubjectID, verdict: verdict, now: now)
+            applyAssessment(effectiveSubjectID, verdict: verdict, needOmitted: needOmitted, now: now)
         }
         if verdict.tool == .reportNoTransition, needOmitted {
             noteStillOpen(assessment: assessment, now: now)
         }
 
         if verdict.tool == .latchNeedHypothesis {
-            tryLatch(assessment, now: now)
+            tryLatch(assessment, callKeyframes: completedCall.request.keyframes, now: now)
         }
 
         if let needID = assessment.needID, indexOfOpen(needID) != nil {
@@ -284,7 +330,7 @@ public struct NeedEngine<TimeSource: Clock> {
         }
 
         if let effectiveSubjectID, let index = indexOfOpen(effectiveSubjectID), tracked[index].awaitingRecheck {
-            finishRecheck(at: index, assessment: assessment, now: now)
+            finishRecheck(at: index, assessment: assessment, needOmitted: needOmitted, now: now)
         }
 
         evaluate()
@@ -301,7 +347,7 @@ public struct NeedEngine<TimeSource: Clock> {
                 record(.sessionEnded, needID: nil, detail: nil)
             }
             retireStaleInFlight(now: now)
-            pendingModelCall = nil
+            pendingModelCalls.removeAll()
             return
         }
         closeNeedsWithNoPerson(now: now)
@@ -318,6 +364,13 @@ public struct NeedEngine<TimeSource: Clock> {
         for need in tracked {
             if need.latchedWhileAbsent { continue }
             if sameChoreHolds(need, now: now) { continue }
+            if latency.postCueNoPersonGrace,
+               need.cueDelivered,
+               let firedAt = need.cueFiredAt,
+               timing.postCueNoPersonGraceSeconds > 0,
+               now.timeIntervalSince(firedAt) < timing.postCueNoPersonGraceSeconds {
+                continue
+            }
             // Absence is measured per need from the later of the latch and the
             // last sighting, so a fresh latch never dies on a stale clock.
             let lastSeen = max(buffer.lastPersonSeenAt ?? .distantPast, need.latchedAt)
@@ -376,9 +429,10 @@ public struct NeedEngine<TimeSource: Clock> {
         // gone before we whisper over him.
         if tracked[index].pendingWearerAction != nil { return }
 
+        let skipRecheckForUrgent = latency.urgentNeedsEnabled && need.isUrgent
         if tracked[index].pendingCueKind == nil {
             let evidenceAge = now.timeIntervalSince(tracked[index].evidenceAt)
-            if evidenceAge > timing.staleEvidenceSeconds && !tracked[index].recheckUsed {
+            if !skipRecheckForUrgent && evidenceAge > timing.staleEvidenceSeconds && !tracked[index].recheckUsed {
                 beginRecheck(at: index, now: now)
                 return
             }
@@ -416,7 +470,8 @@ public struct NeedEngine<TimeSource: Clock> {
     private mutating func beginRecheck(at index: Int, now: Date) {
         retireStaleInFlight(now: now)
         let needID = tracked[index].needID
-        if pendingModelCall != nil {
+        recheckSameStripBypassAvailable = true
+        if !pendingModelCalls.isEmpty {
             tracked[index].recheckUsed = true
             tracked[index].awaitingRecheck = true
             record(.recheckRequested, needID: needID, detail: "in-flight")
@@ -425,13 +480,24 @@ public struct NeedEngine<TimeSource: Clock> {
         // A paused upload or a spent call budget is not an answer. Try again
         // on a later tick instead of whispering blind.
         if !canIssueCall(now: now) { return }
+        guard shouldIssue(purpose: .recheck, now: now) else {
+            tracked[index].recheckUsed = true
+            tracked[index].awaitingRecheck = true
+            record(.recheckRequested, needID: needID, detail: "deferred")
+            return
+        }
         tracked[index].recheckUsed = true
         tracked[index].awaitingRecheck = true
         record(.recheckRequested, needID: needID, detail: nil)
         issue(.recheck, now: now)
     }
 
-    private mutating func finishRecheck(at index: Int, assessment: SceneAssessment, now: Date) {
+    private mutating func finishRecheck(
+        at index: Int,
+        assessment: SceneAssessment,
+        needOmitted: Bool,
+        now: Date
+    ) {
         tracked[index].awaitingRecheck = false
         let needID = tracked[index].needID
         guard catalog.need(id: needID) != nil else { return }
@@ -440,7 +506,7 @@ public struct NeedEngine<TimeSource: Clock> {
             tracked[index].recheckStrikes = 0
             return
         }
-        if assessment.sustainedAcrossStrip == false {
+        if assessment.sustainedAcrossStrip == false, (!latency.strictCredit || !needOmitted) {
             if tracked[index].pendingWearerAction != nil {
                 return
             }
@@ -500,6 +566,15 @@ public struct NeedEngine<TimeSource: Clock> {
             tracked[index].cueDelivered = true
             tracked[index].cueFiredAt = now
             tracked[index].cueID = cue.id
+            recordedCueTimings.append(
+                CueTimingSnapshot(
+                    cueID: cue.id,
+                    needID: need.id,
+                    visibleAt: tracked[index].visibleAt,
+                    latchedAt: tracked[index].latchedAt,
+                    cueFiredAt: now
+                )
+            )
         }
         record(.cueFired, needID: need.id, detail: kind.rawValue)
     }
@@ -526,7 +601,16 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private mutating func scheduleModelCall(now: Date) {
         retireStaleInFlight(now: now)
-        guard pendingModelCall == nil else { return }
+        let maxInFlight = latency.concurrentInFlight ? latency.maxInFlight : 1
+        guard pendingModelCalls.count < maxInFlight else { return }
+        if !pendingModelCalls.isEmpty {
+            guard let newestSlot = buffer.newestSlotStartedAt(now: now),
+                  let lastIssuedSlot = newestSlotAtLastIssuedCall,
+                  newestSlot > lastIssuedSlot
+            else {
+                return
+            }
+        }
         guard canIssueCall(now: now) else {
             if !visitorUploadPaused && !sessionIsOver(now) && callsIssued >= SessionLimits.maxModelCallsPerSession && !didLogBudget {
                 didLogBudget = true
@@ -536,19 +620,18 @@ public struct NeedEngine<TimeSource: Clock> {
         }
 
         if tracked.contains(where: \.awaitingRecheck) {
-            issue(.recheck, now: now)
+            if shouldIssue(purpose: .recheck, now: now) {
+                issue(.recheck, now: now)
+            }
             return
         }
 
         if !tracked.isEmpty {
-            let heartbeatDue = lastModelCallAt.map {
+            let heartbeatDue = (lastHeartbeatAt ?? lastModelCallAt).map {
                 now.timeIntervalSince($0) >= timing.heartbeatSeconds
             } ?? true
             if heartbeatDue || handEdgePending {
-                // A heartbeat re-reads the strip. Identical pixels to the
-                // last call carry no new information, so skip the call. The
-                // edge stays pending, so the next new pixels still check.
-                if stripSignature(now: now) != stripSignatureAtLastCall {
+                if shouldIssue(purpose: .heartbeat, now: now) {
                     issue(.heartbeat, now: now)
                 }
                 return
@@ -556,14 +639,62 @@ public struct NeedEngine<TimeSource: Clock> {
         }
 
         guard tracked.count < SessionLimits.maxOpenNeeds else { return }
+        guard catalog.needs.contains(where: { indexOfOpen($0.id) == nil }) else { return }
         guard buffer.revision > revisionAtLastLatchCall else { return }
         if let lastLatchCallAt,
            now.timeIntervalSince(lastLatchCallAt) < timing.latchMinIntervalSeconds {
             return
         }
-        let strip = buffer.modelStrip(now: now)
-        guard strip.count >= timing.latchMinKeyframes else { return }
+        if !tracked.isEmpty,
+           let lastModelCallAt,
+           now.timeIntervalSince(lastModelCallAt) < timing.latchMinIntervalSeconds {
+            return
+        }
+        let strip = buffer.modelStrip(now: now, purpose: .latch, confirm: latchConfirmPending, latency: latency)
+        let hasUrgentCandidate = latency.urgentNeedsEnabled && catalog.needs.contains {
+            $0.isUrgent && indexOfOpen($0.id) == nil
+        }
+        let minKeyframes = hasUrgentCandidate ? 1 : timing.latchMinKeyframes
+        guard strip.count >= minKeyframes else { return }
+        guard shouldIssue(purpose: .latch, now: now) else { return }
         issue(.latch, now: now)
+    }
+
+    /// Unified call gate across latch, heartbeat, and recheck.
+    private mutating func shouldIssue(purpose: ModelCallPurpose, now: Date) -> Bool {
+        let currentIdentity = buffer.stripIdentity(now: now, latency: latency)
+        if !latency.dedupeAllPurposes {
+            if purpose == .heartbeat {
+                return currentIdentity != stripSignatureAtLastCall
+            }
+            return true
+        }
+
+        if let lastSignature = stripSignatureAtLastCall, currentIdentity == lastSignature {
+            if purpose == .recheck && recheckSameStripBypassAvailable {
+                recheckSameStripBypassAvailable = false
+            } else {
+                recordSkip("duplicate-strip purpose=\(purpose.rawValue)")
+                return false
+            }
+        }
+
+        let minGap = timing.minCallGapSeconds
+        if minGap > 0,
+           let lastModelCallAt,
+           now.timeIntervalSince(lastModelCallAt) < minGap {
+            recordSkip("min-gap purpose=\(purpose.rawValue)")
+            return false
+        }
+
+        lastLoggedSkip = nil
+        return true
+    }
+
+    private mutating func recordSkip(_ detail: String) {
+        guard lastLoggedSkip != detail else { return }
+        lastLoggedSkip = detail
+        record(.skip, needID: nil, detail: detail)
     }
 
     private func canIssueCall(now: Date) -> Bool {
@@ -574,68 +705,96 @@ public struct NeedEngine<TimeSource: Clock> {
     private mutating func issue(_ purpose: ModelCallPurpose, now: Date) {
         callSerial += 1
         callsIssued += 1
+        callIssuedTimestamps.append(now)
+        callIssuedTimestamps.removeAll { now.timeIntervalSince($0) >= 60 }
         let id = "call-\(callSerial)"
         lastModelCallAt = now
         if purpose == .latch {
             lastLatchCallAt = now
             revisionAtLastLatchCall = buffer.revision
+            if tracked.isEmpty {
+                handEdgePending = false
+            }
         }
         if purpose == .heartbeat || purpose == .recheck {
+            lastHeartbeatAt = now
             handEdgePending = false
         }
-        let strip = buffer.modelStrip(now: now)
-        stripSignatureAtLastCall = stripSignature(now: now)
-        let open = tracked.map { item in
-            OpenNeedContext(
+        let confirm = purpose == .latch && latchConfirmPending
+        let strip = buffer.modelStrip(now: now, purpose: purpose, confirm: confirm, latency: latency)
+        stripSignatureAtLastCall = buffer.stripIdentity(now: now, latency: latency)
+        newestSlotAtLastIssuedCall = buffer.newestSlotStartedAt(now: now)
+        lastLoggedSkip = nil
+        let open = tracked.map { item -> OpenNeedContext in
+            let need = catalog.need(id: item.needID)
+            let problem = need?.visualCondition ?? need?.authorText ?? ""
+            return OpenNeedContext(
                 needID: item.needID,
                 latchedSecondsAgo: now.timeIntervalSince(item.latchedAt),
                 cueSpoken: item.cueDelivered,
-                resolutionSignal: Self.resolutionSignal(for: catalog.need(id: item.needID))
+                problemCondition: problem,
+                resolutionSignal: Self.resolutionSignal(for: need, latency: latency)
             )
         }
-        pendingModelCall = PendingModelCall(
-            id: id,
-            purpose: purpose,
-            request: ModelRequest(keyframes: strip, needs: catalog.needs, openNeeds: open),
-            issuedAt: now
+        pendingModelCalls.append(
+            PendingModelCall(
+                id: id,
+                purpose: purpose,
+                request: ModelRequest(
+                    keyframes: strip,
+                    needs: catalog.needs,
+                    openNeeds: open,
+                    purpose: purpose
+                ),
+                issuedAt: now
+            )
         )
         record(.callIssued, needID: nil, detail: "\(purpose.rawValue) kf=\(strip.count)")
     }
 
-    /// What counts as handled, from the need's own words. Empty until the
-    /// compile step fills the need in.
-    private static func resolutionSignal(for need: Need?) -> String {
-        let parts = [need?.selfNoticeSignal, need?.visualCondition]
+    /// What counts as handled, from `handledCondition` and `selfNoticeSignal` only
+    /// (never `visualCondition`). Emits the fallback instruction when both are missing.
+    public static func resolutionSignal(for need: Need?, latency: LatencyTuning = .default) -> String {
+        if !latency.polarityResolution {
+            let legacy = [need?.selfNoticeSignal, need?.visualCondition]
+                .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            return legacy.joined(separator: "; ")
+        }
+        let parts = [need?.handledCondition, need?.selfNoticeSignal]
             .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
+        if parts.isEmpty {
+            return unspecifiedResolutionSignal
+        }
         return parts.joined(separator: "; ")
     }
 
-    /// Slot ids, capture times, and bytes of the current model strip. The
-    /// same string means the model would read the same pixels as last
-    /// time. The byte hash catches a sharper in-glance replacement, which
-    /// keeps the slot id while swapping the image.
-    private func stripSignature(now: Date) -> String {
-        buffer.modelStrip(now: now).map {
-            "\($0.id)@\($0.capturedAt.timeIntervalSince1970)#\($0.jpegData.hashValue)"
-        }.joined(separator: "|")
-    }
-
-    /// The transport gave up on the in-flight call. The next tick may start another.
+    /// The transport gave up on an in-flight call. The next tick may start another.
     /// A reply that arrives later for this id is dropped.
-    public mutating func abandonInFlightCall() {
-        guard let pendingModelCall else { return }
-        staleCallIDs.insert(pendingModelCall.id)
-        self.pendingModelCall = nil
+    public mutating func abandonInFlightCall(id: String? = nil) {
+        if let id {
+            if let index = pendingModelCalls.firstIndex(where: { $0.id == id }) {
+                let removed = pendingModelCalls.remove(at: index)
+                staleCallIDs.insert(removed.id)
+            }
+            return
+        }
+        guard !pendingModelCalls.isEmpty else { return }
+        let removed = pendingModelCalls.removeFirst()
+        staleCallIDs.insert(removed.id)
     }
 
     private mutating func retireStaleInFlight(now: Date) {
-        guard let pendingModelCall else { return }
-        guard now.timeIntervalSince(pendingModelCall.issuedAt) >= EngineTuning.inFlightStaleSeconds else {
-            return
+        var remaining: [PendingModelCall] = []
+        for call in pendingModelCalls {
+            if now.timeIntervalSince(call.issuedAt) >= EngineTuning.inFlightStaleSeconds {
+                staleCallIDs.insert(call.id)
+            } else {
+                remaining.append(call)
+            }
         }
-        staleCallIDs.insert(pendingModelCall.id)
-        self.pendingModelCall = nil
+        pendingModelCalls = remaining
     }
 
     // MARK: - Verdicts
@@ -668,9 +827,8 @@ public struct NeedEngine<TimeSource: Clock> {
         return assessment
     }
 
-    /// A no-transition turn with no need id is evidence the open need still
-    /// holds: the model looked and reported no change. Freshens the evidence
-    /// clock unless the verdict explicitly says the need is gone.
+    /// A no-transition turn with no need id holds the open need. An out-of-view
+    /// turn (`sustained == nil`) refreshes evidence and logs `out-of-view`.
     private mutating func noteStillOpen(assessment: SceneAssessment, now: Date) {
         guard tracked.count == 1, let needID = tracked.first?.needID else {
             if tracked.count >= 2 {
@@ -680,6 +838,11 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         guard let index = indexOfOpen(needID),
               let need = catalog.need(id: needID) else {
+            return
+        }
+        if latency.strictCredit && assessment.sustainedAcrossStrip == nil {
+            tracked[index].evidenceAt = now
+            record(.stillOpen, needID: needID, detail: "out-of-view")
             return
         }
         if assessment.sustainedAcrossStrip != false
@@ -702,7 +865,7 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         let codeTokens = Set(wordTokens(code))
         guard !codeTokens.isEmpty else { return false }
-        for field in [need.visualCondition, need.selfNoticeSignal] {
+        for field in [need.visualCondition, need.handledCondition, need.selfNoticeSignal] {
             guard let field else { continue }
             if !codeTokens.isDisjoint(with: Set(wordTokens(field.lowercased()))) {
                 return true
@@ -746,7 +909,12 @@ public struct NeedEngine<TimeSource: Clock> {
         }
     }
 
-    private mutating func applyAssessment(_ needID: String, verdict: ModelVerdict, now: Date) {
+    private mutating func applyAssessment(
+        _ needID: String,
+        verdict: ModelVerdict,
+        needOmitted: Bool,
+        now: Date
+    ) {
         let assessment = verdict.assessment
         guard var need = catalog.need(id: needID) else { return }
 
@@ -755,7 +923,7 @@ public struct NeedEngine<TimeSource: Clock> {
             return
         }
 
-        if assessment.resolution == .resolvedByPartner {
+        if !latency.strictCredit && assessment.resolution == .resolvedByPartner {
             guard indexOfOpen(needID) != nil else { return }
             close(needID, now: now, cooldown: true)
             record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
@@ -776,7 +944,62 @@ public struct NeedEngine<TimeSource: Clock> {
 
         let hadPending = tracked[index].pendingWearerAction != nil
         let pendingAction = tracked[index].pendingWearerAction
-        // `caught_himself` while the strip still shows the need is not a clear.
+
+        if latency.strictCredit {
+            // Clearing a pending action via `sustained=false` counts only when
+            // the verdict names the need explicitly and its tool is
+            // `report_need_resolved` (handled above) or `log_wearer_intervention`.
+            let clearedByIntervention = !needOmitted
+                && verdict.tool == .logWearerIntervention
+                && assessment.sustainedAcrossStrip == false
+
+            if hadPending && clearedByIntervention {
+                let before = need.mastery
+                need.mastery = MasteryMath.applySelfNotice(need.mastery)
+                let becameRetired = before.phase != .retired && need.mastery.phase == .retired
+                let caughtAfterCue = tracked[index].cueDelivered
+                catalog.update(need)
+                close(needID, now: now, cooldown: true)
+                record(.caughtHimself, needID: needID, detail: caughtAfterCue ? "after-cue" : pendingAction)
+                if becameRetired {
+                    record(.masteryRetired, needID: needID, detail: nil)
+                }
+                return
+            }
+
+            if hadPending {
+                tracked[index].pendingWearerAction = nil
+            }
+
+            if verdict.tool == .reportNoTransition && !needOmitted {
+                if assessment.sustainedAcrossStrip == nil {
+                    tracked[index].evidenceAt = now
+                    record(.stillOpen, needID: needID, detail: "out-of-view")
+                } else {
+                    record(.stillOpen, needID: needID, detail: "no-change")
+                }
+            }
+
+            // Only `log_wearer_intervention` may arm `pendingWearerAction`, and
+            // only when `actionCode` equals `need.selfNoticeSignal`.
+            if verdict.tool == .logWearerIntervention {
+                if MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) {
+                    tracked[index].pendingWearerAction = assessment.actionCode
+                } else if MasteryMath.hasWearerPrefix(assessment.actionCode) {
+                    record(.actionRejected, needID: needID, detail: "unrelated-wearer-action")
+                } else {
+                    record(.actionRejected, needID: needID, detail: assessment.actionCode ?? "missing")
+                }
+                return
+            }
+
+            if assessment.resolution == .caughtHimself {
+                record(.actionRejected, needID: needID, detail: "unconfirmed")
+            }
+            return
+        }
+
+        // Legacy (`strictCredit == false`) path.
         let cleared = assessment.sustainedAcrossStrip == false
             || (assessment.resolution == .caughtHimself && assessment.sustainedAcrossStrip != true)
         let wearerAction = MasteryMath.isWearerAction(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal)
@@ -788,7 +1011,6 @@ public struct NeedEngine<TimeSource: Clock> {
             let caughtAfterCue = tracked[index].cueDelivered
             catalog.update(need)
             close(needID, now: now, cooldown: true)
-            // A catch after the whisper reads as nudged, not on his own.
             record(.caughtHimself, needID: needID, detail: caughtAfterCue ? "after-cue" : pendingAction)
             if becameRetired {
                 record(.masteryRetired, needID: needID, detail: nil)
@@ -812,9 +1034,13 @@ public struct NeedEngine<TimeSource: Clock> {
         }
     }
 
-    private mutating func tryLatch(_ assessment: SceneAssessment, now: Date) {
+    private mutating func tryLatch(
+        _ assessment: SceneAssessment,
+        callKeyframes: [Keyframe],
+        now: Date
+    ) {
         guard let needID = assessment.needID else { return }
-        guard catalog.need(id: needID) != nil else { return }
+        guard let need = catalog.need(id: needID) else { return }
         if visitorUploadPaused {
             record(.latchRejected, needID: needID, detail: "visitor-paused")
             return
@@ -824,6 +1050,7 @@ public struct NeedEngine<TimeSource: Clock> {
             return
         }
         if assessment.sustainedAcrossStrip != true {
+            latchConfirmPending = true
             record(.latchRejected, needID: needID, detail: "not-sustained")
             return
         }
@@ -841,8 +1068,10 @@ public struct NeedEngine<TimeSource: Clock> {
             record(.latchRejected, needID: needID, detail: "latch-interval")
             return
         }
-        let strip = buffer.modelStrip(now: now)
-        if strip.count < timing.latchMinKeyframes {
+        let liveStrip = buffer.modelStrip(now: now, purpose: .latch, confirm: latchConfirmPending, latency: latency)
+        let effectiveCount = max(callKeyframes.count, liveStrip.count)
+        let minKeyframes = (latency.urgentNeedsEnabled && need.isUrgent) ? 1 : timing.latchMinKeyframes
+        if effectiveCount < minKeyframes {
             record(.latchRejected, needID: needID, detail: "strip-too-thin")
             return
         }
@@ -859,21 +1088,39 @@ public struct NeedEngine<TimeSource: Clock> {
                 return
             }
         }
-        open(needID, now: now, absent: assessment.partnerInView == false)
+        latchConfirmPending = false
+        let visibleAt = (callKeyframes.first ?? liveStrip.first)?.capturedAt ?? now
+        open(
+            needID,
+            now: now,
+            visibleAt: visibleAt,
+            absent: assessment.partnerInView == false,
+            handsBusy: assessment.wearerHandsOccupied == true
+        )
     }
 
-    private mutating func open(_ needID: String, now: Date, absent: Bool) {
+    private mutating func open(
+        _ needID: String,
+        now: Date,
+        visibleAt: Date,
+        absent: Bool,
+        handsBusy: Bool = false
+    ) {
         guard let need = catalog.need(id: needID) else { return }
-        let headStart = MasteryMath.headStartSeconds(for: need, timing: timing)
+        if tracked.isEmpty {
+            lastHeartbeatAt = now
+        }
+        let headStart = MasteryMath.headStartSeconds(for: need, timing: timing, latency: latency)
         let choreID = freshChoreID(now: now)
         tracked.append(
             TrackedNeed(
                 needID: needID,
+                visibleAt: visibleAt,
                 latchedAt: now,
                 cueDeadline: now.addingTimeInterval(headStart),
                 hardCapAt: now.addingTimeInterval(timing.headStartCapSeconds),
                 evidenceAt: now,
-                handsBusy: false,
+                handsBusy: handsBusy,
                 awaitingRecheck: false,
                 recheckUsed: false,
                 inconclusiveHold: false,

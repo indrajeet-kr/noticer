@@ -19,7 +19,7 @@ enum ChatCompletionRequest {
             "model": .string(configuration.modelID),
             "messages": .array([
                 .object([
-                    "role": .string("developer"),
+                    "role": .string(MuseSparkModelClient.instructionRole),
                     "content": .string(configuration.developerPrompt),
                 ]),
                 .object([
@@ -75,7 +75,7 @@ enum ChatCompletionRequest {
             .map(\.element)
     }
 
-    private static func sceneText(_ request: ModelRequest) -> String {
+    static func sceneText(_ request: ModelRequest) -> String {
         var lines = ["Mom's needs:"]
         if request.needs.isEmpty {
             lines.append("(none)")
@@ -83,7 +83,6 @@ enum ChatCompletionRequest {
             for need in request.needs {
                 lines.append("need_id=\(need.id)")
                 lines.append("author_text=\(need.authorText)")
-                lines.append("cue_wording=\(need.cueWording)")
                 if let visual = need.visualCondition {
                     lines.append("visual_condition=\(visual)")
                 }
@@ -91,6 +90,9 @@ enum ChatCompletionRequest {
                     lines.append("self_notice_signal=\(signal)")
                 }
                 lines.append("priority=\(need.priority)")
+                if need.isUrgent {
+                    lines.append("urgent=true")
+                }
             }
         }
         if request.openNeeds.isEmpty {
@@ -98,7 +100,20 @@ enum ChatCompletionRequest {
         } else {
             lines.append("Open now:")
             for open in request.openNeeds {
-                lines.append("need_id=\(open.needID) cue_spoken=\(open.cueSpoken) handled_when=\(open.resolutionSignal)")
+                let matchingNeed = request.needs.first { $0.id == open.needID }
+                let problem: String = {
+                    let trimmed = open.problemCondition.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !trimmed.isEmpty { return trimmed }
+                    return matchingNeed?.visualCondition ?? matchingNeed?.authorText ?? "unspecified"
+                }()
+                let handled: String = {
+                    let trimmed = open.resolutionSignal.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if trimmed.isEmpty || trimmed == matchingNeed?.visualCondition {
+                        return NeedEngine<SystemClock>.resolutionSignal(for: matchingNeed)
+                    }
+                    return trimmed
+                }()
+                lines.append("need_id=\(open.needID) cue_spoken=\(open.cueSpoken) problem=\(problem) handled_when=\(handled)")
             }
         }
         lines.append(

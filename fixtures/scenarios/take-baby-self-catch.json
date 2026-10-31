@@ -68,10 +68,11 @@
       "repeat": true,
       "normalized": {
         "finish_reason": "tool_calls",
-        "tool": "report_no_transition",
+        "tool": "log_wearer_intervention",
         "assessment": {
           "need_id": "take-baby",
           "sustained_across_strip": false,
+          "action_code": "wearer_hands_receiving_baby",
           "wearer_hands_occupied": false
         }
       }

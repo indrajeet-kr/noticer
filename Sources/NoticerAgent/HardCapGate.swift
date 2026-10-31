@@ -80,6 +80,7 @@ public struct HeadStartWindow: Equatable, Sendable {
 public struct CapSession: Equatable, Sendable {
     public var now: Date
     public var authoredNeedIDs: Set<String>
+    public var urgentNeedIDs: Set<String>
     public var openNeedIDs: [String]
     public var callsCompletedBeforeThis: Int
     public var lastLatchAt: Date?
@@ -90,6 +91,7 @@ public struct CapSession: Equatable, Sendable {
     public init(
         now: Date,
         authoredNeedIDs: Set<String> = [],
+        urgentNeedIDs: Set<String> = [],
         openNeedIDs: [String] = [],
         callsCompletedBeforeThis: Int = 0,
         lastLatchAt: Date? = nil,
@@ -99,6 +101,7 @@ public struct CapSession: Equatable, Sendable {
     ) {
         self.now = now
         self.authoredNeedIDs = authoredNeedIDs
+        self.urgentNeedIDs = urgentNeedIDs
         self.openNeedIDs = openNeedIDs
         self.callsCompletedBeforeThis = callsCompletedBeforeThis
         self.lastLatchAt = lastLatchAt
@@ -133,10 +136,16 @@ public enum WearerActionRule {
 public struct HardCapGate: Equatable, Sendable {
     public var extensionStepSeconds: TimeInterval?
     public var timing: TimingProfile
+    public var latency: LatencyTuning
 
-    public init(extensionStepSeconds: TimeInterval? = nil, timing: TimingProfile = .standard) {
+    public init(
+        extensionStepSeconds: TimeInterval? = nil,
+        timing: TimingProfile = .standard,
+        latency: LatencyTuning = .default
+    ) {
         self.extensionStepSeconds = extensionStepSeconds
         self.timing = timing
+        self.latency = latency
     }
 
     public static func isCueRateLimited(
@@ -193,21 +202,25 @@ public struct HardCapGate: Equatable, Sendable {
                 message: "A latch needs sustained_across_strip to be true. Confidence is not a gate."
             )
         }
-        guard keyframes.count >= timing.latchMinKeyframes else {
+        let isUrgent = latency.urgentNeedsEnabled && session.urgentNeedIDs.contains(needID)
+        let minKeyframes = isUrgent ? 1 : timing.latchMinKeyframes
+        guard keyframes.count >= minKeyframes else {
             return reject(
                 verdict,
                 code: ToolRejectionCode.keyframeCount,
-                message: "A latch needs at least \(timing.latchMinKeyframes) keyframes."
+                message: "A latch needs at least \(minKeyframes) keyframes."
             )
         }
-        let ages = keyframes.map(\.ageSeconds)
-        let span = (ages.max() ?? 0) - (ages.min() ?? 0)
-        guard span >= timing.latchMinKeyframeSpacingSeconds else {
-            return reject(
-                verdict,
-                code: ToolRejectionCode.keyframeSpacing,
-                message: "A latch needs keyframes at least \(Int(timing.latchMinKeyframeSpacingSeconds)) seconds apart."
-            )
+        if !isUrgent {
+            let ages = keyframes.map(\.ageSeconds)
+            let span = (ages.max() ?? 0) - (ages.min() ?? 0)
+            guard span >= timing.latchMinKeyframeSpacingSeconds else {
+                return reject(
+                    verdict,
+                    code: ToolRejectionCode.keyframeSpacing,
+                    message: "A latch needs keyframes at least \(Int(timing.latchMinKeyframeSpacingSeconds)) seconds apart."
+                )
+            }
         }
         if session.openNeedIDs.contains(needID) {
             return reject(

@@ -7,11 +7,19 @@ public struct ModelRequest: Equatable, Sendable {
     public var needs: [Need]
     /// Needs the engine currently holds open. Empty for callers that predate it.
     public var openNeeds: [OpenNeedContext]
+    /// Engine call purpose (`latch`, `heartbeat`, `recheck`) for logging and telemetry.
+    public var purpose: ModelCallPurpose?
 
-    public init(keyframes: [Keyframe], needs: [Need], openNeeds: [OpenNeedContext] = []) {
+    public init(
+        keyframes: [Keyframe],
+        needs: [Need],
+        openNeeds: [OpenNeedContext] = [],
+        purpose: ModelCallPurpose? = nil
+    ) {
         self.keyframes = keyframes
         self.needs = needs
         self.openNeeds = openNeeds
+        self.purpose = purpose
     }
 }
 
@@ -22,13 +30,22 @@ public struct OpenNeedContext: Equatable, Sendable {
     public var needID: String
     public var latchedSecondsAgo: TimeInterval
     public var cueSpoken: Bool
-    /// What counts as handled, from the need's self-notice signal and visual condition.
+    /// The unmet problem state that opened this need.
+    public var problemCondition: String
+    /// What counts as handled, from `handledCondition` and `selfNoticeSignal` (never `visualCondition`).
     public var resolutionSignal: String
 
-    public init(needID: String, latchedSecondsAgo: TimeInterval, cueSpoken: Bool, resolutionSignal: String) {
+    public init(
+        needID: String,
+        latchedSecondsAgo: TimeInterval,
+        cueSpoken: Bool,
+        problemCondition: String = "",
+        resolutionSignal: String
+    ) {
         self.needID = needID
         self.latchedSecondsAgo = latchedSecondsAgo
         self.cueSpoken = cueSpoken
+        self.problemCondition = problemCondition
         self.resolutionSignal = resolutionSignal
     }
 }

@@ -33,6 +33,8 @@ public enum SignalGateTuning {
     /// Short enough that a static scene reaches latch eligibility in seconds;
     /// latch calls stay rate-limited by the timing profile and the call budget.
     public static let idleAdmitInterval: TimeInterval = 8
+    /// Quick profile idle admit interval so the session reaches latch eligibility within 2 s.
+    public static let idleAdmitIntervalQuick: TimeInterval = 2
     /// Open need: a changed or due frame may enter the strip this often.
     /// The engine still heartbeats on `SessionLimits.heartbeatSeconds` (8 s).
     public static let openAdmitInterval: TimeInterval = 4
@@ -79,6 +81,7 @@ public struct SignalGateState: Sendable {
     public var hasPrevious: Bool
     public var lastAdmitAt: Date?
     public var lastEdgeAt: Date?
+    public var sessionStartedAt: Date?
     public var previousMotion: Double
 
     public init() {
@@ -88,6 +91,7 @@ public struct SignalGateState: Sendable {
         hasPrevious = false
         lastAdmitAt = nil
         lastEdgeAt = nil
+        sessionStartedAt = nil
         previousMotion = 0
     }
 
@@ -125,21 +129,39 @@ public enum SignalGate {
         plane: LumaPlane?,
         at time: Date,
         needOpen: Bool,
-        state: inout SignalGateState
+        state: inout SignalGateState,
+        timing: TimingProfile = .standard,
+        latency: LatencyTuning = .default
     ) -> SignalDecision {
         guard let plane else {
             return SignalDecision(motionScore: 0, sharpness: 0, sceneActive: false, activityEdge: false)
         }
 
+        if state.sessionStartedAt == nil {
+            state.sessionStartedAt = time
+        }
+
         let reading = measure(current: plane, previous: storedPlane(state))
         let changed = reading.motionScore >= SignalGateTuning.motionThreshold
         let informative = reading.sharpness >= SignalGateTuning.flatSharpness || changed
-        let interval = needOpen ? SignalGateTuning.openAdmitInterval : SignalGateTuning.idleAdmitInterval
+
+        let idleInterval = latency.admissionFloor ? timing.idleAdmitIntervalSeconds : SignalGateTuning.idleAdmitInterval
+        var interval = needOpen ? SignalGateTuning.openAdmitInterval : idleInterval
+        if latency.admissionFloor,
+           let startedAt = state.sessionStartedAt,
+           time.timeIntervalSince(startedAt) < latency.sessionWarmupSeconds {
+            interval = min(interval, SignalGateTuning.openAdmitInterval)
+        }
+
         let periodic: Bool
+        let floorDue: Bool
         if let lastAdmitAt = state.lastAdmitAt {
-            periodic = time.timeIntervalSince(lastAdmitAt) >= interval
+            let elapsed = time.timeIntervalSince(lastAdmitAt)
+            periodic = elapsed >= interval
+            floorDue = latency.admissionFloor && elapsed >= latency.alwaysAdmitMultiplier * interval
         } else {
             periodic = true
+            floorDue = false
         }
         let rising = reading.motionScore >= SignalGateTuning.activityEdgeMotion
             && state.previousMotion < SignalGateTuning.activityEdgeMotion
@@ -154,12 +176,12 @@ public enum SignalGate {
         let sceneActive: Bool
         let activityEdge: Bool
         if needOpen {
-            sceneActive = (changed || periodic) && informative
+            sceneActive = ((changed || periodic) && informative) || floorDue
             activityEdge = risingAllowed
         } else {
             // Idle calls stay sparse: a slow sample, or one frame when motion jumps.
             // Sustained motion does not admit every frame, so a latch cannot fire at 2 fps.
-            sceneActive = (periodic && informative) || risingAllowed
+            sceneActive = (periodic && informative) || risingAllowed || floorDue
             activityEdge = false
         }
 

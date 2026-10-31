@@ -5,10 +5,20 @@ import Foundation
 enum MasteryMath {
     /// `H = H0 * (1 + 2m)`, then the profile's head-start cap.
     /// `dwellSeconds` overrides H0 only when mom set it (non-nil).
-    static func headStartSeconds(for need: Need, timing: TimingProfile = .standard) -> TimeInterval {
+    /// Urgent safety needs return 0 when `latency.urgentNeedsEnabled` is on.
+    static func headStartSeconds(
+        for need: Need,
+        timing: TimingProfile = .standard,
+        latency: LatencyTuning = .default
+    ) -> TimeInterval {
+        if latency.urgentNeedsEnabled && need.isUrgent {
+            return 0
+        }
         let base: TimeInterval
         if let dwell = need.dwellSeconds {
             base = max(0, dwell)
+        } else if !latency.adaptiveQuickHeadStart && timing.name == "quick" {
+            base = 20
         } else {
             base = timing.defaultHeadStartSeconds
         }
@@ -33,15 +43,27 @@ enum MasteryMath {
         return state
     }
 
+    static func hasWearerPrefix(_ code: String?) -> Bool {
+        guard let code = code?.trimmingCharacters(in: .whitespacesAndNewlines), !code.isEmpty else {
+            return false
+        }
+        return code.hasPrefix("wearer_")
+    }
+
+    static func matchesSelfNoticeSignal(_ code: String?, selfNoticeSignal: String?) -> Bool {
+        guard let code = code?.trimmingCharacters(in: .whitespacesAndNewlines), !code.isEmpty,
+              let signal = selfNoticeSignal?.trimmingCharacters(in: .whitespacesAndNewlines), !signal.isEmpty
+        else {
+            return false
+        }
+        return code == signal
+    }
+
     /// `action_code` is an open string. A code counts as his action when it
     /// uses the `wearer_` prefix from the PRD examples, or when it equals the
     /// compile step's `selfNoticeSignal`. `water_glass_present` does neither.
     static func isWearerAction(_ code: String?, selfNoticeSignal: String?) -> Bool {
-        guard let code, !code.isEmpty else { return false }
-        if code.hasPrefix("wearer_") { return true }
-        if let selfNoticeSignal, !selfNoticeSignal.isEmpty, code == selfNoticeSignal {
-            return true
-        }
-        return false
+        if hasWearerPrefix(code) { return true }
+        return matchesSelfNoticeSignal(code, selfNoticeSignal: selfNoticeSignal)
     }
 }

@@ -19,7 +19,7 @@ class EngineTestCase: XCTestCase {
         dwell: TimeInterval? = nil,
         mastery: MasteryState = .initial,
         allowsCheckIn: Bool = false,
-        selfNotice: String? = nil,
+        selfNotice: String? = ActionCodeExamples.wearerHandsReceivingBaby,
         wording: String = "Her plate's getting cold, maybe take the baby?"
     ) -> Need {
         Need(
@@ -178,7 +178,7 @@ class EngineTestCase: XCTestCase {
         )
     }
 
-    func partnerResolved(_ id: String, tool: ToolName = .reportNoTransition) -> ModelVerdict {
+    func partnerResolved(_ id: String, tool: ToolName = .reportNeedResolved) -> ModelVerdict {
         ModelVerdict(
             finishReason: .toolCalls,
             tool: tool,

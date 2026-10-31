@@ -112,7 +112,8 @@ final class LiveModelClientTests: XCTestCase {
         for name in ToolName.allCases {
             XCTAssertTrue(DeveloperPrompt.text.contains(name.rawValue))
         }
-        XCTAssertTrue(DeveloperPrompt.text.contains("resolved_by_partner"))
+        XCTAssertTrue(DeveloperPrompt.text.contains(ToolCatalog.resolvedByField))
+        XCTAssertTrue(DeveloperPrompt.text.contains("other_adult"))
         XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.partnerInView))
         XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.wearerHandsVisible))
         XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.wearerHandsOccupied))
@@ -411,7 +412,8 @@ final class LiveModelClientTests: XCTestCase {
         let texts = textParts(in: user["content"] ?? .null)
         XCTAssertTrue(texts.contains { $0.contains("Open now:") })
         XCTAssertTrue(texts.contains {
-            $0.contains("need_id=take-baby cue_spoken=true handled_when=wearer_hands_receiving_baby; eating one-handed")
+            $0.contains("need_id=take-baby cue_spoken=true problem=")
+                && $0.contains("handled_when=wearer_hands_receiving_baby; eating one-handed")
         })
         XCTAssertTrue(texts.contains { $0.contains("need_id=water cue_spoken=false") })
         XCTAssertFalse(texts.contains { $0.contains("Open now: (none)") })

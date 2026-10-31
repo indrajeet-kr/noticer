@@ -10,7 +10,8 @@ public enum GateG0 {
     public static let probeDeveloperPrompt = """
     You are running a connectivity check for Noticer. Call the tool latch_need_hypothesis exactly once. \
     Use need_id "gate-g0", sustained_across_strip true, partner_state_evidence ["eating_one_handed"], \
-    wearer_hands_occupied false, and confidence 0.5. Do not answer with prose. \
+    wearer_hands_occupied false, and confidence 0.5. Also set partner_in_view false, wearer_hands_visible false, \
+    resolution null, and action_code null. Do not answer with prose. \
     tool_choice is auto, so you must choose that tool yourself.
     """
 

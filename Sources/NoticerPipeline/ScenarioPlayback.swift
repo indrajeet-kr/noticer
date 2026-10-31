@@ -47,6 +47,8 @@ public struct ScenarioPlayback: Sendable {
         var index = 0
         var decisions: [ToolHandlerResult] = []
         var modelErrors: [String] = []
+        var timingLines: [String] = []
+        await pipeline.prepareSpeaker()
         while let frame = try await source.nextFrame() {
             try Task.checkCancellation()
             let spec = frames[index]
@@ -59,6 +61,7 @@ public struct ScenarioPlayback: Sendable {
             )
             let step = try await pipeline.ingest(frame: frame, gate: gate)
             decisions.append(contentsOf: step.decisions)
+            timingLines.append(contentsOf: step.timingLines)
             if let error = step.modelError {
                 modelErrors.append(error)
             }
@@ -70,13 +73,14 @@ public struct ScenarioPlayback: Sendable {
                 try await Task.sleep(for: pace)
             }
         }
-        // Speech lands on the step after the cue fires; flush it before
-        // reporting so the speaker record is complete.
+        // Flush any remaining ticks and await detached speech tasks before reporting.
         let flush = try await pipeline.tick()
         decisions.append(contentsOf: flush.decisions)
+        timingLines.append(contentsOf: flush.timingLines)
         if let error = flush.modelError {
             modelErrors.append(error)
         }
+        await pipeline.waitForSpeech()
         let view = await pipeline.view()
         return ScenarioReport(
             scenarioID: scenario.scenarioID,
@@ -86,7 +90,8 @@ public struct ScenarioPlayback: Sendable {
             needs: view.needs,
             log: view.log,
             decisions: decisions,
-            modelErrors: modelErrors
+            modelErrors: modelErrors,
+            timingLines: timingLines
         )
     }
 }

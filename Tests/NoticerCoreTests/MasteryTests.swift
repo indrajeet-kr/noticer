@@ -135,7 +135,7 @@ final class MasteryTests: EngineTestCase {
 
     private func catchIt(_ id: String) throws {
         try heartbeat(intervention(id, action: ActionCodeExamples.wearerHandsReceivingBaby, sustained: true))
-        try heartbeat(noTransition(id, sustained: false))
+        try heartbeat(intervention(id, action: ActionCodeExamples.wearerHandsReceivingBaby, sustained: false))
         XCTAssertFalse(engine.openNeedIDs.contains(id))
     }
 
