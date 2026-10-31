@@ -126,23 +126,31 @@ final class LiveSpeechTranscriber: SpeechTranscribing {
     private var task: SFSpeechRecognitionTask?
 
     func requestPermissions() async -> Bool {
-        guard await microphoneGranted(), await speechGranted() else {
+        guard await Self.microphoneAuthorization(), await Self.speechAuthorization() else {
             return false
         }
         return recognizer?.isAvailable ?? false
     }
 
-    private func microphoneGranted() async -> Bool {
+    /// The authorization callbacks arrive on background queues (TCC reply),
+    /// so these helpers are nonisolated: a MainActor-isolated resume closure
+    /// traps with EXC_BREAKPOINT when the OS calls it off the main thread.
+    /// The `request` seam lets tests fire the callback from any queue.
+    nonisolated static func microphoneAuthorization(
+        request: (@escaping (Bool) -> Void) -> Void = AVAudioApplication.requestRecordPermission
+    ) async -> Bool {
         await withCheckedContinuation { continuation in
-            AVAudioApplication.requestRecordPermission { granted in
+            request { granted in
                 continuation.resume(returning: granted)
             }
         }
     }
 
-    private func speechGranted() async -> Bool {
+    nonisolated static func speechAuthorization(
+        request: (@escaping (SFSpeechRecognizerAuthorizationStatus) -> Void) -> Void = SFSpeechRecognizer.requestAuthorization
+    ) async -> Bool {
         await withCheckedContinuation { continuation in
-            SFSpeechRecognizer.requestAuthorization { status in
+            request { status in
                 continuation.resume(returning: status == .authorized)
             }
         }
