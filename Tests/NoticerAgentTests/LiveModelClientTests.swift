@@ -56,7 +56,7 @@ final class LiveModelClientTests: XCTestCase {
         guard case .array(let tools)? = root["tools"] else {
             return XCTFail("missing tools")
         }
-        XCTAssertEqual(tools.count, 5)
+        XCTAssertEqual(tools.count, 6)
         let urls = imageURLs(in: user["content"] ?? .null)
         XCTAssertEqual(urls.count, 2)
         let decoded = Data(base64Encoded: urls[0].replacingOccurrences(of: "data:image/jpeg;base64,", with: ""))
@@ -385,6 +385,73 @@ final class LiveModelClientTests: XCTestCase {
         )
         XCTAssertEqual(try local.postURL().path, "/v1/chat/completions")
         XCTAssertThrowsError(try MuseSparkConfiguration(endpoint: URL(string: "http://example.com/v1")!).postURL())
+    }
+
+    func testOpenNeedsBlockListsCueSpokenAndHandledWhen() async throws {
+        let transport = ScriptedTransport(steps: [.response(httpJSON(200, completionBody(finishReason: "stop")))])
+        let client = liveClient(transport: transport)
+        var request = sampleRequest()
+        request.openNeeds = [
+            OpenNeedContext(
+                needID: "take-baby",
+                latchedSecondsAgo: 12,
+                cueSpoken: true,
+                resolutionSignal: "wearer_hands_receiving_baby; eating one-handed"
+            ),
+            OpenNeedContext(needID: "water", latchedSecondsAgo: 3, cueSpoken: false, resolutionSignal: ""),
+        ]
+        _ = try await client.complete(request)
+
+        let body = try decodeJSON(transport.requests()[0].body)
+        guard case .object(let root) = body,
+              case .array(let messages)? = root["messages"],
+              case .object(let user) = messages[1] else {
+            return XCTFail("missing user message")
+        }
+        let texts = textParts(in: user["content"] ?? .null)
+        XCTAssertTrue(texts.contains { $0.contains("Open now:") })
+        XCTAssertTrue(texts.contains {
+            $0.contains("need_id=take-baby cue_spoken=true handled_when=wearer_hands_receiving_baby; eating one-handed")
+        })
+        XCTAssertTrue(texts.contains { $0.contains("need_id=water cue_spoken=false") })
+        XCTAssertFalse(texts.contains { $0.contains("Open now: (none)") })
+    }
+
+    func testEmptyOpenNeedsBlockReadsNone() async throws {
+        let transport = ScriptedTransport(steps: [.response(httpJSON(200, completionBody(finishReason: "stop")))])
+        let client = liveClient(transport: transport)
+        _ = try await client.complete(sampleRequest())
+
+        let body = try decodeJSON(transport.requests()[0].body)
+        guard case .object(let root) = body,
+              case .array(let messages)? = root["messages"],
+              case .object(let user) = messages[1] else {
+            return XCTFail("missing user message")
+        }
+        let texts = textParts(in: user["content"] ?? .null)
+        XCTAssertTrue(texts.contains { $0.contains("Open now: (none)") })
+    }
+
+    func testResolvedByMapsToResolution() async throws {
+        let pairs: [(String, Resolution)] = [
+            ("wearer", .caughtHimself),
+            ("other_adult", .resolvedByPartner),
+            ("unclear", .unknown),
+        ]
+        let transport = ScriptedTransport(steps: pairs.map { by, _ in
+            .response(httpJSON(200, completionBody(
+                finishReason: "tool_calls",
+                toolName: "report_need_resolved",
+                arguments: toolArguments(["need_id": "take-baby", "resolved_by": by])
+            )))
+        })
+        let client = liveClient(transport: transport)
+        for (_, expected) in pairs {
+            let verdict = try await client.complete(sampleRequest())
+            XCTAssertEqual(verdict.tool, .reportNeedResolved)
+            XCTAssertEqual(verdict.assessment.needID, "take-baby")
+            XCTAssertEqual(verdict.assessment.resolution, expected)
+        }
     }
 
     private func imageURLs(in value: JSONValue) -> [String] {

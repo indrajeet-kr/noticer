@@ -6,6 +6,8 @@ struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
         case selfNotice
         case cued
+        /// He handled it after a whisper. Reads as nudged, like a cue.
+        case nudge
     }
 
     var id: UUID

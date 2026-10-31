@@ -70,6 +70,13 @@ public struct ScenarioPlayback: Sendable {
                 try await Task.sleep(for: pace)
             }
         }
+        // Speech lands on the step after the cue fires; flush it before
+        // reporting so the speaker record is complete.
+        let flush = try await pipeline.tick()
+        decisions.append(contentsOf: flush.decisions)
+        if let error = flush.modelError {
+            modelErrors.append(error)
+        }
         let view = await pipeline.view()
         return ScenarioReport(
             scenarioID: scenario.scenarioID,

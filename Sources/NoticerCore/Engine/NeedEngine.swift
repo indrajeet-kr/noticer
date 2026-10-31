@@ -40,6 +40,10 @@ public struct NeedEngine<TimeSource: Clock> {
         /// Consecutive recheck verdicts that said the need is gone. One is a
         /// flaky frame; two closes. Any sustained verdict resets it.
         var recheckStrikes: Int
+        /// When the cue fired, if it did. The need stays open after that so
+        /// a resolution verdict can still credit it.
+        var cueFiredAt: Date?
+        var cueID: String?
     }
 
     private struct CueEffect {
@@ -248,14 +252,27 @@ public struct NeedEngine<TimeSource: Clock> {
 
         // An omitted need id can apply to the only open need. An unknown id
         // was dropped in sanitize and must not spill onto that need.
+        let needOmitted: Bool = {
+            guard let named = namedNeedID else { return true }
+            return assessment.needID == nil && omittedNeedID(named)
+        }()
         let subjectID: String?
         if namedNeedID != nil {
             subjectID = assessment.needID
         } else {
             subjectID = tracked.count == 1 ? tracked[0].needID : nil
         }
-        if let subjectID, catalog.need(id: subjectID) != nil {
-            applyAssessment(subjectID, verdict: verdict, now: now)
+        // A folded placeholder ("null") on a no-transition turn reads as
+        // omitted too: it can still speak for the single open need.
+        var effectiveSubjectID = subjectID
+        if verdict.tool == .reportNoTransition, effectiveSubjectID == nil, needOmitted, tracked.count == 1 {
+            effectiveSubjectID = tracked[0].needID
+        }
+        if let effectiveSubjectID, catalog.need(id: effectiveSubjectID) != nil {
+            applyAssessment(effectiveSubjectID, verdict: verdict, now: now)
+        }
+        if verdict.tool == .reportNoTransition, needOmitted {
+            noteStillOpen(assessment: assessment, now: now)
         }
 
         if verdict.tool == .latchNeedHypothesis {
@@ -266,7 +283,7 @@ public struct NeedEngine<TimeSource: Clock> {
             applyDeferAndExtension(needID, verdict: verdict)
         }
 
-        if let subjectID, let index = indexOfOpen(subjectID), tracked[index].awaitingRecheck {
+        if let effectiveSubjectID, let index = indexOfOpen(effectiveSubjectID), tracked[index].awaitingRecheck {
             finishRecheck(at: index, assessment: assessment, now: now)
         }
 
@@ -288,6 +305,7 @@ public struct NeedEngine<TimeSource: Clock> {
             return
         }
         closeNeedsWithNoPerson(now: now)
+        closePostCueTimeouts(now: now)
         resolveDueNeeds(now: now)
         scheduleModelCall(now: now)
     }
@@ -308,6 +326,17 @@ public struct NeedEngine<TimeSource: Clock> {
             }
             close(need.needID, now: now, cooldown: true)
             record(.closedUnknown, needID: need.needID, detail: "no-person")
+        }
+    }
+
+    private mutating func closePostCueTimeouts(now: Date) {
+        for need in tracked where need.cueDelivered {
+            guard let firedAt = need.cueFiredAt else { continue }
+            guard now.timeIntervalSince(firedAt) >= EngineTuning.postCueResolveSeconds else {
+                continue
+            }
+            close(need.needID, now: now, cooldown: true)
+            record(.closedUnknown, needID: need.needID, detail: "post-cue-timeout")
         }
     }
 
@@ -464,7 +493,14 @@ public struct NeedEngine<TimeSource: Clock> {
         cueEffects[cue.id] = CueEffect(needID: need.id, masteryBefore: before, dismissed: false)
         playedCues.append(cue)
         lastCueAt = now
-        close(need.id, now: now, cooldown: true)
+        // The need stays open: "he did it after the whisper" is still a
+        // resolution worth recording. It closes on resolution, on the
+        // no-person path, or when the post-cue window runs out.
+        if let index = indexOfOpen(need.id) {
+            tracked[index].cueDelivered = true
+            tracked[index].cueFiredAt = now
+            tracked[index].cueID = cue.id
+        }
         record(.cueFired, needID: need.id, detail: kind.rawValue)
     }
 
@@ -549,13 +585,30 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         let strip = buffer.modelStrip(now: now)
         stripSignatureAtLastCall = stripSignature(now: now)
+        let open = tracked.map { item in
+            OpenNeedContext(
+                needID: item.needID,
+                latchedSecondsAgo: now.timeIntervalSince(item.latchedAt),
+                cueSpoken: item.cueDelivered,
+                resolutionSignal: Self.resolutionSignal(for: catalog.need(id: item.needID))
+            )
+        }
         pendingModelCall = PendingModelCall(
             id: id,
             purpose: purpose,
-            request: ModelRequest(keyframes: strip, needs: catalog.needs),
+            request: ModelRequest(keyframes: strip, needs: catalog.needs, openNeeds: open),
             issuedAt: now
         )
         record(.callIssued, needID: nil, detail: "\(purpose.rawValue) kf=\(strip.count)")
+    }
+
+    /// What counts as handled, from the need's own words. Empty until the
+    /// compile step fills the need in.
+    private static func resolutionSignal(for need: Need?) -> String {
+        let parts = [need?.selfNoticeSignal, need?.visualCondition]
+            .compactMap { $0?.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        return parts.joined(separator: "; ")
     }
 
     /// Slot ids, capture times, and bytes of the current model strip. The
@@ -587,15 +640,24 @@ public struct NeedEngine<TimeSource: Clock> {
 
     // MARK: - Verdicts
 
+    /// Placeholder need ids the model writes instead of omitting the field.
+    /// Strict schemas force need_id present on every call, so no-transition
+    /// turns arrive as "none", "no_need", or the literal "null"/"nil".
+    private func omittedNeedID(_ raw: String) -> Bool {
+        let folded = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return folded.isEmpty
+            || folded == "none"
+            || folded == "no_need"
+            || folded == "null"
+            || folded == "nil"
+    }
+
     private mutating func sanitize(_ assessment: SceneAssessment) -> SceneAssessment {
         var assessment = assessment
         if let needID = assessment.needID, catalog.need(id: needID) == nil {
-            // Strict schemas force need_id present on every call, so the model
-            // writes "none"/"no_need" for no-transition turns instead of null.
-            // Those read as omitted; truly unknown ids still drop below.
-            let folded = needID.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            // Placeholders read as omitted; truly unknown ids still drop below.
             assessment.needID = nil
-            if folded != "none", folded != "no_need", !folded.isEmpty {
+            if !omittedNeedID(needID) {
                 record(.assessmentDropped, needID: needID, detail: "unknown-need")
             }
         }
@@ -606,9 +668,92 @@ public struct NeedEngine<TimeSource: Clock> {
         return assessment
     }
 
+    /// A no-transition turn with no need id is evidence the open need still
+    /// holds: the model looked and reported no change. Freshens the evidence
+    /// clock unless the verdict explicitly says the need is gone.
+    private mutating func noteStillOpen(assessment: SceneAssessment, now: Date) {
+        guard tracked.count == 1, let needID = tracked.first?.needID else {
+            if tracked.count >= 2 {
+                record(.stillOpen, needID: nil, detail: "ambiguous")
+            }
+            return
+        }
+        guard let index = indexOfOpen(needID),
+              let need = catalog.need(id: needID) else {
+            return
+        }
+        if assessment.sustainedAcrossStrip != false
+            || passiveActionMatches(assessment.actionCode, need: need) {
+            tracked[index].evidenceAt = now
+        }
+        record(.stillOpen, needID: needID, detail: "no-change")
+    }
+
+    /// A passive scene detail ("water_bottle_present") counts when it shares
+    /// a word with what the need watches for. Short tokens don't count, so a
+    /// stray "on" can't match. Wearer actions belong to the pending path.
+    private func passiveActionMatches(_ actionCode: String?, need: Need) -> Bool {
+        guard let code = actionCode?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !code.isEmpty else {
+            return false
+        }
+        if MasteryMath.isWearerAction(actionCode, selfNoticeSignal: need.selfNoticeSignal) {
+            return false
+        }
+        let codeTokens = Set(wordTokens(code))
+        guard !codeTokens.isEmpty else { return false }
+        for field in [need.visualCondition, need.selfNoticeSignal] {
+            guard let field else { continue }
+            if !codeTokens.isDisjoint(with: Set(wordTokens(field.lowercased()))) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private func wordTokens(_ text: String) -> [String] {
+        text.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 }
+    }
+
+    /// One verdict settles the open need. `report_need_resolved` carries who
+    /// handled it; anything else only confirms the need is still open.
+    private mutating func resolve(_ needID: String, verdict: ModelVerdict, now: Date) {
+        guard var need = catalog.need(id: needID) else { return }
+        guard let index = indexOfOpen(needID) else { return }
+        switch verdict.assessment.resolution {
+        case .caughtHimself:
+            if tracked[index].cueDelivered {
+                // The cue already applied applyCueFired: no self-notice step,
+                // but the success still fires so the phone shows "You got it".
+                close(needID, now: now, cooldown: true)
+                record(.caughtHimself, needID: needID, detail: "after-cue")
+            } else {
+                let before = need.mastery
+                need.mastery = MasteryMath.applySelfNotice(need.mastery)
+                let becameRetired = before.phase != .retired && need.mastery.phase == .retired
+                catalog.update(need)
+                close(needID, now: now, cooldown: true)
+                record(.caughtHimself, needID: needID, detail: "before-cue")
+                if becameRetired {
+                    record(.masteryRetired, needID: needID, detail: nil)
+                }
+            }
+        case .resolvedByPartner:
+            close(needID, now: now, cooldown: true)
+            record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
+        default:
+            record(.stillOpen, needID: needID, detail: "unclear")
+        }
+    }
+
     private mutating func applyAssessment(_ needID: String, verdict: ModelVerdict, now: Date) {
         let assessment = verdict.assessment
         guard var need = catalog.need(id: needID) else { return }
+
+        if verdict.tool == .reportNeedResolved {
+            resolve(needID, verdict: verdict, now: now)
+            return
+        }
 
         if assessment.resolution == .resolvedByPartner {
             guard indexOfOpen(needID) != nil else { return }
@@ -640,9 +785,11 @@ public struct NeedEngine<TimeSource: Clock> {
             let before = need.mastery
             need.mastery = MasteryMath.applySelfNotice(need.mastery)
             let becameRetired = before.phase != .retired && need.mastery.phase == .retired
+            let caughtAfterCue = tracked[index].cueDelivered
             catalog.update(need)
             close(needID, now: now, cooldown: true)
-            record(.caughtHimself, needID: needID, detail: pendingAction)
+            // A catch after the whisper reads as nudged, not on his own.
+            record(.caughtHimself, needID: needID, detail: caughtAfterCue ? "after-cue" : pendingAction)
             if becameRetired {
                 record(.masteryRetired, needID: needID, detail: nil)
             }
@@ -737,7 +884,9 @@ public struct NeedEngine<TimeSource: Clock> {
                 didLogRateLimit: false,
                 cueDelivered: false,
                 latchedWhileAbsent: absent,
-                recheckStrikes: 0
+                recheckStrikes: 0,
+                cueFiredAt: nil,
+                cueID: nil
             )
         )
         lastSuccessfulLatchAt = now

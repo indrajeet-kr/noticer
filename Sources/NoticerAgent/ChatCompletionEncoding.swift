@@ -93,6 +93,14 @@ enum ChatCompletionRequest {
                 lines.append("priority=\(need.priority)")
             }
         }
+        if request.openNeeds.isEmpty {
+            lines.append("Open now: (none)")
+        } else {
+            lines.append("Open now:")
+            for open in request.openNeeds {
+                lines.append("need_id=\(open.needID) cue_spoken=\(open.cueSpoken) handled_when=\(open.resolutionSignal)")
+            }
+        }
         lines.append(
             "Keyframes follow, oldest first. Each image is one keyframe. age_seconds is printed in the text part before that image."
         )

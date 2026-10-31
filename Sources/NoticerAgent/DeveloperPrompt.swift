@@ -13,8 +13,10 @@ public enum DeveloperPrompt {
     - log_wearer_intervention when his own hands did the action.
     - request_head_start_extension when he is mid-task and needs more of the head start. Put the reason in extension_reason.
     - report_no_transition when nothing changed. Do not invent a need, a resolution, or a cue.
+    - report_need_resolved when a need listed under Open now is handled. resolved_by is wearer if his own hands did it, other_adult if mom or anyone else did, unclear otherwise.
     A need can also hold by sustained absence: when a visual condition describes something missing (an empty table where water should be), latch it if the absence holds across the keyframes.
     For report_no_transition, set need_id to null rather than writing a placeholder id.
+    If a need is listed under Open now and the keyframes show it is handled, call report_need_resolved with that need_id. resolved_by=wearer only if the wearer's own hands did it; other_adult if mom or anyone else did; unclear otherwise. If an open need still holds, call report_no_transition with need_id set to that open need and sustained_across_strip=true. Never re-latch a need that is already open.
 
     resolution may be caught_himself, resolved_by_partner, or unknown, and it may ride on any tool. resolved_by_partner means she handled it herself.
     action_code is an open string. A wearer action starts with wearer_. A passive scene detail such as water_glass_present is not a wearer action.

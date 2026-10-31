@@ -111,7 +111,7 @@ final class QuickTimingTests: XCTestCase {
         advance(to: water.cueDeadline)
         engine.tick()
         XCTAssertEqual(engine.cues.map(\.needID), ["baby"])
-        XCTAssertEqual(engine.openNeedIDs, ["water"])
+        XCTAssertEqual(engine.openNeedIDs, ["water", "baby"], "the cued need stays open for a resolution")
 
         let babyCue = try XCTUnwrap(engine.cues.first)
         engine.noteSameChore("sink")

@@ -4,9 +4,9 @@ import XCTest
 @testable import NoticerAgent
 
 final class AgentContractTests: XCTestCase {
-    func testCatalogHasTheFiveToolsInPRDOrder() {
+    func testCatalogHasTheSixToolsInPRDOrder() {
         XCTAssertEqual(ToolCatalog.all.map(\.name), ToolName.allCases)
-        XCTAssertEqual(Set(ToolCatalog.all.map(\.name)).count, 5)
+        XCTAssertEqual(Set(ToolCatalog.all.map(\.name)).count, 6)
     }
 
     func testEachToolIsAStrictFunctionSchema() {
@@ -31,6 +31,10 @@ final class AgentContractTests: XCTestCase {
                 ToolCatalog.extensionReasonField,
             ],
             .reportNoTransition: [],
+            .reportNeedResolved: [
+                AssessmentField.needID,
+                ToolCatalog.resolvedByField,
+            ],
         ]
 
         for tool in ToolCatalog.all {
@@ -55,6 +59,14 @@ final class AgentContractTests: XCTestCase {
             let hasReason = tool.parameterPropertyNames().contains(ToolCatalog.extensionReasonField)
             XCTAssertEqual(hasReason, tool.name == .requestHeadStartExtension)
         }
+    }
+
+    func testResolvedByIsOnlyOnTheResolutionTool() {
+        for tool in ToolCatalog.all {
+            let hasField = tool.parameterPropertyNames().contains(ToolCatalog.resolvedByField)
+            XCTAssertEqual(hasField, tool.name == .reportNeedResolved)
+        }
+        XCTAssertEqual(Set(ToolCatalog.resolvedByValues), ["wearer", "other_adult", "unclear"])
     }
 
     func testChatCompletionsToolsMatchTheCatalog() {

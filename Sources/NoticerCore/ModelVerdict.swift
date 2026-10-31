@@ -9,13 +9,14 @@ public enum FinishReason: String, Codable, Sendable, Equatable {
     case other
 }
 
-/// The five tools. Raw values are the chat-completions function names.
+/// The six tools. Raw values are the chat-completions function names.
 public enum ToolName: String, Codable, Sendable, Equatable, Hashable, CaseIterable {
     case latchNeedHypothesis = "latch_need_hypothesis"
     case deferCueWearerBusy = "defer_cue_wearer_busy"
     case logWearerIntervention = "log_wearer_intervention"
     case requestHeadStartExtension = "request_head_start_extension"
     case reportNoTransition = "report_no_transition"
+    case reportNeedResolved = "report_need_resolved"
 }
 
 /// One routed model turn: a single tool plus the assessment it carried.
