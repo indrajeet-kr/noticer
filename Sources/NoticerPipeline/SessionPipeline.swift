@@ -38,6 +38,7 @@ public struct SessionView: Equatable, Sendable {
     public var cues: [Cue]
     public var log: [EngineEvent]
     public var modelCalls: Int
+    public var lastResolution: ResolutionOutcome?
 
     public init(
         now: Date,
@@ -45,7 +46,8 @@ public struct SessionView: Equatable, Sendable {
         openNeeds: [OpenNeedState],
         cues: [Cue],
         log: [EngineEvent],
-        modelCalls: Int
+        modelCalls: Int,
+        lastResolution: ResolutionOutcome? = nil
     ) {
         self.now = now
         self.needs = needs
@@ -53,6 +55,7 @@ public struct SessionView: Equatable, Sendable {
         self.cues = cues
         self.log = log
         self.modelCalls = modelCalls
+        self.lastResolution = lastResolution
     }
 
     public var masterySummary: String {
@@ -147,7 +150,8 @@ public actor SessionPipeline {
             openNeeds: engine.openNeeds,
             cues: engine.cues,
             log: engine.log,
-            modelCalls: engine.modelCallsIssued
+            modelCalls: engine.modelCallsIssued,
+            lastResolution: engine.lastResolution
         )
     }
 

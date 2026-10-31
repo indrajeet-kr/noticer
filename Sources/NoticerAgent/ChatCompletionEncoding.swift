@@ -113,7 +113,11 @@ enum ChatCompletionRequest {
                     }
                     return trimmed
                 }()
-                lines.append("need_id=\(open.needID) cue_spoken=\(open.cueSpoken) problem=\(problem) handled_when=\(handled)")
+                var openLine = "need_id=\(open.needID) cue_spoken=\(open.cueSpoken) problem=\(problem) handled_when=\(handled)"
+                if let acted = open.wearerActedSecondsAgo {
+                    openLine += " wearer_acted_seconds_ago=\(Int(acted))"
+                }
+                lines.append(openLine)
             }
         }
         lines.append(

@@ -35,6 +35,13 @@ public struct LatencyTuning: Equatable, Sendable {
     public var postCueNoPersonGrace: Bool
     /// Emit `[TIMING]` metrics for calls, rate windows, and visible-to-speech latency.
     public var timingTelemetry: Bool
+    /// Credit a recent matching wearer intervention when a need resolves as
+    /// `resolved_by_partner` (or unknown) with no partner in view.
+    public var creditRecentIntervention: Bool
+    /// How long a matching intervention keeps a need creditable, in seconds.
+    public var recentInterventionWindowSeconds: TimeInterval
+    /// Let a scene change spend idle-bucket tokens for an early latch call.
+    public var sceneChangeLatchBypass: Bool
 
     public init(
         oneReplyPerStep: Bool = true,
@@ -55,7 +62,10 @@ public struct LatencyTuning: Equatable, Sendable {
         strictCredit: Bool = true,
         polarityResolution: Bool = true,
         postCueNoPersonGrace: Bool = true,
-        timingTelemetry: Bool = true
+        timingTelemetry: Bool = true,
+        creditRecentIntervention: Bool = true,
+        recentInterventionWindowSeconds: TimeInterval = 30,
+        sceneChangeLatchBypass: Bool = true
     ) {
         self.oneReplyPerStep = oneReplyPerStep
         self.dedupeAllPurposes = dedupeAllPurposes
@@ -76,6 +86,9 @@ public struct LatencyTuning: Equatable, Sendable {
         self.polarityResolution = polarityResolution
         self.postCueNoPersonGrace = postCueNoPersonGrace
         self.timingTelemetry = timingTelemetry
+        self.creditRecentIntervention = creditRecentIntervention
+        self.recentInterventionWindowSeconds = recentInterventionWindowSeconds
+        self.sceneChangeLatchBypass = sceneChangeLatchBypass
     }
 
     public static let `default` = LatencyTuning()
@@ -97,6 +110,8 @@ public struct LatencyTuning: Equatable, Sendable {
         strictCredit: false,
         polarityResolution: false,
         postCueNoPersonGrace: false,
-        timingTelemetry: false
+        timingTelemetry: false,
+        creditRecentIntervention: false,
+        sceneChangeLatchBypass: false
     )
 }

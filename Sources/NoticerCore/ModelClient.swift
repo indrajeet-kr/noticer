@@ -34,19 +34,23 @@ public struct OpenNeedContext: Equatable, Sendable {
     public var problemCondition: String
     /// What counts as handled, from `handledCondition` and `selfNoticeSignal` (never `visualCondition`).
     public var resolutionSignal: String
+    /// Seconds since his last matching intervention, when he recently acted on this need.
+    public var wearerActedSecondsAgo: TimeInterval?
 
     public init(
         needID: String,
         latchedSecondsAgo: TimeInterval,
         cueSpoken: Bool,
         problemCondition: String = "",
-        resolutionSignal: String
+        resolutionSignal: String,
+        wearerActedSecondsAgo: TimeInterval? = nil
     ) {
         self.needID = needID
         self.latchedSecondsAgo = latchedSecondsAgo
         self.cueSpoken = cueSpoken
         self.problemCondition = problemCondition
         self.resolutionSignal = resolutionSignal
+        self.wearerActedSecondsAgo = wearerActedSecondsAgo
     }
 }
 

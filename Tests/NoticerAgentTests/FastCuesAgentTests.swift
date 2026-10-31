@@ -243,8 +243,41 @@ final class FastCuesAgentTests: XCTestCase {
 
     func testDeveloperPromptWearerRuleMatchesPlan() {
         let prompt = DeveloperPrompt.text
-        XCTAssertTrue(prompt.contains("or the item appeared without the wearer"))
+        XCTAssertTrue(prompt.contains("wearer_acted_seconds_ago"))
+        XCTAssertTrue(prompt.contains("only if the partner or someone else is seen doing it"))
         XCTAssertFalse(prompt.contains("right in front of the wearer"))
+    }
+
+    func testSceneTextShowsWearerActedSecondsAgo() {
+        let acted = ModelRequest(
+            keyframes: [],
+            needs: [],
+            openNeeds: [
+                OpenNeedContext(
+                    needID: "couch-water",
+                    latchedSecondsAgo: 12,
+                    cueSpoken: false,
+                    resolutionSignal: "glass of water within her reach",
+                    wearerActedSecondsAgo: 12
+                )
+            ],
+            purpose: .heartbeat
+        )
+        XCTAssertTrue(ChatCompletionRequest.sceneText(acted).contains("wearer_acted_seconds_ago=12"))
+        let silent = ModelRequest(
+            keyframes: [],
+            needs: [],
+            openNeeds: [
+                OpenNeedContext(
+                    needID: "couch-water",
+                    latchedSecondsAgo: 12,
+                    cueSpoken: false,
+                    resolutionSignal: "glass of water within her reach"
+                )
+            ],
+            purpose: .heartbeat
+        )
+        XCTAssertFalse(ChatCompletionRequest.sceneText(silent).contains("wearer_acted_seconds_ago"))
     }
 
     // MARK: - Helpers

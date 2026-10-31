@@ -1181,4 +1181,356 @@ final class FastCuesCoreTests: EngineTestCase {
         XCTAssertTrue(events(.caughtHimself).isEmpty)
         XCTAssertEqual(mastery(of: "take-baby").score, 0)
     }
+
+    // MARK: - Wearer credit, shared finish, scene-change latch
+
+    private func toysNeed(dwell: TimeInterval? = nil) -> Need {
+        Need(
+            id: "clean-floor-toys",
+            authorText: "toys on the floor",
+            cueWording: "Toys are on the floor.",
+            selfNoticeSignal: "wearer_picking_up_toys_from_floor",
+            dwellSeconds: dwell,
+            priority: 0
+        )
+    }
+
+    private func matchingIntervention(partner: Bool? = false, hands: Bool? = true) -> ModelVerdict {
+        var v = intervention("clean-floor-toys", action: "wearer_picking_up_toys_from_floor", sustained: true)
+        v.assessment.partnerInView = partner
+        v.assessment.wearerHandsVisible = hands
+        return v
+    }
+
+    private func partnerSustained() -> ModelVerdict {
+        var v = noTransition("clean-floor-toys", sustained: true)
+        v.assessment.partnerInView = true
+        return v
+    }
+
+    private func resolvedToys(resolution: Resolution?, partner: Bool?, hands: Bool?) -> ModelVerdict {
+        ModelVerdict(
+            finishReason: .toolCalls,
+            tool: .reportNeedResolved,
+            assessment: SceneAssessment(
+                needID: "clean-floor-toys",
+                sustainedAcrossStrip: false,
+                wearerHandsOccupied: false,
+                partnerInView: partner,
+                wearerHandsVisible: hands,
+                resolution: resolution,
+                confidence: 0.8
+            )
+        )
+    }
+
+    private func latchToys(partner: Bool? = nil) throws {
+        glancePair()
+        let call = try XCTUnwrap(engine.pendingModelCall)
+        var v = latchVerdict("clean-floor-toys")
+        v.assessment.partnerInView = partner
+        engine.handle(callID: call.id, verdict: v)
+    }
+
+    private func heartbeatToys(_ verdict: ModelVerdict) throws {
+        advance(SessionLimits.heartbeatSeconds)
+        see([mom()])
+        let call = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(call.purpose, .heartbeat)
+        engine.handle(callID: call.id, verdict: verdict)
+    }
+
+    private func fireCue() throws {
+        let open = try XCTUnwrap(engine.openNeeds.first)
+        advance(to: open.cueDeadline)
+        engine.tick()
+        if let recheck = engine.pendingModelCall, recheck.purpose == .recheck {
+            engine.handle(callID: recheck.id, verdict: noTransition("clean-floor-toys", sustained: true))
+            engine.tick()
+        }
+        XCTAssertFalse(engine.cues.isEmpty, "cue must have fired")
+    }
+
+    func testRecentMatchingInterventionBeatsPartnerVerdictWhenPartnerNotVisible() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try fireCue()
+        let masteryAfterCue = mastery(of: "clean-floor-toys")
+        for _ in 0..<4 {
+            try heartbeatToys(matchingIntervention())
+        }
+        XCTAssertNotNil(engine.openNeeds.first?.lastMatchingInterventionAt)
+
+        // The closing call tells the model he recently acted.
+        advance(SessionLimits.heartbeatSeconds)
+        see([mom()])
+        let closing = try XCTUnwrap(engine.pendingModelCall)
+        let closingContext = try XCTUnwrap(closing.request.openNeeds.first { $0.needID == "clean-floor-toys" })
+        XCTAssertNotNil(closingContext.wearerActedSecondsAgo)
+        engine.handle(callID: closing.id, verdict: resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        let catches = events(.caughtHimself).filter { $0.needID == "clean-floor-toys" }
+        XCTAssertEqual(catches.count, 1)
+        XCTAssertTrue(["after-cue", "recent-intervention"].contains(catches.first?.detail ?? ""))
+        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+        XCTAssertEqual(engine.openNeedIDs, [])
+        XCTAssertEqual(mastery(of: "clean-floor-toys"), masteryAfterCue)
+    }
+
+    func testPartnerVisibleStillWinsOverRecentIntervention() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try fireCue()
+        for _ in 0..<4 {
+            try heartbeatToys(matchingIntervention())
+        }
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: true, hands: false))
+
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+    }
+
+    func testInterventionOutsideWindowDoesNotCredit() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try fireCue()
+        try heartbeatToys(matchingIntervention())
+        advance(31)
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+    }
+
+    func testNonMatchingInterventionNeverSetsMemory() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try fireCue()
+        var v = intervention("clean-floor-toys", action: "wearer_washing_dishes", sustained: true)
+        v.assessment.partnerInView = false
+        v.assessment.wearerHandsVisible = true
+        try heartbeatToys(v)
+        XCTAssertNil(engine.openNeeds.first?.lastMatchingInterventionAt)
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+    }
+
+    func testNoTransitionNeverCreditsEvenWithMemory() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try fireCue()
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(noTransition("clean-floor-toys", sustained: true))
+
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+        XCTAssertEqual(engine.openNeedIDs, ["clean-floor-toys"])
+    }
+
+    func testSceneChangeLatchesWithinBucket() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        advance(7)
+        see([], jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], jpeg: 2, sceneActive: true)
+        let first = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(first.purpose, .latch)
+        engine.handle(callID: first.id, verdict: latchVerdict("clean-floor-toys", sustained: false))
+        advance(2)
+        see([], jpeg: 3, sceneActive: true)
+        advance(2)
+        see([], jpeg: 4, sceneActive: true, motion: 0.375)
+
+        let early = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(early.purpose, .latch)
+    }
+
+    func testIdleBucketKeepsSixPerMinute() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        advance(7)
+        see([], jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], jpeg: 2, sceneActive: true)
+        let first = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: first.id, verdict: latchVerdict("clean-floor-toys", sustained: false))
+        var issued = 1
+        var callTimes: [Date] = []
+        for i in 3...32 {
+            advance(2)
+            see([], jpeg: UInt8(i % 256), sceneActive: true, motion: 0.3)
+            if let call = engine.pendingModelCall {
+                issued += 1
+                callTimes.append(clock.now())
+                engine.handle(callID: call.id, verdict: latchVerdict("clean-floor-toys", sustained: false))
+            }
+        }
+        XCTAssertLessThanOrEqual(issued, 8)
+        XCTAssertLessThanOrEqual(engine.callsInLastMinute(), 8)
+        for pair in zip(callTimes, callTimes.dropFirst()) {
+            XCTAssertGreaterThanOrEqual(pair.1.timeIntervalSince(pair.0), 4)
+        }
+    }
+
+    func testCreditRecentInterventionSwitchOff() throws {
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [toysNeed()],
+            timing: .quick,
+            latency: LatencyTuning(creditRecentIntervention: false)
+        )
+        try latchToys()
+        try fireCue()
+        for _ in 0..<4 {
+            try heartbeatToys(matchingIntervention())
+        }
+
+        // Switch off: the model context stays exactly as on main.
+        advance(SessionLimits.heartbeatSeconds)
+        see([mom()])
+        let closing = try XCTUnwrap(engine.pendingModelCall)
+        let closingContext = try XCTUnwrap(closing.request.openNeeds.first { $0.needID == "clean-floor-toys" })
+        XCTAssertNil(closingContext.wearerActedSecondsAgo)
+        engine.handle(callID: closing.id, verdict: resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByPartner).first?.detail, "report_need_resolved")
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+    }
+
+    func testSceneChangeBypassSwitchOff() throws {
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [toysNeed()],
+            timing: .quick,
+            latency: LatencyTuning(sceneChangeLatchBypass: false)
+        )
+        advance(7)
+        see([], jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], jpeg: 2, sceneActive: true)
+        let first = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: first.id, verdict: latchVerdict("clean-floor-toys", sustained: false))
+        advance(2)
+        see([], jpeg: 3, sceneActive: true)
+        advance(2)
+        see([], jpeg: 4, sceneActive: true, motion: 0.375)
+
+        XCTAssertNil(engine.pendingModelCall)
+        XCTAssertFalse(events(.skip).contains { ($0.detail ?? "").contains("idle-bucket") })
+    }
+
+    func testSharedFinishReplayOfLiveSequence() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys(partner: true)
+        try heartbeatToys(partnerSustained())
+        try heartbeatToys(partnerSustained())
+        try fireCue()
+        let masteryAfterCue = mastery(of: "clean-floor-toys")
+        try heartbeatToys(noTransition(nil, sustained: nil))
+        try heartbeatToys(partnerSustained())
+        try heartbeatToys(matchingIntervention())
+        try heartbeatToys(partnerSustained())
+        try heartbeatToys(matchingIntervention())
+        try heartbeatToys(matchingIntervention())
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        let catches = events(.caughtHimself).filter { $0.needID == "clean-floor-toys" }
+        XCTAssertEqual(catches.count, 1)
+        XCTAssertEqual(catches.first?.detail, "shared-finish")
+        XCTAssertEqual(catches.first?.isSharedFinish, true)
+        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+        XCTAssertEqual(engine.openNeedIDs, [])
+        XCTAssertEqual(mastery(of: "clean-floor-toys"), masteryAfterCue)
+    }
+
+    func testPartnerOnlyResolutionNoCredit() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys(partner: true)
+        try heartbeatToys(partnerSustained())
+
+        // The cue may fire while the closing heartbeat is driven; capture
+        // mastery after that so the assert pins the resolution, not the cue.
+        advance(SessionLimits.heartbeatSeconds)
+        see([mom()])
+        let close = try XCTUnwrap(engine.pendingModelCall)
+        let masteryBeforeClose = mastery(of: "clean-floor-toys")
+        engine.handle(callID: close.id, verdict: resolvedToys(resolution: .resolvedByPartner, partner: true, hands: false))
+
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(mastery(of: "clean-floor-toys"), masteryBeforeClose)
+        XCTAssertEqual(engine.openNeedIDs, [])
+    }
+
+    func testPartnerInViewAtCloseNoCreditEvenWithIntervention() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try fireCue()
+        try heartbeatToys(matchingIntervention())
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: true, hands: true))
+
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+    }
+
+    func testWearerSoloStaysGotIt() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try fireCue()
+        try heartbeatToys(matchingIntervention())
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        let catches = events(.caughtHimself).filter { $0.needID == "clean-floor-toys" }
+        XCTAssertEqual(catches.count, 1)
+        XCTAssertNotEqual(catches.first?.detail, "shared-finish")
+        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+    }
+
+    func testSharedFinishBeforeCueAppliesSelfNotice() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed(dwell: 30)], timing: .quick)
+        try latchToys(partner: true)
+        let initial = mastery(of: "clean-floor-toys")
+        try heartbeatToys(partnerSustained())
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        let catches = events(.caughtHimself).filter { $0.needID == "clean-floor-toys" }
+        XCTAssertEqual(catches.count, 1)
+        XCTAssertEqual(catches.first?.detail, "shared-finish")
+        XCTAssertTrue(engine.cues.isEmpty)
+        XCTAssertGreaterThan(mastery(of: "clean-floor-toys").score, initial.score)
+        XCTAssertEqual(engine.openNeedIDs, [])
+    }
+
+    func testSharedFinishSwitchOff() throws {
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [toysNeed()],
+            timing: .quick,
+            latency: LatencyTuning(creditRecentIntervention: false)
+        )
+        try latchToys(partner: true)
+        try heartbeatToys(partnerSustained())
+        try fireCue()
+        try heartbeatToys(matchingIntervention())
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
+
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+    }
 }
