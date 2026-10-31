@@ -1,31 +1,28 @@
 import SwiftUI
 
-/// Home while running. One focal point: the status orb with the status word.
-/// A 1 s tick keeps the head-start countdown and recency windows live
-/// between pipeline steps.
+/// Tonight: a serif title above one big centered circle, with nothing
+/// competing. A 1 s tick keeps the head-start countdown and recency windows
+/// live between pipeline steps.
 struct LiveSessionView: View {
     @Bindable var model: PhoneSessionModel
-    @State private var showingAsk = false
+    var onWins: () -> Void = {}
+
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
                 ScrollView {
-                    VStack(spacing: Theme.Space.s24) {
-                        statusStrip
-                        SessionStatusHero(status: model.sessionStatus)
-                        if !model.notices.isEmpty {
-                            notices
+                    VStack(spacing: Theme.Space.sectionGap) {
+                        header
+                        deviceRow
+                        circleSection
+                        if model.runError != nil || !model.notices.isEmpty {
+                            attentionCard
                         }
-                        if let runError = model.runError {
-                            Text(runError)
-                                .font(Theme.Font.body)
-                                .foregroundStyle(Theme.cue)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        controls
+                        TonightTimeline(moments: model.moments, isRunning: model.isRunning)
                         quickTiming
-                        DevPanel(lines: devLines, log: model.sessionLog)
+                        auxiliaryActions
                     }
                     .screenMargins()
                     .padding(.top, Theme.Space.s16)
@@ -33,113 +30,134 @@ struct LiveSessionView: View {
                 }
             }
             .ambientScreen()
-        }
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    showingAsk = true
-                } label: {
-                    Image(systemName: "gearshape")
+            .toolbar {
+                ToolbarItem(placement: .primaryAction) {
+                    TabTopMenu(onWins: onWins) { destination in
+                        path.append(destination)
+                    }
                 }
-                .accessibilityLabel("Ask about settings")
+            }
+            .tabMenuDestinations(model: model)
+        }
+    }
+
+    // MARK: - Header and device row
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s4) {
+            Text("Tonight")
+                .font(Theme.Font.display)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .accessibilityAddTraits(.isHeader)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// Oura-style device row. Battery appears only when the data is real —
+    /// never faked; the "82%" sample lives in `#Preview` only.
+    private var deviceRow: some View {
+        HStack(spacing: Theme.Space.s4) {
+            Text("Ray-Ban Meta")
+                .foregroundStyle(Theme.textSecondary)
+            Text("·")
+                .foregroundStyle(Theme.textSecondary)
+            Text(linkWord)
+                .foregroundStyle(linkColor)
+            if model.dat.battery != "—" {
+                Text("· battery \(model.dat.battery)")
+                    .foregroundStyle(Theme.textSecondary)
             }
         }
-        .sheet(isPresented: $showingAsk) {
-            AskSettingsView(model: model)
+        .font(Theme.Font.footnote)
+        .padding(.horizontal, Theme.Space.s16)
+        .padding(.vertical, Theme.Space.s12)
+        .background(Theme.bgSubtle, in: Capsule())
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(deviceAccessibilityText)
+    }
+
+    private var linkWord: String {
+        switch model.glassesLink {
+        case .connected:
+            return "Connected"
+        case .unknown:
+            return "Looking…"
+        case .none, .notConnected:
+            return "Not connected"
         }
     }
 
-    // MARK: - Status strip
-
-    private var statusStrip: some View {
-        HStack(spacing: Theme.Space.s8) {
-            StatusCapsule(
-                systemImage: "battery.50",
-                text: "Glasses \(model.dat.battery)"
-            )
-            StatusCapsule(
-                systemImage: thermalSymbol,
-                text: thermalWord
-            )
-            StatusCapsule(
-                systemImage: "wifi",
-                text: model.dat.stream
-            )
-            Spacer()
+    private var linkColor: Color {
+        switch model.glassesLink {
+        case .connected:
+            return Theme.sage
+        case .unknown:
+            return Theme.textSecondary
+        case .none, .notConnected:
+            return Theme.terracotta
         }
     }
 
-    private var thermalSymbol: String {
-        switch model.dat.thermal.lowercased() {
-        case let text where text.contains("serious"), let text where text.contains("critical"):
-            return "thermometer.high"
-        case let text where text.contains("fair"):
-            return "thermometer.medium"
-        default:
-            return "thermometer.low"
+    private var deviceAccessibilityText: String {
+        var text = "Ray-Ban Meta, \(linkWord)"
+        if model.dat.battery != "—" {
+            text += ", battery \(model.dat.battery)"
+        }
+        return text
+    }
+
+    // MARK: - Circle
+
+    private var circleSection: some View {
+        VStack(spacing: Theme.Space.s16) {
+            // About 64% of a phone's content width.
+            SessionCircle(status: model.sessionStatus, size: 240) {
+                guard !model.isRunning else {
+                    return
+                }
+                model.mode = .live
+                model.start()
+            }
+            .frame(maxWidth: .infinity, alignment: .center)
+            Text(SessionCircleWords.text(for: model.sessionStatus))
+                .font(Theme.Font.body)
+                .foregroundStyle(Theme.textSecondary)
+                .multilineTextAlignment(.center)
+                .contentTransition(.opacity)
+            if model.isRunning {
+                Button("Stop") {
+                    model.stop()
+                }
+                .font(Theme.Font.headline)
+                .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
+            }
         }
     }
 
-    private var thermalWord: String {
-        model.dat.thermal == "—" ? "Normal" : model.dat.thermal
-    }
+    // MARK: - Attention, timeline extras, timing
 
-    // MARK: - Notices
-
-    private var notices: some View {
+    private var attentionCard: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
+            if let runError = model.runError {
+                Text(runError)
+                    .font(Theme.Font.body)
+            }
             ForEach(model.notices, id: \.self) { notice in
                 Text(notice)
-                    .font(Theme.Font.body)
-                    .padding(Theme.Space.s12)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(Theme.noticed.opacity(0.18), in: Theme.Radius.rect(Theme.Radius.row))
+                    .font(Theme.Font.footnote)
             }
         }
+        .foregroundStyle(Theme.terracottaText)
+        .padding(Theme.Space.s12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.terracottaTile, in: Theme.Radius.rect(Theme.Radius.row))
+        .accessibilityElement(children: .combine)
     }
-
-    // MARK: - Controls
-
-    private var controls: some View {
-        VStack(spacing: Theme.Space.s12) {
-            Button(model.isRunning ? "Stop" : "Start") {
-                if model.isRunning {
-                    model.stop()
-                } else {
-                    model.mode = .live
-                    model.start()
-                }
-            }
-            .buttonStyle(.primaryCapsule)
-            .disabled(!model.canStart)
-            .sensoryFeedback(.selection, trigger: model.isRunning)
-
-            if case .cue = model.sessionStatus {
-                Button("Dismiss cue") {
-                    model.dismissCue()
-                }
-                .buttonStyle(.ghostCapsule)
-            }
-            if model.dat.needsResume {
-                Button("Resume glasses") {
-                    model.resumeGlasses()
-                }
-                .buttonStyle(.primaryCapsule)
-            }
-            if model.registration != "Registered" {
-                Button("Register with Meta AI") {
-                    model.registerGlasses()
-                }
-                .buttonStyle(.ghostCapsule)
-                .disabled(!model.configured || model.isRunning)
-            }
-        }
-    }
-
-    // MARK: - Quick timing
 
     private var quickTiming: some View {
-        GlassCard {
+        GlassCard(padding: Theme.Space.card) {
             Toggle(isOn: Binding(
                 get: { model.quickTiming },
                 set: { model.setQuickTiming($0) }
@@ -152,43 +170,69 @@ struct LiveSessionView: View {
                         .foregroundStyle(Theme.textSecondary)
                 }
             }
-            .tint(Theme.gotIt)
+            .tint(Theme.sage)
             .disabled(model.isRunning)
         }
         .sensoryFeedback(.selection, trigger: model.quickTiming)
     }
 
-    // MARK: - Dev lines
-
-    private var devLines: [String] {
-        var lines = [
-            "frames seen \(model.framesSeen) · passed \(model.framesPassed)",
-            "model calls \(model.modelCalls)",
-            "meta: \(model.toolLine)",
-            "gate: \(model.gateLine)",
-            "cue: \(model.cueLine)",
-            "mastery: \(model.masteryLine)",
-            "headstart: \(model.headStartLine)",
-            "last latch: \(model.liveLastLatchedNeedID ?? "—")\(SessionTelemetry.timeSuffix(model.liveLastLatchedAt))",
-            SessionTelemetry.droppedLine(model.liveDroppedNeedIDs),
-            model.timingLine,
-        ]
-        if model.liveEventTimeline.isEmpty {
-            lines.append("events: —")
-        } else {
-            lines.append("events (oldest first):")
-            lines.append(contentsOf: model.liveEventTimeline.suffix(8))
+    @ViewBuilder
+    private var auxiliaryActions: some View {
+        if model.dat.needsResume {
+            Button("Resume glasses") {
+                model.resumeGlasses()
+            }
+            .buttonStyle(.ghostCapsule)
         }
-        return lines
+        if model.registration != "Registered" {
+            Button("Register with Meta AI") {
+                model.registerGlasses()
+            }
+            .buttonStyle(.ghostCapsule)
+            .disabled(!model.configured || model.isRunning)
+        }
     }
 }
 
-#Preview("Live") {
+#Preview("Tonight") {
     LiveSessionView(model: PhoneSessionModel())
 }
 
-#Preview("Live (light, AX)") {
+#Preview("Tonight (night, AX)") {
     LiveSessionView(model: PhoneSessionModel())
-        .preferredColorScheme(.light)
+        .preferredColorScheme(.dark)
         .dynamicTypeSize(.accessibility5)
 }
+
+#Preview("Tonight with samples") {
+    TonightSamplePreview()
+}
+
+#if DEBUG
+/// Preview-only sample data: battery and moments are set here so screenshots
+/// show a lived-in Tonight. Production never fakes these values.
+private struct TonightSamplePreview: View {
+    @State private var model = PhoneSessionModel()
+
+    var body: some View {
+        LiveSessionView(model: model)
+            .onAppear {
+                model.dat.battery = "82%"
+                model.moments = [
+                    SessionMoment(
+                        at: Date().addingTimeInterval(-3600),
+                        needID: "take-baby",
+                        kind: .selfNotice,
+                        text: "eating one-handed, take the baby"
+                    ),
+                    SessionMoment(
+                        at: Date().addingTimeInterval(-1800),
+                        needID: "refill-water",
+                        kind: .cued,
+                        text: "nursing, no water"
+                    ),
+                ]
+            }
+    }
+}
+#endif

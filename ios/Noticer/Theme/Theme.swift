@@ -3,38 +3,64 @@ import SwiftUI
 /// Every color, spacing, radius, font, and motion value in the app.
 /// Views take values from here; no magic numbers in views.
 ///
-/// Colors live in `Assets.xcassets` with light and dark variants. The dark
-/// values are the spec's hexes. Light variants of the state colors are
-/// deepened for WCAG AA on the light surfaces; the dark/light pair is the
-/// token, so views still name one token.
+/// Warm cream Light look with a warm-dim Night look. Each token is an Asset
+/// Catalog color with a Light value and a Night value in the Dark slot; Night
+/// is applied with `.preferredColorScheme(night ? .dark : .light)`, never by
+/// following the system appearance. Night is brown-charcoal, never pure black.
+///
+/// One accent per state: sage is calm/listening/learned, terracotta needs
+/// attention. White on `sage` #7F9177 is ~3.4:1, so button labels stay
+/// semibold 17pt+ (large text, AA at 3:1); `sageStrong` #667A5F (~4.6:1)
+/// covers smaller text.
 enum Theme {
     // MARK: Surfaces
 
     static let bgBase = Color("bgBase", bundle: .main)
-    static let bgElevated = Color("bgElevated", bundle: .main)
-    static let ambient1 = Color("ambient1", bundle: .main)
-    static let ambient2 = Color("ambient2", bundle: .main)
+    static let bgCard = Color("bgCard", bundle: .main)
+    static let bgSubtle = Color("bgSubtle", bundle: .main)
+
+    /// Back-compat alias: elevated surfaces are cards now.
+    static var bgElevated: Color { bgCard }
+
+    /// Unused since the gradient was removed; kept so old call sites compile.
+    static var ambient1: Color { bgSubtle }
+    static var ambient2: Color { bgSubtle }
 
     // MARK: Text
 
     static let textPrimary = Color("textPrimary", bundle: .main)
-    static var textSecondary: Color { textPrimary.opacity(0.7) }
+    static let textSecondary = Color("textSecondary", bundle: .main)
     static var textTertiary: Color { textPrimary.opacity(0.45) }
 
-    // MARK: Accent and state
+    // MARK: Accents
 
-    /// Apricot. Adaptive for tints and text.
-    static let accentWarm = Color("accentWarm", bundle: .main)
-    /// Fixed apricot + ink for the primary capsule, identical in both modes
-    /// so the button keeps one identity on either surface.
-    static let accentFill = Color(red: 0xF2 / 255, green: 0xA6 / 255, blue: 0x5A / 255)
-    static let onAccentFill = Color(red: 0x1B / 255, green: 0x12 / 255, blue: 0x06 / 255)
-    static let listening = Color("stateListening", bundle: .main)
-    static let noticed = Color("stateNoticed", bundle: .main)
-    static let headstart = Color("stateHeadstart", bundle: .main)
-    static let cue = Color("stateCue", bundle: .main)
-    static let gotIt = Color("stateGotIt", bundle: .main)
+    /// Sage: calm, listening, learned. Primary buttons, toggles, rings.
+    static let sage = Color("sage", bundle: .main)
+    /// Darker sage for small text on light surfaces.
+    static let sageStrong = Color("sageStrong", bundle: .main)
+    static let sageRing = Color("sageRing", bundle: .main)
+    /// Pale sage: session circle, chart bars.
+    static let sagePale = Color("sagePale", bundle: .main)
+    static let sageTile = Color("sageTile", bundle: .main)
+
+    /// Terracotta: needs attention, cue, countdown.
+    static let terracotta = Color("terracotta", bundle: .main)
+    static let terracottaText = Color("terracottaText", bundle: .main)
+    static let terracottaTile = Color("terracottaTile", bundle: .main)
+
+    static let onSage = Color("onSage", bundle: .main)
     static let danger = Color("danger", bundle: .main)
+
+    // MARK: Back-compat state aliases (one accent per state)
+
+    static var accentWarm: Color { sage }
+    static var accentFill: Color { sage }
+    static var onAccentFill: Color { onSage }
+    static var listening: Color { sage }
+    static var noticed: Color { terracotta }
+    static var headstart: Color { terracotta }
+    static var cue: Color { terracotta }
+    static var gotIt: Color { sage }
 
     // MARK: Spacing (4-pt grid)
 
@@ -43,6 +69,7 @@ enum Theme {
         static let s8: CGFloat = 8
         static let s12: CGFloat = 12
         static let s16: CGFloat = 16
+        static let s20: CGFloat = 20
         static let s24: CGFloat = 24
         static let s32: CGFloat = 32
         static let s48: CGFloat = 48
@@ -50,7 +77,8 @@ enum Theme {
         static let screenMargin: CGFloat = 20
         static let card: CGFloat = 16
         static let cardRoomy: CGFloat = 20
-        static let sectionGap: CGFloat = 32
+        static let cardGap: CGFloat = 12
+        static let sectionGap: CGFloat = 28
     }
 
     // MARK: Radii (.continuous everywhere)
@@ -58,7 +86,9 @@ enum Theme {
     enum Radius {
         static let chip: CGFloat = 8
         static let row: CGFloat = 16
-        static let card: CGFloat = 24
+        static let tile: CGFloat = 16
+        static let button: CGFloat = 18
+        static let card: CGFloat = 20
         static let hero: CGFloat = 32
 
         static func rect(_ radius: CGFloat) -> RoundedRectangle {
@@ -66,12 +96,20 @@ enum Theme {
         }
     }
 
-    // MARK: Type (SF Pro, Dynamic Type; rounded for display)
+    // MARK: Type (serif display, SF Pro body, Dynamic Type)
 
     enum Font {
-        /// The one status word on a screen.
-        static var statusWord: SwiftUI.Font {
-            .system(.largeTitle, design: .rounded).weight(.semibold)
+        /// Screen titles in New York serif: "Her list", "Tonight", "You're learning".
+        static var display: SwiftUI.Font {
+            .system(.largeTitle, design: .serif)
+        }
+
+        /// The one status word on a screen. Same serif display face.
+        static var statusWord: SwiftUI.Font { display }
+
+        /// Big in-circle hero line. Views scale it with `@ScaledMetric`.
+        static var hero: SwiftUI.Font {
+            .system(size: 34, design: .serif)
         }
 
         static var title: SwiftUI.Font { .title2.weight(.semibold) }
@@ -84,12 +122,13 @@ enum Theme {
         static var monoCaption: SwiftUI.Font { .caption.monospaced() }
     }
 
-    // MARK: Elevation (hero only)
+    // MARK: Elevation (one very soft shadow plus a hairline on cream)
 
     enum Shadow {
-        static let color = Color.black.opacity(0.25)
-        static let radius: CGFloat = 24
-        static let y: CGFloat = 8
+        static let color = Color.black.opacity(0.06)
+        static let radius: CGFloat = 12
+        static let y: CGFloat = 4
+        static let hairline = Color.black.opacity(0.04)
     }
 
     // MARK: Motion
@@ -104,7 +143,7 @@ enum Theme {
 // MARK: - Shared environment helpers
 
 extension View {
-    /// Calm screen scaffold: ambient wash over the base surface.
+    /// Calm screen scaffold: a plain warm-cream fill.
     func ambientScreen() -> some View {
         modifier(AmbientScreenModifier())
     }
@@ -113,6 +152,16 @@ extension View {
     func screenMargins() -> some View {
         padding(.horizontal, Theme.Space.screenMargin)
     }
+
+    /// The one card elevation: soft shadow plus a hairline.
+    func cardShadow(cornerRadius: CGFloat = Theme.Radius.card) -> some View {
+        self
+            .shadow(color: Theme.Shadow.color, radius: Theme.Shadow.radius, y: Theme.Shadow.y)
+            .overlay(
+                Theme.Radius.rect(cornerRadius)
+                    .stroke(Theme.Shadow.hairline, lineWidth: 1)
+            )
+    }
 }
 
 private struct AmbientScreenModifier: ViewModifier {
@@ -120,34 +169,7 @@ private struct AmbientScreenModifier: ViewModifier {
         content
             .background {
                 Theme.bgBase.ignoresSafeArea()
-                AmbientWash().ignoresSafeArea()
             }
             .foregroundStyle(Theme.textPrimary)
-    }
-}
-
-/// Soft two-stop wash at low saturation. Decorative only.
-struct AmbientWash: View {
-    var body: some View {
-        GeometryReader { proxy in
-            let size = proxy.size
-            ZStack {
-                Theme.bgBase
-                RadialGradient(
-                    colors: [Theme.ambient1.opacity(0.55), .clear],
-                    center: .topLeading,
-                    startRadius: 0,
-                    endRadius: max(size.width, size.height) * 0.85
-                )
-                RadialGradient(
-                    colors: [Theme.ambient2.opacity(0.5), .clear],
-                    center: .bottomTrailing,
-                    startRadius: 0,
-                    endRadius: max(size.width, size.height) * 0.8
-                )
-            }
-            .saturation(0.7)
-        }
-        .accessibilityHidden(true)
     }
 }

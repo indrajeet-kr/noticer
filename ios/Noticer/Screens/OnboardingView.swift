@@ -218,8 +218,8 @@ struct APIKeyStep: View {
                 .autocorrectionDisabled()
                 .font(Theme.Font.body)
                 .padding(Theme.Space.card)
-                .background(Theme.bgElevated)
-                .clipShape(Theme.Radius.rect(Theme.Radius.row))
+                .background(Theme.bgCard, in: Theme.Radius.rect(Theme.Radius.row))
+                .overlay(Theme.Radius.rect(Theme.Radius.row).stroke(Theme.Shadow.hairline, lineWidth: 1))
             if let message {
                 Text(message)
                     .font(Theme.Font.footnote)
@@ -262,8 +262,8 @@ struct APIKeyStep: View {
     OnboardingView(model: PhoneSessionModel(), done: .constant(false))
 }
 
-#Preview("Onboarding (light, AX)") {
+#Preview("Onboarding (night, AX)") {
     OnboardingView(model: PhoneSessionModel(), done: .constant(false))
-        .preferredColorScheme(.light)
+        .preferredColorScheme(.dark)
         .dynamicTypeSize(.accessibility5)
 }

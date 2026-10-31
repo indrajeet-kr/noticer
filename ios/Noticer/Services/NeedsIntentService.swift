@@ -215,6 +215,37 @@ final class NeedsIntentService {
         postNotice("Removed “\(draft.authorText)”.", undo: accepted)
     }
 
+    /// Removes a saved need straight from the list (the card detail
+    /// sheet), keeping any live accepted read-back in sync and offering the
+    /// same undo toast as the composer flow.
+    func removeSavedNeed(id: String, model: PhoneSessionModel) {
+        for (index, entry) in entries.enumerated() {
+            guard case .readBack(let entryID, var drafts, let readBack, var changed, true) = entry,
+                  canRemove(entryID: entryID),
+                  let draftIndex = drafts.firstIndex(where: { $0.id == id })
+            else {
+                continue
+            }
+            let draft = drafts.remove(at: draftIndex)
+            changed.remove(draft.id)
+            entries[index] = .readBack(
+                id: entryID,
+                drafts: drafts,
+                readBack: readBack,
+                changed: changed,
+                accepted: true
+            )
+        }
+        guard let savedIndex = model.needs.firstIndex(where: { $0.id == id }) else {
+            return
+        }
+        let need = model.needs.remove(at: savedIndex)
+        model.commitNeeds()
+        removed = (need, savedIndex)
+        let words = need.authorText.trimmingCharacters(in: .whitespacesAndNewlines)
+        postNotice(words.isEmpty ? "Removed." : "Removed “\(words)”.", undo: true)
+    }
+
     func undoRemove(model: PhoneSessionModel) {
         guard let removed else {
             notice = nil

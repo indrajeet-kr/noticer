@@ -1,65 +1,87 @@
 import SwiftUI
 
-/// Settings without a settings form: one Ask composer, the same component
-/// as Mom's List. She or he says what should change ("use shorter head
-/// starts tonight", "pause check-ins"); the app reads back one calm card
-/// with an Accept button. Anything unmappable gets one clarifying question.
+/// Settings: Night look, quick timing, API key, and the session log — plus
+/// the same natural-language Ask flow as before for "use shorter head
+/// starts tonight" style changes. Pushed from the tab menu.
 struct AskSettingsView: View {
     @Bindable var model: PhoneSessionModel
-    @Environment(\.dismiss) private var dismiss
+    @AppStorage("noticer.appearance.night") private var night = false
     @State private var draft = ""
     @FocusState private var composerFocused: Bool
     @State private var readBack: AskReadBack?
     @State private var question: String?
     @State private var acceptedPulse = 0
+    @State private var showingKey = false
+    @State private var showingLog = false
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 0) {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: Theme.Space.s16) {
-                        VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                            Text("Ask")
-                                .font(Theme.Font.statusWord)
-                            Text("Say what should change tonight. In your own words.")
-                                .font(Theme.Font.body)
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                        .padding(.top, Theme.Space.s16)
-
-                        if let readBack {
-                            readBackCard(readBack)
-                        } else if let question {
-                            SparkBubble(text: question)
-                        } else {
-                            GlassCard {
-                                Text("Try “use shorter head starts tonight” or “pause check-ins”.")
-                                    .font(Theme.Font.body)
-                                    .foregroundStyle(Theme.textSecondary)
-                            }
-                        }
-                    }
-                    .screenMargins()
-                    .padding(.bottom, Theme.Space.s16)
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.s16) {
+                VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                    Text("Settings")
+                        .font(Theme.Font.display)
+                    Text("Say what should change tonight. In your own words.")
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.textSecondary)
                 }
-                .scrollDismissesKeyboard(.interactively)
+                .padding(.top, Theme.Space.s16)
+                .accessibilityElement(children: .combine)
 
-                NaturalLanguageComposer(
-                    text: $draft,
-                    focused: $composerFocused,
-                    placeholder: "e.g. Use shorter head starts tonight…"
-                ) {
-                    send()
-                }
-                .padding(.horizontal, Theme.Space.s12)
-                .padding(.vertical, Theme.Space.s8)
+                askSection
+                appearanceSection
+                sessionSection
+                keySection
+                logSection
             }
-            .ambientScreen()
-            .sensoryFeedback(.success, trigger: acceptedPulse)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Done") { dismiss() }
+            .screenMargins()
+            .padding(.bottom, Theme.Space.s32)
+        }
+        .ambientScreen()
+        .sensoryFeedback(.success, trigger: acceptedPulse)
+        .sheet(isPresented: $showingKey) {
+            NavigationStack {
+                APIKeyStep(model: model) {
+                    showingKey = false
                 }
+                .screenMargins()
+                .padding(.bottom, Theme.Space.s24)
+                .ambientScreen()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { showingKey = false }
+                    }
+                }
+            }
+        }
+        .sheet(isPresented: $showingLog) {
+            SessionLogView(log: model.sessionLog)
+        }
+    }
+
+    // MARK: - Ask
+
+    private var askSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s12) {
+            Text("Ask")
+                .font(Theme.Font.headline)
+                .accessibilityAddTraits(.isHeader)
+            if let readBack {
+                readBackCard(readBack)
+            } else if let question {
+                SparkBubble(text: question)
+            } else {
+                GlassCard {
+                    Text("Try “use shorter head starts tonight” or “pause check-ins”.")
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            NaturalLanguageComposer(
+                text: $draft,
+                focused: $composerFocused,
+                placeholder: "e.g. Use shorter head starts tonight…"
+            ) {
+                send()
             }
         }
     }
@@ -78,7 +100,7 @@ struct AskSettingsView: View {
             if readBack.accepted {
                 HStack(spacing: Theme.Space.s4) {
                     Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(Theme.gotIt)
+                        .foregroundStyle(Theme.sage)
                     Text("On it.")
                         .font(Theme.Font.footnote)
                         .foregroundStyle(Theme.textSecondary)
@@ -92,6 +114,111 @@ struct AskSettingsView: View {
             }
         }
     }
+
+    // MARK: - Toggles and rows
+
+    private var appearanceSection: some View {
+        GlassCard(padding: Theme.Space.card) {
+            Toggle(isOn: $night) {
+                VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                    Text("Night look")
+                        .font(Theme.Font.headline)
+                    Text("Warm dim colors after dark")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .tint(Theme.sage)
+        }
+        .sensoryFeedback(.selection, trigger: night)
+    }
+
+    private var sessionSection: some View {
+        GlassCard(padding: Theme.Space.card) {
+            Toggle(isOn: Binding(
+                get: { model.quickTiming },
+                set: { model.setQuickTiming($0) }
+            )) {
+                VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                    Text("Quick timing")
+                        .font(Theme.Font.headline)
+                    Text("Shorter head start for testing and demos")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+            }
+            .tint(Theme.sage)
+            .disabled(model.isRunning)
+        }
+        .sensoryFeedback(.selection, trigger: model.quickTiming)
+    }
+
+    private var keySection: some View {
+        GlassCard(padding: Theme.Space.card) {
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                Text("Meta API key")
+                    .font(Theme.Font.headline)
+                Text(model.keyStatus)
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                Button("Update key") {
+                    showingKey = true
+                }
+                .font(Theme.Font.headline)
+                .foregroundStyle(Theme.sageStrong)
+            }
+        }
+    }
+
+    private var logSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.s12) {
+            GlassCard(padding: Theme.Space.card) {
+                Button {
+                    showingLog = true
+                } label: {
+                    HStack {
+                        VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                            Text("Session log")
+                                .font(Theme.Font.headline)
+                            Text("Developer transcript of the last run")
+                                .font(Theme.Font.caption)
+                                .foregroundStyle(Theme.textSecondary)
+                        }
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .fontWeight(.light)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .foregroundStyle(Theme.textPrimary)
+            }
+            DevPanel(lines: devLines, log: model.sessionLog)
+        }
+    }
+
+    private var devLines: [String] {
+        var lines = [
+            "frames seen \(model.framesSeen) · passed \(model.framesPassed)",
+            "model calls \(model.modelCalls)",
+            "meta: \(model.toolLine)",
+            "gate: \(model.gateLine)",
+            "cue: \(model.cueLine)",
+            "mastery: \(model.masteryLine)",
+            "headstart: \(model.headStartLine)",
+            "last latch: \(model.liveLastLatchedNeedID ?? "—")\(SessionTelemetry.timeSuffix(model.liveLastLatchedAt))",
+            SessionTelemetry.droppedLine(model.liveDroppedNeedIDs),
+            model.timingLine,
+        ]
+        if model.liveEventTimeline.isEmpty {
+            lines.append("events: —")
+        } else {
+            lines.append("events (oldest first):")
+            lines.append(contentsOf: model.liveEventTimeline.suffix(8))
+        }
+        return lines
+    }
+
+    // MARK: - Ask intents (unchanged)
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -159,12 +286,16 @@ private struct AskReadBack: Equatable {
     var accepted = false
 }
 
-#Preview("Ask") {
-    AskSettingsView(model: PhoneSessionModel())
+#Preview("Settings") {
+    NavigationStack {
+        AskSettingsView(model: PhoneSessionModel())
+    }
 }
 
-#Preview("Ask (light, AX)") {
-    AskSettingsView(model: PhoneSessionModel())
-        .preferredColorScheme(.light)
-        .dynamicTypeSize(.accessibility5)
+#Preview("Settings (night, AX)") {
+    NavigationStack {
+        AskSettingsView(model: PhoneSessionModel())
+    }
+    .preferredColorScheme(.dark)
+    .dynamicTypeSize(.accessibility5)
 }

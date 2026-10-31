@@ -1,34 +1,22 @@
 import SwiftUI
 
-/// Glass as a layer, not decoration: floating controls and cards over the
-/// ambient wash. Content stays on solid, readable surfaces.
-///
-/// iOS 26+ renders Liquid Glass. iOS 18–25 falls back to ultra-thin
-/// material with a faint stroke. Reduce Transparency uses solid elevated.
+/// Cards as solid white surfaces on cream: one soft shadow plus a hairline.
+/// The `GlassCard` name stays so call sites don't churn; the frosted glass
+/// and gradient are gone.
 struct GlassBackgroundModifier: ViewModifier {
     var cornerRadius: CGFloat = Theme.Radius.card
-
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     func body(content: Content) -> some View {
         content
             .background {
-                if reduceTransparency {
-                    Theme.Radius.rect(cornerRadius).fill(Theme.bgElevated)
-                } else if #available(iOS 26, *) {
-                    Theme.Radius.rect(cornerRadius)
-                        .fill(.clear)
-                        .glassEffect(.regular, in: Theme.Radius.rect(cornerRadius))
-                } else {
-                    Theme.Radius.rect(cornerRadius)
-                        .fill(.ultraThinMaterial)
-                        .overlay(
-                            Theme.Radius.rect(cornerRadius)
-                                .stroke(.white.opacity(0.08), lineWidth: 1)
-                        )
-                }
+                Theme.Radius.rect(cornerRadius).fill(Theme.bgCard)
             }
             .clipShape(Theme.Radius.rect(cornerRadius))
+            .shadow(color: Theme.Shadow.color, radius: Theme.Shadow.radius, y: Theme.Shadow.y)
+            .overlay(
+                Theme.Radius.rect(cornerRadius)
+                    .stroke(Theme.Shadow.hairline, lineWidth: 1)
+            )
     }
 }
 
@@ -38,7 +26,7 @@ extension View {
     }
 }
 
-/// A floating card with roomy padding on the glass layer.
+/// A floating card with roomy padding.
 struct GlassCard<Content: View>: View {
     var padding: CGFloat = Theme.Space.cardRoomy
     @ViewBuilder var content: Content
@@ -60,15 +48,20 @@ struct SolidCard<Content: View>: View {
         content
             .padding(padding)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Theme.bgElevated)
+            .background(Theme.bgCard)
             .clipShape(Theme.Radius.rect(Theme.Radius.card))
+            .shadow(color: Theme.Shadow.color, radius: Theme.Shadow.radius, y: Theme.Shadow.y)
+            .overlay(
+                Theme.Radius.rect(Theme.Radius.card)
+                    .stroke(Theme.Shadow.hairline, lineWidth: 1)
+            )
     }
 }
 
 #Preview("Glass + solid") {
     VStack(spacing: Theme.Space.s16) {
         GlassCard {
-            Text("Glass floats over the wash.")
+            Text("Cards float on cream.")
                 .font(Theme.Font.headline)
         }
         SolidCard {
@@ -80,10 +73,10 @@ struct SolidCard<Content: View>: View {
     .ambientScreen()
 }
 
-#Preview("Glass + solid (light, AX)") {
+#Preview("Glass + solid (night, AX)") {
     VStack(spacing: Theme.Space.s16) {
         GlassCard {
-            Text("Glass floats over the wash.")
+            Text("Cards float on cream.")
                 .font(Theme.Font.headline)
         }
         SolidCard {
@@ -93,6 +86,6 @@ struct SolidCard<Content: View>: View {
     }
     .screenMargins()
     .ambientScreen()
-    .preferredColorScheme(.light)
+    .preferredColorScheme(.dark)
     .dynamicTypeSize(.accessibility5)
 }
