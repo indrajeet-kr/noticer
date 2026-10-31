@@ -19,6 +19,9 @@ public struct TimingProfile: Equatable, Sendable {
     public var continuousPresenceKeyframeSeconds: TimeInterval
     public var keyframeBufferSeconds: TimeInterval
     public var maxSessionSeconds: TimeInterval
+    public var idleAdmitIntervalSeconds: TimeInterval
+    public var minCallGapSeconds: TimeInterval
+    public var postCueNoPersonGraceSeconds: TimeInterval
 
     public init(
         latchMinIntervalSeconds: TimeInterval,
@@ -34,7 +37,10 @@ public struct TimingProfile: Equatable, Sendable {
         glanceAbsentSeconds: TimeInterval,
         continuousPresenceKeyframeSeconds: TimeInterval,
         keyframeBufferSeconds: TimeInterval,
-        maxSessionSeconds: TimeInterval
+        maxSessionSeconds: TimeInterval,
+        idleAdmitIntervalSeconds: TimeInterval = SignalGateTuning.idleAdmitInterval,
+        minCallGapSeconds: TimeInterval = 0,
+        postCueNoPersonGraceSeconds: TimeInterval = 0
     ) {
         self.latchMinIntervalSeconds = latchMinIntervalSeconds
         self.latchMinKeyframes = latchMinKeyframes
@@ -50,6 +56,9 @@ public struct TimingProfile: Equatable, Sendable {
         self.continuousPresenceKeyframeSeconds = continuousPresenceKeyframeSeconds
         self.keyframeBufferSeconds = keyframeBufferSeconds
         self.maxSessionSeconds = maxSessionSeconds
+        self.idleAdmitIntervalSeconds = idleAdmitIntervalSeconds
+        self.minCallGapSeconds = minCallGapSeconds
+        self.postCueNoPersonGraceSeconds = postCueNoPersonGraceSeconds
     }
 
     public static let standard = TimingProfile(
@@ -69,15 +78,14 @@ public struct TimingProfile: Equatable, Sendable {
         maxSessionSeconds: SessionLimits.maxSessionSeconds
     )
 
-    /// First cue around half a minute: a latch inside a few seconds, then the 20 s head start.
-    /// Heartbeats stay at 8 s: model calls serialize the frame loop, so a 4 s
-    /// cadence spends the session awaiting calls instead of watching frames.
+    /// Adaptive quick profile: 10 s base head start (`m=0 -> 10s, m=0.5 -> 20s, cap 40s`),
+    /// 2 s idle admit, 2 s min call gap, and 30 s post-cue grace before no-person close.
     public static let quick = TimingProfile(
         latchMinIntervalSeconds: 4,
         latchMinKeyframes: 2,
         latchMinKeyframeSpacingSeconds: 2,
         heartbeatSeconds: 8,
-        defaultHeadStartSeconds: 20,
+        defaultHeadStartSeconds: 10,
         headStartCapSeconds: 40,
         cueRateLimitSeconds: 30,
         relatchCooldownSeconds: 60,
@@ -86,7 +94,10 @@ public struct TimingProfile: Equatable, Sendable {
         glanceAbsentSeconds: 1,
         continuousPresenceKeyframeSeconds: 2,
         keyframeBufferSeconds: SessionLimits.keyframeBufferSeconds,
-        maxSessionSeconds: SessionLimits.maxSessionSeconds
+        maxSessionSeconds: SessionLimits.maxSessionSeconds,
+        idleAdmitIntervalSeconds: 2,
+        minCallGapSeconds: 2,
+        postCueNoPersonGraceSeconds: 30
     )
 
     public var name: String {

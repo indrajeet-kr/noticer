@@ -12,6 +12,7 @@ public enum MVPNeedList {
         authorText: "eating one-handed, take the baby",
         cueWording: "Her plate's getting cold, maybe take the baby?",
         visualCondition: "partner eating with one hand and holding the baby",
+        handledCondition: "partner eating with both hands free",
         selfNoticeSignal: ActionCodeExamples.wearerHandsReceivingBaby,
         priority: 0
     )
@@ -21,6 +22,7 @@ public enum MVPNeedList {
         authorText: "nursing, no water",
         cueWording: "Her water's empty.",
         visualCondition: "partner nursing without water in reach",
+        handledCondition: "glass or bottle of water within partner's reach",
         selfNoticeSignal: ActionCodeExamples.wearerCarryingWaterTowardPartner,
         priority: 1
     )

@@ -12,8 +12,10 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
     /// Her words, before any model rewrite.
     public var authorText: String
     public var cueWording: String
-    /// Visual condition from the compile step. Nil until that step exists.
+    /// Visual condition from the compile step (the unmet problem state). Nil until that step exists.
     public var visualCondition: String?
+    /// Observable state once the need has been handled. Nil until compiled or migrated.
+    public var handledCondition: String?
     /// What counts as him noticing. Nil until the compile step exists.
     public var selfNoticeSignal: String?
     /// Dwell from the compile step. How this relates to the 90 s head start is undecided.
@@ -22,6 +24,8 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
     public var priority: Int
     /// Check-in wording is allowed only when a re-check is inconclusive and this is true.
     public var allowsCheckIn: Bool
+    /// Safety needs cue immediately with zero head start and latch on one clear keyframe.
+    public var isUrgent: Bool
     public var mastery: MasteryState
 
     public init(
@@ -29,10 +33,12 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         authorText: String,
         cueWording: String,
         visualCondition: String? = nil,
+        handledCondition: String? = nil,
         selfNoticeSignal: String? = nil,
         dwellSeconds: TimeInterval? = nil,
         priority: Int,
         allowsCheckIn: Bool = false,
+        isUrgent: Bool = false,
         mastery: MasteryState = .initial,
         uiID: UUID = UUID()
     ) {
@@ -41,10 +47,12 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         self.authorText = authorText
         self.cueWording = cueWording
         self.visualCondition = visualCondition
+        self.handledCondition = handledCondition
         self.selfNoticeSignal = selfNoticeSignal
         self.dwellSeconds = dwellSeconds
         self.priority = priority
         self.allowsCheckIn = allowsCheckIn
+        self.isUrgent = isUrgent
         self.mastery = mastery
     }
 
@@ -55,10 +63,12 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
             && lhs.authorText == rhs.authorText
             && lhs.cueWording == rhs.cueWording
             && lhs.visualCondition == rhs.visualCondition
+            && lhs.handledCondition == rhs.handledCondition
             && lhs.selfNoticeSignal == rhs.selfNoticeSignal
             && lhs.dwellSeconds == rhs.dwellSeconds
             && lhs.priority == rhs.priority
             && lhs.allowsCheckIn == rhs.allowsCheckIn
+            && lhs.isUrgent == rhs.isUrgent
             && lhs.mastery == rhs.mastery
     }
 
@@ -68,10 +78,12 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         case authorText = "author_text"
         case cueWording = "cue_wording"
         case visualCondition = "visual_condition"
+        case handledCondition = "handled_condition"
         case selfNoticeSignal = "self_notice_signal"
         case dwellSeconds = "dwell_seconds"
         case priority
         case allowsCheckIn = "allows_check_in"
+        case isUrgent = "is_urgent"
         case mastery
     }
 
@@ -82,10 +94,12 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         authorText = try container.decode(String.self, forKey: .authorText)
         cueWording = try container.decode(String.self, forKey: .cueWording)
         visualCondition = try container.decodeIfPresent(String.self, forKey: .visualCondition)
+        handledCondition = try container.decodeIfPresent(String.self, forKey: .handledCondition)
         selfNoticeSignal = try container.decodeIfPresent(String.self, forKey: .selfNoticeSignal)
         dwellSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .dwellSeconds)
         priority = try container.decode(Int.self, forKey: .priority)
         allowsCheckIn = try container.decodeIfPresent(Bool.self, forKey: .allowsCheckIn) ?? false
+        isUrgent = try container.decodeIfPresent(Bool.self, forKey: .isUrgent) ?? false
         mastery = try container.decodeIfPresent(MasteryState.self, forKey: .mastery) ?? .initial
     }
 
@@ -96,10 +110,14 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         try container.encode(authorText, forKey: .authorText)
         try container.encode(cueWording, forKey: .cueWording)
         try container.encodeIfPresent(visualCondition, forKey: .visualCondition)
+        try container.encodeIfPresent(handledCondition, forKey: .handledCondition)
         try container.encodeIfPresent(selfNoticeSignal, forKey: .selfNoticeSignal)
         try container.encodeIfPresent(dwellSeconds, forKey: .dwellSeconds)
         try container.encode(priority, forKey: .priority)
         try container.encode(allowsCheckIn, forKey: .allowsCheckIn)
+        if isUrgent {
+            try container.encode(isUrgent, forKey: .isUrgent)
+        }
         try container.encode(mastery, forKey: .mastery)
     }
 }

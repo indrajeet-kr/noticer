@@ -178,7 +178,7 @@ class EngineTestCase: XCTestCase {
         )
     }
 
-    func partnerResolved(_ id: String, tool: ToolName = .reportNoTransition) -> ModelVerdict {
+    func partnerResolved(_ id: String, tool: ToolName = .reportNeedResolved) -> ModelVerdict {
         ModelVerdict(
             finishReason: .toolCalls,
             tool: tool,

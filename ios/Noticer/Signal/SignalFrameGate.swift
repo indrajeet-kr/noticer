@@ -19,7 +19,12 @@ actor SignalFrameGate {
         analysis.removeAll(keepingCapacity: true)
     }
 
-    func evaluate(_ frame: CameraFrame, needOpen: Bool) -> GateDecision {
+    func evaluate(
+        _ frame: CameraFrame,
+        needOpen: Bool,
+        timing: TimingProfile = .standard,
+        latency: LatencyTuning = .default
+    ) -> GateDecision {
         let plane = LumaExtractor.plane(
             jpeg: frame.jpegData,
             maxEdge: SignalGateTuning.analysisMaxEdge,
@@ -29,7 +34,9 @@ actor SignalFrameGate {
             plane: plane,
             at: frame.capturedAt,
             needOpen: needOpen,
-            state: &state
+            state: &state,
+            timing: timing,
+            latency: latency
         )
         let snapshot = FrameGateSnapshot(
             capturedAt: frame.capturedAt,

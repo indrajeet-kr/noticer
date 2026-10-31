@@ -2,6 +2,14 @@ import XCTest
 @testable import NoticerCore
 
 final class MasteryTests: EngineTestCase {
+    override func setUpWithError() throws {
+        try super.setUpWithError()
+        try engine.setNeeds([
+            Self.takeBaby(selfNotice: ActionCodeExamples.wearerHandsReceivingBaby),
+            Self.refillWater()
+        ])
+    }
+
     func testThreeCatchesRetireTheCue() throws {
         try latch("take-baby")
         try catchIt("take-baby")
@@ -135,7 +143,7 @@ final class MasteryTests: EngineTestCase {
 
     private func catchIt(_ id: String) throws {
         try heartbeat(intervention(id, action: ActionCodeExamples.wearerHandsReceivingBaby, sustained: true))
-        try heartbeat(noTransition(id, sustained: false))
+        try heartbeat(intervention(id, action: ActionCodeExamples.wearerHandsReceivingBaby, sustained: false))
         XCTAssertFalse(engine.openNeedIDs.contains(id))
     }
 

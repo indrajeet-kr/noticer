@@ -65,7 +65,16 @@ public struct NeedsIntentDraft: Sendable, Equatable {
     public var whisper: String
     public var priority: NeedsIntentPriority
     public var allowsCheckIn: Bool
+    /// Stores `problem_visual` (kept under the `visualCue` property name for source compatibility).
     public var visualCue: String
+    public var handledVisual: String
+    public var wearerSignal: String
+    public var isUrgent: Bool
+
+    public var problemVisual: String {
+        get { visualCue }
+        set { visualCue = newValue }
+    }
 
     public init(
         id: String,
@@ -73,7 +82,10 @@ public struct NeedsIntentDraft: Sendable, Equatable {
         whisper: String,
         priority: NeedsIntentPriority,
         allowsCheckIn: Bool,
-        visualCue: String
+        visualCue: String,
+        handledVisual: String = "",
+        wearerSignal: String = "",
+        isUrgent: Bool = false
     ) {
         self.id = id
         self.authorText = authorText
@@ -81,6 +93,9 @@ public struct NeedsIntentDraft: Sendable, Equatable {
         self.priority = priority
         self.allowsCheckIn = allowsCheckIn
         self.visualCue = visualCue
+        self.handledVisual = handledVisual
+        self.wearerSignal = wearerSignal
+        self.isUrgent = isUrgent
     }
 }
 
@@ -121,16 +136,25 @@ public enum NeedsIntentError: Error, Sendable, Equatable, CustomStringConvertibl
 
 public enum NeedsIntentSystemPrompt {
     public static let text = """
-        You help a mother tell a supportive teammate app what helps her at home. Convert her words into a short list of concrete needs her partner can notice.
+        You help a mother tell a supportive teammate app what helps her at home. Convert her words into a short list of concrete household needs her partner can notice.
         Rules:
-        - Each distinct, observable need becomes one item. Do not invent needs she did not express. Do not split one need into several.
-        - Keep authorText in her words. Whisper is a calm, warm coaching line of 8 words or fewer for her partner. Never scold, never mention glasses, cameras, watching, or seeing.
-        - visualCue describes what is physically observable in a first-person video frame.
-        - Priority: "important" if she stresses it, "gentle" if she is casual, otherwise "normal". allowsCheckIn is true only if she says asking her is fine.
-        - If CURRENT_LIST is non-empty, treat her message as an edit: apply it (reprioritize, remove, reword, add) and return the FULL updated list via set_needs, keeping existing ids.
-        - If she lists more than 6 needs, call ask_clarifying_question asking which matter most, with suggestions.
+        - Each distinct, observable need becomes one item. Do not invent needs she did not express, and do not split one need into several.
+        - Keep authorText in her words.
+        - whisper is a calm, warm coaching invitation of 8 words or fewer for her partner, e.g. "Maybe offer to take the baby?" or "Grab her a water refill?". For a safety need it may be a little firmer but still kind, e.g. "Could you move that glass from the baby?". Never scold, never state blunt alarms, and never mention glasses, camera, cameras, watch, watching, saw, see or seeing.
+        - problem_visual is the UNMET state you would see when she needs help, as seen in a first-person frame, always with its person or place anchor, never the goal: "dining table surface visible with no water bottle on it", NOT "water bottle on dining table".
+        - handled_visual is the state after it is done, what the same scene looks like once it is handled: "water bottle standing on the dining table".
+        - wearer_signal is his helping action in snake_case starting with wearer_: "wearer_placing_water_bottle_on_table".
+        - urgent is true only for immediate physical safety hazards (such as a glass or sharp object on the floor near the baby), otherwise false.
+        - Priority: "important" if she stresses urgency or safety, "gentle" if casual, otherwise "normal". allowsCheckIn is true only if she says asking her is fine.
+        - Do not add medical, medication or dosing, fever, infant sleep or breathing monitoring, or mental-health requests. Instead call ask_clarifying_question, gently explaining that Noticer only helps with everyday household logistics, and suggest a household version if there is one.
+        - If CURRENT_LIST is non-empty, treat her message as an edit (reprioritize, remove, reword, add) and return the FULL updated list via set_needs, keeping existing ids.
+        - If she lists more than 6 needs, call ask_clarifying_question asking which 6 matter most, with suggestions.
         - If a need is too vague to observe, call ask_clarifying_question with exactly one gentle question.
-        - Otherwise call set_needs. Never reply with both tools.
+        - Otherwise call set_needs. Never call both tools.
+        Examples:
+        - "Keep water bottle on dining table" -> problem_visual "dining table visible with no water bottle", handled_visual "water bottle on the dining table", wearer_signal "wearer_placing_water_bottle_on_table"
+        - "Bring her water when she's on the couch" -> problem_visual "partner on couch with no water within reach", handled_visual "glass of water within her reach", wearer_signal "wearer_handing_water_to_partner"
+        - "Take the baby when her food is getting cold" -> problem_visual "partner eating while holding the baby", handled_visual "partner eating with both hands free", wearer_signal "wearer_hands_receiving_baby"
         """
 }
 
@@ -233,7 +257,9 @@ public enum NeedsIntentSlug {
 public enum NeedsIntentWhisper {
     public static let maxCharacters = 60
     public static let maxWords = 8
-    public static let forbiddenWords = ["glasses", "camera", "saw", "see"]
+    public static let forbiddenWords = [
+        "glasses", "camera", "cameras", "saw", "see", "seeing", "seen", "watch", "watching", "watched"
+    ]
 
     public static func clamp(_ raw: String) -> String {
         let words = raw.split(whereSeparator: \.isWhitespace).map(String.init)
@@ -272,7 +298,7 @@ public enum NeedsIntentRequest {
             reasoningEffort: reasoningEffort,
             toolChoice: toolChoice,
             messages: [
-                WireMessage(role: "system", content: NeedsIntentSystemPrompt.text),
+                WireMessage(role: MuseSparkModelClient.instructionRole, content: NeedsIntentSystemPrompt.text),
                 WireMessage(role: "user", content: userText),
             ],
             tools: NeedsIntentTools.wireTools()
@@ -359,16 +385,35 @@ public enum NeedsIntentTools {
                                         "type": .string("boolean"),
                                         "description": .string("true only if she implies dad may ask her"),
                                     ]),
-                                    "visualCue": .object([
+                                    "problem_visual": .object([
                                         "type": .string("string"),
                                         "description": .string(
-                                            "concrete, observable description for the vision model, e.g. 'adult eating while holding an infant in one arm'"
+                                            "the unmet state that triggers the need, always with its person or place anchor, e.g. 'dining table surface visible with no water bottle on it'"
+                                        ),
+                                    ]),
+                                    "handled_visual": .object([
+                                        "type": .string("string"),
+                                        "description": .string(
+                                            "what the same scene looks like once handled, e.g. 'water bottle standing on the dining table'"
+                                        ),
+                                    ]),
+                                    "wearer_signal": .object([
+                                        "type": .string("string"),
+                                        "description": .string(
+                                            "dad's helping action in snake_case starting with wearer_, e.g. 'wearer_placing_water_bottle_on_table'"
+                                        ),
+                                    ]),
+                                    "urgent": .object([
+                                        "type": .string("boolean"),
+                                        "description": .string(
+                                            "true only for immediate physical safety hazards where the whisper should not wait"
                                         ),
                                     ]),
                                 ]),
                                 "required": .array([
                                     .string("id"), .string("authorText"), .string("whisper"),
-                                    .string("priority"), .string("allowsCheckIn"), .string("visualCue"),
+                                    .string("priority"), .string("allowsCheckIn"),
+                                    .string("problem_visual"), .string("handled_visual"), .string("wearer_signal"),
                                 ]),
                             ]),
                         ]),
@@ -483,9 +528,17 @@ public enum NeedsIntentResponse {
             guard !authorText.isEmpty else {
                 throw NeedsIntentError.invalidNeeds("A need came back without her words.")
             }
-            let visualCue = raw.visualCue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let visualCue = (raw.problemVisual ?? raw.visualCue ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             guard !visualCue.isEmpty else {
                 throw NeedsIntentError.invalidNeeds("A need came back without an observable cue.")
+            }
+            let handledVisual = (raw.handledVisual ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedSignal = (raw.wearerSignal ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let wearerSignal: String
+            if trimmedSignal.range(of: #"^wearer_[a-z0-9_]+$"#, options: .regularExpression) != nil {
+                wearerSignal = trimmedSignal
+            } else {
+                wearerSignal = ""
             }
             let whisper = NeedsIntentWhisper.clamp(raw.whisper)
             guard !whisper.isEmpty else {
@@ -500,7 +553,10 @@ public enum NeedsIntentResponse {
                 whisper: whisper,
                 priority: .lenient(raw.priority),
                 allowsCheckIn: raw.allowsCheckIn,
-                visualCue: visualCue
+                visualCue: visualCue,
+                handledVisual: handledVisual,
+                wearerSignal: wearerSignal,
+                isUrgent: raw.urgent ?? false
             ))
         }
         return .needs(drafts, readBack: decoded.readBack.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -570,7 +626,24 @@ public enum NeedsIntentResponse {
         var whisper: String
         var priority: String
         var allowsCheckIn: Bool
-        var visualCue: String
+        var problemVisual: String?
+        var handledVisual: String?
+        var wearerSignal: String?
+        var visualCue: String?
+        var urgent: Bool?
+
+        private enum CodingKeys: String, CodingKey {
+            case id
+            case authorText
+            case whisper
+            case priority
+            case allowsCheckIn
+            case problemVisual = "problem_visual"
+            case handledVisual = "handled_visual"
+            case wearerSignal = "wearer_signal"
+            case visualCue
+            case urgent
+        }
     }
 
     private struct WireQuestion: Decodable {
@@ -599,15 +672,25 @@ public enum NeedsIntentConversion {
             }
             taken.insert(id)
             let old = existing[id]
+            let handled = draft.handledVisual.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedSignal = draft.wearerSignal.trimmingCharacters(in: .whitespacesAndNewlines)
+            let signal: String
+            if trimmedSignal.range(of: #"^wearer_[a-z0-9_]+$"#, options: .regularExpression) != nil {
+                signal = trimmedSignal
+            } else {
+                signal = ""
+            }
             return Need(
                 id: id,
                 authorText: draft.authorText,
                 cueWording: draft.whisper,
                 visualCondition: draft.visualCue.isEmpty ? old?.visualCondition : draft.visualCue,
-                selfNoticeSignal: old?.selfNoticeSignal,
+                handledCondition: handled.isEmpty ? old?.handledCondition : handled,
+                selfNoticeSignal: signal.isEmpty ? old?.selfNoticeSignal : signal,
                 dwellSeconds: old?.dwellSeconds,
                 priority: draft.priority.needPriority,
                 allowsCheckIn: draft.allowsCheckIn,
+                isUrgent: draft.isUrgent || (old?.isUrgent ?? false),
                 mastery: old?.mastery ?? .initial,
                 uiID: old?.uiID ?? UUID()
             )
@@ -626,7 +709,10 @@ public enum NeedsIntentConversion {
                 whisper: $0.cueWording,
                 priority: NeedsIntentPriority.word(forNeedPriority: $0.priority),
                 allowsCheckIn: $0.allowsCheckIn,
-                visualCue: $0.visualCondition ?? ""
+                visualCue: $0.visualCondition ?? "",
+                handledVisual: $0.handledCondition ?? "",
+                wearerSignal: $0.selfNoticeSignal ?? "",
+                isUrgent: $0.isUrgent
             )
         }
     }
@@ -639,7 +725,22 @@ public enum NeedsIntentConversion {
             var whisper: String
             var priority: String
             var allowsCheckIn: Bool
-            var visualCue: String
+            var problemVisual: String
+            var handledVisual: String
+            var wearerSignal: String
+            var urgent: Bool
+
+            private enum CodingKeys: String, CodingKey {
+                case id
+                case authorText
+                case whisper
+                case priority
+                case allowsCheckIn
+                case problemVisual = "problem_visual"
+                case handledVisual = "handled_visual"
+                case wearerSignal = "wearer_signal"
+                case urgent
+            }
         }
         let entries = needs.map { need in
             Entry(
@@ -648,7 +749,10 @@ public enum NeedsIntentConversion {
                 whisper: need.cueWording,
                 priority: NeedsIntentPriority.word(forNeedPriority: need.priority).rawValue,
                 allowsCheckIn: need.allowsCheckIn,
-                visualCue: need.visualCondition ?? ""
+                problemVisual: need.visualCondition ?? "",
+                handledVisual: need.handledCondition ?? "",
+                wearerSignal: need.selfNoticeSignal ?? "",
+                urgent: need.isUrgent
             )
         }
         guard let data = try? JSONEncoder().encode(entries),

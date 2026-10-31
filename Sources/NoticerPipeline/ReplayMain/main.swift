@@ -21,6 +21,7 @@ enum ReplayCommand {
 
       swift run noticer-replay
       swift run noticer-replay --scenario take-baby-whisper
+      swift run noticer-replay --timing quick
       swift run noticer-replay --list
 
     Exit 0 when every scenario matches its expect block. Exit 1 otherwise.
@@ -59,12 +60,20 @@ enum ReplayCommand {
         } else {
             selected = scenarios
         }
+        let timingName = value(of: "--timing", in: arguments) ?? "standard"
+        let timing: TimingProfile = timingName == "quick" ? .quick : .standard
         var failed = false
-        for scenario in selected {
+        for var scenario in selected {
+            if timing == .quick {
+                scenario.sampleEvery = 2
+                if scenario.expect.headStartSeconds != nil {
+                    scenario.expect.headStartSeconds = timing.defaultHeadStartSeconds
+                }
+            }
             let speaker = RecordingCueSpeaker()
             let report: ScenarioReport
             do {
-                let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker)
+                let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker, timing: timing)
                 report = try await playback.run()
             } catch {
                 print("scenario: \(scenario.scenarioID)")
@@ -118,6 +127,9 @@ enum ReplayCommand {
         }
         lines.append("spoken: \(spoken)")
         lines.append("mastery: \(SessionView(now: report.endedAt, needs: report.needs, openNeeds: [], cues: report.cues, log: report.log, modelCalls: 0).masterySummary)")
+        for timingLine in report.timingLines {
+            lines.append("[TIMING] \(timingLine)")
+        }
         return lines.joined(separator: "\n")
     }
 

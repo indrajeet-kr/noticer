@@ -164,12 +164,12 @@ enum ChatCompletionResponse {
             throw ModelClientError.malformedResponse("Tool arguments were not a JSON object.")
         }
 
-        var fields = object
+        var fields = normalizeAssessmentFields(object)
         var extensionReason: String?
         if let reason = fields.removeValue(forKey: ToolCatalog.extensionReasonField) {
             switch reason {
             case .string(let text):
-                extensionReason = text
+                extensionReason = isNullPlaceholder(text) ? nil : text
             case .null:
                 extensionReason = nil
             default:
@@ -182,7 +182,7 @@ enum ChatCompletionResponse {
         if let raw = fields.removeValue(forKey: ToolCatalog.resolvedByField) {
             switch raw {
             case .string(let text):
-                resolvedBy = text
+                resolvedBy = isNullPlaceholder(text) ? nil : text
             case .null:
                 resolvedBy = nil
             default:
@@ -207,6 +207,55 @@ enum ChatCompletionResponse {
                 "Tool arguments did not match the assessment fields (\(SecretRedaction.clip(String(describing: error))))."
             )
         }
+    }
+
+    private static let booleanFields: Set<String> = [
+        AssessmentField.sustainedAcrossStrip,
+        AssessmentField.wearerHandsOccupied,
+        AssessmentField.partnerInView,
+        AssessmentField.wearerHandsVisible,
+    ]
+
+    private static let nullableStringFields: Set<String> = [
+        AssessmentField.resolution,
+        AssessmentField.actionCode,
+    ]
+
+    private static func isNullPlaceholder(_ raw: String) -> Bool {
+        let folded = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return folded.isEmpty || folded == "null" || folded == "nil" || folded == "none"
+    }
+
+    /// Strict-mode tool replies sometimes quote `null`, `true`, `false`, or numbers
+    /// as JSON strings. Coerce those literals so valid model turns don't fail decoding.
+    private static func normalizeAssessmentFields(_ fields: [String: JSONValue]) -> [String: JSONValue] {
+        var result = fields
+        for (key, value) in fields {
+            guard case .string(let text) = value else { continue }
+            let folded = text.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if booleanFields.contains(key) {
+                if isNullPlaceholder(folded) {
+                    result[key] = .null
+                } else if folded == "true" {
+                    result[key] = .bool(true)
+                } else if folded == "false" {
+                    result[key] = .bool(false)
+                }
+            } else if nullableStringFields.contains(key) {
+                if isNullPlaceholder(folded) {
+                    result[key] = .null
+                }
+            } else if key == AssessmentField.confidence {
+                if isNullPlaceholder(folded) {
+                    result[key] = .null
+                } else if let number = Double(folded) {
+                    result[key] = .number(number)
+                }
+            } else if key == AssessmentField.partnerStateEvidence, isNullPlaceholder(folded) {
+                result[key] = .null
+            }
+        }
+        return result
     }
 }
 

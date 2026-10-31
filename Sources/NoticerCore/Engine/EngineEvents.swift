@@ -35,6 +35,8 @@ public struct OpenNeedState: Equatable, Sendable {
     public var choreID: String?
     /// Set after one call sees a wearer action. Credit waits for the next call.
     public var pendingWearerAction: String?
+    /// Capture time of the oldest keyframe in the strip that latched this need.
+    public var visibleAt: Date
 
     public init(
         needID: String,
@@ -45,7 +47,8 @@ public struct OpenNeedState: Equatable, Sendable {
         handsBusy: Bool,
         awaitingRecheck: Bool,
         choreID: String?,
-        pendingWearerAction: String?
+        pendingWearerAction: String?,
+        visibleAt: Date? = nil
     ) {
         self.needID = needID
         self.latchedAt = latchedAt
@@ -56,6 +59,23 @@ public struct OpenNeedState: Equatable, Sendable {
         self.awaitingRecheck = awaitingRecheck
         self.choreID = choreID
         self.pendingWearerAction = pendingWearerAction
+        self.visibleAt = visibleAt ?? latchedAt
+    }
+}
+
+public struct CueTimingSnapshot: Equatable, Sendable {
+    public var cueID: String
+    public var needID: String
+    public var visibleAt: Date
+    public var latchedAt: Date
+    public var cueFiredAt: Date
+
+    public init(cueID: String, needID: String, visibleAt: Date, latchedAt: Date, cueFiredAt: Date) {
+        self.cueID = cueID
+        self.needID = needID
+        self.visibleAt = visibleAt
+        self.latchedAt = latchedAt
+        self.cueFiredAt = cueFiredAt
     }
 }
 
@@ -85,6 +105,7 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case retiredMiss
     case callIssued
     case stillOpen
+    case skip
 }
 
 public struct EngineEvent: Equatable, Sendable {

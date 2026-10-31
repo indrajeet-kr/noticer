@@ -85,7 +85,7 @@ final class StaleNeedTests: EngineTestCase {
         advance(to: deadline)
         engine.tick()
         let recheck = try XCTUnwrap(engine.pendingModelCall)
-        engine.handle(callID: recheck.id, verdict: partnerResolved("take-baby", tool: .deferCueWearerBusy))
+        engine.handle(callID: recheck.id, verdict: partnerResolved("take-baby"))
         XCTAssertTrue(engine.cues.isEmpty)
         XCTAssertEqual(mastery(of: "take-baby"), seeded)
         XCTAssertTrue(engine.openNeedIDs.isEmpty)

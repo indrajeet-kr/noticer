@@ -211,6 +211,7 @@ public struct ScenarioReport: Sendable, Equatable {
     public var log: [EngineEvent]
     public var decisions: [ToolHandlerResult]
     public var modelErrors: [String]
+    public var timingLines: [String]
 
     public init(
         scenarioID: String,
@@ -220,7 +221,8 @@ public struct ScenarioReport: Sendable, Equatable {
         needs: [Need],
         log: [EngineEvent],
         decisions: [ToolHandlerResult],
-        modelErrors: [String]
+        modelErrors: [String],
+        timingLines: [String] = []
     ) {
         self.scenarioID = scenarioID
         self.origin = origin
@@ -230,6 +232,7 @@ public struct ScenarioReport: Sendable, Equatable {
         self.log = log
         self.decisions = decisions
         self.modelErrors = modelErrors
+        self.timingLines = timingLines
     }
 
     /// First latch time for each need.

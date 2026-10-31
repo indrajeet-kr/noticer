@@ -110,6 +110,7 @@ final class PhoneSessionModel {
     private var seenCueIDs: Set<String> = []
     private var seenLogCount = 0
     private var lastSeenModelCalls = 0
+    private var activeIngestTasks: [UUID: Task<Void, Never>] = [:]
 
     var replayOptions: [ReplayOption] {
         let scenarioOptions = scenarios.map { ReplayOption(kind: .scenario, name: $0.scenarioID) }
@@ -232,6 +233,9 @@ final class PhoneSessionModel {
     func commitNeeds() {
         let snapshot = needsForSession()
         saveNeeds()
+        Task {
+            await self.speaker.prepare(needs: snapshot)
+        }
         guard let pipeline, sessionUsesAuthoredNeeds else {
             return
         }
@@ -345,11 +349,19 @@ final class PhoneSessionModel {
         runTiming = activeTiming
         resetLiveState()
         sessionLog.clear()
-        sessionLog.append("SESSION", "start mode=\(mode == .replay ? "replay" : "live") timing=\(quickTiming ? "quick" : "standard") needs=\(needsForSession().count) key=\(ModelKeyStore.currentKey() == nil ? "missing" : "saved")")
-        for need in needsForSession() {
+        speaker.log = { [log = sessionLog] tag, message in
+            Task { @MainActor in log.append(tag, message) }
+        }
+        let activeNeeds = needsForSession()
+        sessionLog.append("SESSION", "start mode=\(mode == .replay ? "replay" : "live") timing=\(quickTiming ? "quick" : "standard") needs=\(activeNeeds.count) key=\(ModelKeyStore.currentKey() == nil ? "missing" : "saved")")
+        for need in activeNeeds {
             let dwell = need.dwellSeconds.map { String(Int($0)) } ?? "—"
             let signal = need.selfNoticeSignal ?? "—"
-            sessionLog.append("SESSION", "need \(need.id) author=\(Self.truncate(need.authorText)) whisper=\(Self.truncate(need.cueWording)) visual=\(Self.truncate(need.visualCondition ?? "—")) checkin=\(need.allowsCheckIn) dwell=\(dwell) signal=\(signal)")
+            let handled = need.handledCondition.map { Self.truncate($0) } ?? "—"
+            sessionLog.append("SESSION", "need \(need.id) author=\(Self.truncate(need.authorText)) whisper=\(Self.truncate(need.cueWording)) visual=\(Self.truncate(need.visualCondition ?? "—")) handled=\(handled) urgent=\(need.isUrgent) checkin=\(need.allowsCheckIn) dwell=\(dwell) signal=\(signal)")
+        }
+        Task {
+            await self.speaker.prepare(needs: activeNeeds)
         }
         phase = mode == .replay ? "Reading the replay" : "Starting glasses"
         loop = Task {
@@ -509,7 +521,25 @@ final class PhoneSessionModel {
         )
         pipeline = session
         await gate.reset()
+        await session.prepareSpeaker()
         phase = "Watching"
+        var lastDroppedBusyLog: Date?
+        let ticker = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .milliseconds(250))
+                guard let self, self.isRunning, self.sceneActive, !Task.isCancelled else { continue }
+                guard self.activeIngestTasks.isEmpty else { continue }
+                if let step = try? await session.tick() {
+                    self.apply(step, await session.view())
+                }
+            }
+        }
+        defer {
+            ticker.cancel()
+            for task in activeIngestTasks.values {
+                task.cancel()
+            }
+        }
         while !Task.isCancelled {
             while !sceneActive, !Task.isCancelled {
                 phase = "Paused — bring the app to the front"
@@ -522,13 +552,51 @@ final class PhoneSessionModel {
             guard let frame = try await live.nextFrame() else {
                 break
             }
-            try await take(frame: frame, session: session, pace: nil)
+            if activeIngestTasks.count >= (session.latency.maxInFlight + 1) {
+                let now = Date()
+                if lastDroppedBusyLog == nil || now.timeIntervalSince(lastDroppedBusyLog!) >= 1.0 {
+                    lastDroppedBusyLog = now
+                    sessionLog.append("FRAME", "dropped busy")
+                }
+                continue
+            }
+            let snapshot = await evaluateFrame(frame, session: session)
+            let taskID = UUID()
+            let ingestTask = Task { @MainActor [weak self] in
+                defer {
+                    self?.activeIngestTasks.removeValue(forKey: taskID)
+                }
+                do {
+                    let step = try await session.ingest(frame: frame, gate: snapshot)
+                    if let self, self.isRunning, !Task.isCancelled {
+                        self.apply(step, await session.view())
+                    }
+                } catch is CancellationError {
+                    // Normal stop cancellation.
+                } catch let urlError as URLError where urlError.code == .cancelled {
+                    // Normal stop cancellation.
+                } catch {
+                    if let self, self.isRunning, !Task.isCancelled {
+                        self.runError = error.localizedDescription
+                        self.sessionLog.append("ERROR", "ingest: \(error.localizedDescription)")
+                    }
+                }
+            }
+            activeIngestTasks[taskID] = ingestTask
         }
+        ticker.cancel()
+        for task in activeIngestTasks.values {
+            task.cancel()
+        }
+        for task in activeIngestTasks.values {
+            await task.value
+        }
+        activeIngestTasks.removeAll()
     }
 
-    private func take(frame: CameraFrame, session: SessionPipeline, pace: Duration?) async throws {
+    private func evaluateFrame(_ frame: CameraFrame, session: SessionPipeline) async -> FrameGateSnapshot {
         let needOpen = await session.view().openNeeds.isEmpty == false
-        let decision = await gate.evaluate(frame, needOpen: needOpen)
+        let decision = await gate.evaluate(frame, needOpen: needOpen, timing: activeTiming)
         framesSeen += 1
         gateLine = Self.describe(decision)
         if decision.passes {
@@ -538,7 +606,12 @@ final class PhoneSessionModel {
         if framesSeen % 30 == 0 {
             sessionLog.append("FRAME", "summary seen=\(framesSeen) passed=\(framesPassed) calls=\(modelCalls)")
         }
-        let step = try await session.ingest(frame: frame, gate: decision.snapshot)
+        return decision.snapshot
+    }
+
+    private func take(frame: CameraFrame, session: SessionPipeline, pace: Duration?) async throws {
+        let snapshot = await evaluateFrame(frame, session: session)
+        let step = try await session.ingest(frame: frame, gate: snapshot)
         apply(step, await session.view())
         if let pace {
             try await Task.sleep(for: pace)
@@ -566,8 +639,12 @@ final class PhoneSessionModel {
     }
 
     private func apply(_ step: PipelineStep, _ view: SessionView) {
+        guard isRunning else { return }
         masteryLine = view.masterySummary
         headStartLine = view.headStartSummary
+        for line in step.timingLines {
+            sessionLog.append("TIMING", line)
+        }
         if let cue = step.spoken.last {
             let text = cue.kind == .chime ? "Chime" : cue.text
             cueLine = "\(text)\(SessionTelemetry.timeSuffix(Date()))"

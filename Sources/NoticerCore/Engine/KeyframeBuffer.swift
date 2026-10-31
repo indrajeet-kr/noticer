@@ -17,6 +17,7 @@ struct KeyframeBuffer {
     init(timing: TimingProfile = .standard) {
         self.timing = timing
     }
+
     private struct Slot {
         var id: String
         var episodeID: String
@@ -95,13 +96,7 @@ struct KeyframeBuffer {
     }
 
     func keyframes(now: Date) -> [Keyframe] {
-        var slots = committed.filter {
-            now.timeIntervalSince($0.capturedAt) <= timing.keyframeBufferSeconds
-        }
-        if let openSlot, now.timeIntervalSince(openSlot.capturedAt) <= timing.keyframeBufferSeconds {
-            slots.append(openSlot)
-        }
-        slots.sort { $0.capturedAt < $1.capturedAt }
+        let slots = activeSlots(now: now)
         guard let newest = slots.map(\.capturedAt).max() else { return [] }
         return slots.map { slot in
             Keyframe(
@@ -115,20 +110,96 @@ struct KeyframeBuffer {
         }
     }
 
-    /// Up to three keyframes, newest biased, each at least one spacing interval from the last pick.
-    func modelStrip(now: Date) -> [Keyframe] {
-        let frames = keyframes(now: now)
-        var newestFirst: [Keyframe] = []
-        for frame in frames.reversed() {
+    /// Keyframe strip for a model call: 2 keyframes for scouting/heartbeat and
+    /// 3 only for `.latch` confirm and `.recheck` when `latency.smallerPayloads` is enabled.
+    func modelStrip(
+        now: Date,
+        purpose: ModelCallPurpose = .latch,
+        confirm: Bool = false,
+        latency: LatencyTuning = .default
+    ) -> [Keyframe] {
+        let maxCount: Int
+        if !latency.smallerPayloads {
+            maxCount = 3
+        } else if purpose == .recheck || (purpose == .latch && confirm) {
+            maxCount = latency.confirmMaxKeyframes
+        } else {
+            maxCount = latency.scoutingMaxKeyframes
+        }
+        let picked = selectedSlots(
+            now: now,
+            maxCount: maxCount,
+            useSlotStartForSpacing: latency.dedupeAllPurposes
+        )
+        guard let newest = picked.map(\.capturedAt).max() else { return [] }
+        return picked.map { slot in
+            Keyframe(
+                id: slot.id,
+                capturedAt: slot.capturedAt,
+                ageSeconds: newest.timeIntervalSince(slot.capturedAt),
+                episodeID: slot.episodeID,
+                sharpness: slot.sharpness,
+                jpegData: slot.jpegData
+            )
+        }
+    }
+
+    /// Strip identity built from slot ids and each slot's first capture time.
+    /// When `dedupeAllPurposes` is on, an in-slot `keepSharper` swap keeps the
+    /// same identity; legacy mode includes `capturedAt` and `jpegData.hashValue`.
+    func stripIdentity(now: Date, latency: LatencyTuning = .default) -> String {
+        let maxCount = latency.smallerPayloads ? latency.confirmMaxKeyframes : 3
+        let picked = selectedSlots(
+            now: now,
+            maxCount: maxCount,
+            useSlotStartForSpacing: latency.dedupeAllPurposes
+        )
+        if latency.dedupeAllPurposes {
+            return picked.map {
+                "\($0.id)@\($0.slotStartedAt.timeIntervalSince1970)"
+            }.joined(separator: "|")
+        }
+        return picked.map {
+            "\($0.id)@\($0.capturedAt.timeIntervalSince1970)#\($0.jpegData.hashValue)"
+        }.joined(separator: "|")
+    }
+
+    /// First capture time of the newest active slot, unaffected by `keepSharper`.
+    func newestSlotStartedAt(now: Date) -> Date? {
+        activeSlots(now: now).last?.slotStartedAt
+    }
+
+    private func activeSlots(now: Date) -> [Slot] {
+        var slots = committed.filter {
+            now.timeIntervalSince($0.capturedAt) <= timing.keyframeBufferSeconds
+        }
+        if let openSlot, now.timeIntervalSince(openSlot.capturedAt) <= timing.keyframeBufferSeconds {
+            slots.append(openSlot)
+        }
+        slots.sort { $0.capturedAt < $1.capturedAt }
+        return slots
+    }
+
+    private func selectedSlots(
+        now: Date,
+        maxCount: Int,
+        useSlotStartForSpacing: Bool = false
+    ) -> [Slot] {
+        let slots = activeSlots(now: now)
+        guard maxCount > 0 else { return [] }
+        var newestFirst: [Slot] = []
+        for slot in slots.reversed() {
             if let newer = newestFirst.last {
-                let gap = newer.capturedAt.timeIntervalSince(frame.capturedAt)
+                let newerAnchor = useSlotStartForSpacing ? newer.slotStartedAt : newer.capturedAt
+                let olderAnchor = useSlotStartForSpacing ? slot.slotStartedAt : slot.capturedAt
+                let gap = newerAnchor.timeIntervalSince(olderAnchor)
                 if gap >= timing.latchMinKeyframeSpacingSeconds {
-                    newestFirst.append(frame)
+                    newestFirst.append(slot)
                 }
             } else {
-                newestFirst.append(frame)
+                newestFirst.append(slot)
             }
-            if newestFirst.count == 3 { break }
+            if newestFirst.count == maxCount { break }
         }
         return Array(newestFirst.reversed())
     }

@@ -115,7 +115,7 @@ public enum ToolCatalog {
 
     private static let logWearerIntervention = ToolDefinition(
         name: .logWearerIntervention,
-        description: "Record a first-person wearer action. The phone rejects the call unless the action code is a wearer action.",
+        description: "Record a first-person wearer action fulfilling an open need. Use the need's self_notice_signal when applicable; unrelated hand chores belong in wearer_hands_occupied.",
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: [

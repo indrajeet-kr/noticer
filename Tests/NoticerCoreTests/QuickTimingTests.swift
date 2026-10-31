@@ -41,7 +41,7 @@ final class QuickTimingTests: XCTestCase {
         XCTAssertEqual(timing.latchMinKeyframes, 2)
         XCTAssertEqual(timing.latchMinKeyframeSpacingSeconds, 2)
         XCTAssertEqual(timing.heartbeatSeconds, 8)
-        XCTAssertEqual(timing.defaultHeadStartSeconds, 20)
+        XCTAssertEqual(timing.defaultHeadStartSeconds, 10)
         XCTAssertEqual(timing.headStartCapSeconds, 40)
         XCTAssertEqual(timing.cueRateLimitSeconds, 30)
         XCTAssertEqual(timing.relatchCooldownSeconds, 60)
@@ -70,9 +70,9 @@ final class QuickTimingTests: XCTestCase {
     func testTheCueWaitsUntilTheTwentySecondHeadStart() throws {
         try latch("take-baby")
         let open = try XCTUnwrap(engine.openNeeds.first)
-        XCTAssertEqual(open.cueDeadline.timeIntervalSince(open.latchedAt), 20)
+        XCTAssertEqual(open.cueDeadline.timeIntervalSince(open.latchedAt), 10)
 
-        try refresh(before: open.cueDeadline, lead: 10)
+        try refresh(before: open.cueDeadline, lead: 5)
         advance(to: open.cueDeadline.addingTimeInterval(-1))
         engine.tick()
         XCTAssertTrue(engine.cues.isEmpty)
@@ -82,12 +82,17 @@ final class QuickTimingTests: XCTestCase {
         let cue = try XCTUnwrap(engine.cues.first)
         XCTAssertEqual(cue.needID, "take-baby")
         XCTAssertEqual(cue.createdAt, open.cueDeadline)
-        XCTAssertEqual(cue.createdAt.timeIntervalSince(open.latchedAt), 20)
+        XCTAssertEqual(cue.createdAt.timeIntervalSince(open.latchedAt), 10)
     }
 
     func testMasteryStretchesTheHeadStartToTheFortySecondCap() throws {
+        let mid = MasteryState(score: 0.5, consecutiveSelfNotices: 0, consecutiveMisses: 0)
+        XCTAssertEqual(
+            MasteryMath.headStartSeconds(for: EngineTestCase.takeBaby(mastery: mid), timing: .quick),
+            20
+        )
         let practiced = MasteryState(score: 1, consecutiveSelfNotices: 0, consecutiveMisses: 0)
-        try engine.setNeeds([EngineTestCase.takeBaby(mastery: practiced)])
+        try engine.setNeeds([EngineTestCase.takeBaby(dwell: 20, mastery: practiced)])
         try latch("take-baby")
         let open = try XCTUnwrap(engine.openNeeds.first)
         // 20 * (1 + 2 * 1) = 60, then the 40 s cap.
@@ -97,7 +102,7 @@ final class QuickTimingTests: XCTestCase {
 
     func testTheSecondCueWaitsOutTheThirtySecondRateLimit() throws {
         try engine.setNeeds([
-            EngineTestCase.need(id: "water", priority: 5),
+            EngineTestCase.need(id: "water", priority: 5, dwell: 20),
             EngineTestCase.need(id: "baby", priority: 0, dwell: 14),
         ])
         try latch("water")

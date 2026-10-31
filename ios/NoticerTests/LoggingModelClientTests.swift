@@ -27,6 +27,26 @@ final class LoggingModelClientTests: XCTestCase {
         XCTAssertTrue(line.contains("action=null"), line)
     }
 
+    func testDescribeRequestIncludesPurposeAndBytes() {
+        let now = Date()
+        let request = ModelRequest(
+            keyframes: [
+                Keyframe(id: "kf-1", capturedAt: now.addingTimeInterval(-2), ageSeconds: 2, episodeID: "ep-1", jpegData: Data(repeating: 0xAA, count: 2048)),
+                Keyframe(id: "kf-2", capturedAt: now, ageSeconds: 0, episodeID: "ep-1", jpegData: Data(repeating: 0xBB, count: 2048)),
+            ],
+            needs: [Need(id: "take-baby", authorText: "take baby", cueWording: "take baby", priority: 0)],
+            purpose: .heartbeat
+        )
+        let line = LoggingModelClient.describeRequest(request)
+        XCTAssertTrue(line.contains("purpose=heartbeat"), line)
+        XCTAssertTrue(line.contains("bytes=4096"), line)
+    }
+
+    func testPayloadTuningDefaults() {
+        XCTAssertEqual(LatencyTuning.default.uploadMaxEdge, 448)
+        XCTAssertEqual(LatencyTuning.default.jpegQuality, 0.55, accuracy: 0.001)
+    }
+
     func testCancelLogsCancelledNotError() async {
         for error: Error in [CancellationError(), URLError(.cancelled)] {
             let recorded = Mutex<[String]>([])

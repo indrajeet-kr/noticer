@@ -3,6 +3,7 @@ import XCTest
 
 final class CaughtHimselfTests: EngineTestCase {
     func testHisActionThenAClearNeedCreditsTheCatch() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerHandsReceivingBaby)])
         try latch("take-baby")
         try arm("take-baby", action: ActionCodeExamples.wearerHandsReceivingBaby)
         XCTAssertEqual(mastery(of: "take-baby").score, 0)
@@ -20,6 +21,7 @@ final class CaughtHimselfTests: EngineTestCase {
     }
 
     func testOneCallThatSeesBothTheActionAndTheClearDoesNotCreditYet() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerHandsReceivingBaby)])
         try latch("take-baby")
         try heartbeat(intervention(
             "take-baby",
@@ -55,6 +57,7 @@ final class CaughtHimselfTests: EngineTestCase {
     }
 
     func testCaughtHimselfWhileTheNeedIsStillSustainedDoesNotCredit() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: ActionCodeExamples.wearerCarryingWaterTowardPartner)])
         try latch("take-baby")
         try arm("take-baby", action: ActionCodeExamples.wearerCarryingWaterTowardPartner)
         try heartbeat(noTransition("take-baby", sustained: true, resolution: .caughtHimself))
@@ -64,6 +67,11 @@ final class CaughtHimselfTests: EngineTestCase {
     }
 
     func testAnOpenWearerActionStringCanArmTheCatch() throws {
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [Self.takeBaby(), Self.refillWater()],
+            latency: LatencyTuning(strictCredit: false)
+        )
         try latch("take-baby")
         try arm("take-baby", action: "wearer_folded_the_blanket")
         XCTAssertEqual(engine.openNeeds.first?.pendingWearerAction, "wearer_folded_the_blanket")
@@ -86,12 +94,16 @@ final class CaughtHimselfTests: EngineTestCase {
         XCTAssertEqual(mastery(of: "take-baby"), seeded)
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
         XCTAssertTrue(engine.cues.isEmpty)
-        XCTAssertEqual(events(.resolvedByPartner).last?.detail, ToolName.reportNoTransition.rawValue)
+        XCTAssertEqual(events(.resolvedByPartner).last?.detail, ToolName.reportNeedResolved.rawValue)
     }
 
     func testPartnerResolutionOnAnyToolBeatsAPendingCatch() throws {
         let seeded = MasteryState(score: 0.4, consecutiveSelfNotices: 1, consecutiveMisses: 0)
-        try engine.setNeeds([Self.takeBaby(mastery: seeded)])
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [Self.takeBaby(mastery: seeded)],
+            latency: LatencyTuning(strictCredit: false)
+        )
         try latch("take-baby")
         try arm("take-baby", action: ActionCodeExamples.wearerHandsReceivingBaby)
         try heartbeat(partnerResolved("take-baby", tool: .deferCueWearerBusy))
@@ -127,6 +139,8 @@ final class CaughtHimselfTests: EngineTestCase {
     }
 
     private func confirmCleared(_ id: String) throws {
-        try heartbeat(noTransition(id, sustained: false))
+        let action = engine.openNeeds.first { $0.needID == id }?.pendingWearerAction
+            ?? ActionCodeExamples.wearerHandsReceivingBaby
+        try heartbeat(intervention(id, action: action, sustained: false))
     }
 }

@@ -84,16 +84,28 @@ final class HardCapTests: EngineTestCase {
     func testTheModelCallBudgetIsThreeHundred() throws {
         try latch("take-baby")
         XCTAssertEqual(engine.modelCallsIssued, 1)
-        var frame = 0
-        while engine.modelCallsIssued < SessionLimits.maxModelCallsPerSession {
-            // Same glance, new pixels each turn: the heartbeat fires without
-            // advancing the clock past the head-start deadline.
-            see([mom()], sharpness: Double(frame), jpeg: UInt8(frame % 2), handsEdge: true)
-            frame += 1
+        var useWaterNext = true
+        while engine.modelCallsIssued < SessionLimits.maxModelCallsPerSession || engine.pendingModelCall != nil {
+            if engine.pendingModelCall == nil {
+                if engine.openNeedIDs.isEmpty {
+                    advance(SessionLimits.latchMinIntervalSeconds)
+                    glancePair()
+                } else {
+                    advance(SessionLimits.glanceAbsentSeconds)
+                    see([mom()], handsEdge: true)
+                }
+            }
             let call = try XCTUnwrap(engine.pendingModelCall)
-            engine.handle(callID: call.id, verdict: noTransition("take-baby"))
+            if let openID = engine.openNeedIDs.first {
+                engine.handle(callID: call.id, verdict: noTransition(openID, sustained: true))
+            } else {
+                let nextID = useWaterNext ? "refill-water" : "take-baby"
+                useWaterNext.toggle()
+                engine.handle(callID: call.id, verdict: latchVerdict(nextID))
+            }
         }
         XCTAssertEqual(engine.modelCallsIssued, 300)
+        advance(SessionLimits.glanceAbsentSeconds)
         see([mom()], handsEdge: true)
         XCTAssertNil(engine.pendingModelCall)
         XCTAssertFalse(events(.callBudgetExhausted).isEmpty)
