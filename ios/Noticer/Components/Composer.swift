@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// The one chat-like composer in the app, pinned to the bottom: multiline
+/// The one chat-like composer in the app, docked at the bottom: multiline
 /// text, a mic button for system dictation, and a send arrow.
 /// No forms anywhere else; this plus the API-key field are the only inputs.
 struct NaturalLanguageComposer: View {
@@ -17,21 +17,31 @@ struct NaturalLanguageComposer: View {
             } label: {
                 Image(systemName: "mic.fill")
                     .font(.title3)
+                    .fontWeight(.light)
                     .foregroundStyle(Theme.textPrimary)
                     .frame(width: 46, height: 46)
+                    .background(Theme.bgCard, in: Circle())
+                    .overlay(Circle().stroke(Theme.Shadow.hairline, lineWidth: 1))
             }
-            .glassBackground(cornerRadius: 999)
             .accessibilityLabel("Dictate. Uses the keyboard microphone.")
 
-            TextField(placeholder, text: $text, axis: .vertical)
-                .focused(focused)
-                .lineLimit(1...4)
-                .font(Theme.Font.body)
-                .padding(.horizontal, Theme.Space.s16)
-                .padding(.vertical, Theme.Space.s12)
-                .frame(minHeight: 46)
-                .glassBackground(cornerRadius: 23)
-                .accessibilityLabel("Message")
+            HStack(spacing: Theme.Space.s8) {
+                Image(systemName: "sparkles")
+                    .fontWeight(.light)
+                    .foregroundStyle(Theme.sage)
+                    .accessibilityHidden(true)
+                TextField(placeholder, text: $text, axis: .vertical)
+                    .focused(focused)
+                    .lineLimit(1...4)
+                    .font(Theme.Font.body)
+                    .frame(minHeight: 46)
+                    .accessibilityLabel("Message")
+            }
+            .padding(.horizontal, Theme.Space.s16)
+            .padding(.vertical, Theme.Space.s4)
+            .background(Theme.bgCard, in: Theme.Radius.rect(23))
+            .overlay(Theme.Radius.rect(23).stroke(Theme.Shadow.hairline, lineWidth: 1))
+            .shadow(color: Theme.Shadow.color, radius: Theme.Shadow.radius, y: Theme.Shadow.y)
 
             Button {
                 focused.wrappedValue = false
@@ -39,9 +49,9 @@ struct NaturalLanguageComposer: View {
             } label: {
                 Image(systemName: "arrow.up")
                     .font(.headline)
-                    .foregroundStyle(Theme.onAccentFill)
+                    .foregroundStyle(Theme.onSage)
                     .frame(width: 46, height: 46)
-                    .background(canSend ? Theme.accentFill : Theme.textPrimary.opacity(0.18))
+                    .background(canSend ? Theme.sage : Theme.textPrimary.opacity(0.18))
                     .clipShape(Circle())
             }
             .disabled(!canSend)
@@ -55,22 +65,24 @@ struct NaturalLanguageComposer: View {
 }
 
 /// Offline banner: the last saved list stays visible and active underneath.
+/// Copy unchanged from the dark UI.
 struct OfflineBanner: View {
     var onRetry: () -> Void
 
     var body: some View {
         HStack(spacing: Theme.Space.s12) {
             Image(systemName: "wifi.exclamationmark")
-                .foregroundStyle(Theme.noticed)
+                .fontWeight(.light)
+                .foregroundStyle(Theme.terracottaText)
             Text("Couldn't reach Spark right now. Your last saved list is still active.")
                 .font(Theme.Font.footnote)
-                .foregroundStyle(Theme.textSecondary)
+                .foregroundStyle(Theme.terracottaText)
             Button("Retry", action: onRetry)
                 .font(Theme.Font.headline)
-                .foregroundStyle(Theme.accentWarm)
+                .foregroundStyle(Theme.terracottaText)
         }
         .padding(Theme.Space.s12)
-        .glassBackground(cornerRadius: Theme.Radius.row)
+        .background(Theme.terracottaTile, in: Theme.Radius.rect(Theme.Radius.row))
         .accessibilityElement(children: .combine)
     }
 }
@@ -123,20 +135,20 @@ struct ComposerPreview: View {
         ThinkingDots()
         ComposerPreview(
             text: "When I'm eating with the baby…",
-            placeholder: "e.g. When I'm eating with the baby in one arm, take her so I can eat…"
+            placeholder: "Tell me in your own words…"
         )
     }
     .screenMargins()
     .ambientScreen()
 }
 
-#Preview("Composer (light, AX)") {
+#Preview("Composer (night, AX)") {
     VStack(spacing: Theme.Space.s16) {
         OfflineBanner {}
-        ComposerPreview(text: "", placeholder: "Say what helps…")
+        ComposerPreview(text: "", placeholder: "Tell me in your own words…")
     }
     .screenMargins()
     .ambientScreen()
-    .preferredColorScheme(.light)
+    .preferredColorScheme(.dark)
     .dynamicTypeSize(.accessibility5)
 }

@@ -68,6 +68,10 @@ targets:
       - path: Noticer/Seams/LoggingModelClient.swift
       - path: Noticer/Theme/Theme.swift
       - path: Noticer/Session/NeedListStore.swift
+      - path: Noticer/Session/NeedIcon.swift
+      - path: Noticer/Session/PausedNeedsStore.swift
+      - path: Noticer/Session/CueHistoryStore.swift
+      - path: Noticer/Session/Wording.swift
     dependencies:
       - package: NoticerPackage
         product: NoticerCore

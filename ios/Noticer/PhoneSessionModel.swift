@@ -57,6 +57,12 @@ final class PhoneSessionModel {
     var sceneActive = true
     /// Shorter waits for a test or a demo. The running session keeps the profile it started with.
     var quickTiming = UserDefaults.standard.bool(forKey: PhoneSessionModel.quickTimingKey)
+    /// Shared mom's-list conversation. Her list and the Add sheet read the
+    /// same instance, so the read-back cards survive the sheet closing.
+    var intentService = NeedsIntentService()
+    /// Need ids paused for tonight. Phone-side only; the engine never sees
+    /// these, and the set clears at the next calendar day.
+    var pausedNeedIDs: Set<String> = PausedNeedsStore.load()
 
     // MARK: - Live display state (additive; the engine never reads these)
 
@@ -267,16 +273,31 @@ final class PhoneSessionModel {
         }
     }
 
+    func isPaused(_ needID: String) -> Bool {
+        pausedNeedIDs.contains(needID)
+    }
+
+    func setPaused(_ needID: String, paused: Bool) {
+        if paused {
+            pausedNeedIDs.insert(needID)
+        } else {
+            pausedNeedIDs.remove(needID)
+        }
+        PausedNeedsStore.save(pausedNeedIDs)
+    }
+
     /// Blank whisper uses her words. The list on screen can leave that line empty.
+    /// Needs paused for tonight are excluded from the session.
     func needsForSession() -> [Need] {
         nameUnnamedNeeds()
-        return needs.map { need in
+        let filled = needs.map { need in
             var copy = need
             if copy.cueWording.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 copy.cueWording = copy.authorText.trimmingCharacters(in: .whitespacesAndNewlines)
             }
             return copy
         }
+        return PausedNeedsStore.active(needs: filled, pausedIDs: pausedNeedIDs)
     }
 
     func addNeed() {
@@ -348,6 +369,7 @@ final class PhoneSessionModel {
         resetLiveState()
         saveNeeds()
         SessionMomentsStore.save(moments)
+        CueHistoryStore.recordSessionDay()
         Task {
             await source?.stop()
         }
@@ -409,6 +431,7 @@ final class PhoneSessionModel {
             SessionLogStore.save(sessionLog.text)
             saveNeeds()
             SessionMomentsStore.save(moments)
+            CueHistoryStore.recordSessionDay()
         }
     }
 
@@ -619,6 +642,7 @@ final class PhoneSessionModel {
                     ))
                 }
             case .cueFired:
+                CueHistoryStore.recordCue()
                 if let needID = event.needID {
                     moments.append(SessionMoment(
                         at: Date(),

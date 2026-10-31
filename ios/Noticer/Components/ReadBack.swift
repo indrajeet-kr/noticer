@@ -16,7 +16,7 @@ struct NeedReadBackCard: View {
                     if changed {
                         Text("Updated")
                             .font(Theme.Font.caption)
-                            .foregroundStyle(Theme.gotIt)
+                            .foregroundStyle(Theme.sageStrong)
                     }
                 }
                 Text("He'll hear: “\(draft.whisper)”")
@@ -44,7 +44,7 @@ struct SparkBubble: View {
         Text(text)
             .font(Theme.Font.body)
             .padding(Theme.Space.s12)
-            .background(Theme.bgElevated)
+            .background(Theme.bgSubtle)
             .clipShape(Theme.Radius.rect(Theme.Radius.row))
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -61,6 +61,8 @@ struct SuggestionChip: View {
                 .font(Theme.Font.footnote)
                 .padding(.horizontal, Theme.Space.s12)
                 .padding(.vertical, Theme.Space.s8)
+                .frame(minHeight: 44)
+                .background(Theme.bgCard, in: Capsule())
                 .overlay(
                     Capsule().stroke(Theme.textPrimary.opacity(0.16), lineWidth: 1)
                 )
@@ -104,7 +106,7 @@ struct SuggestionChip: View {
     .ambientScreen()
 }
 
-#Preview("Read-back (light, AX)") {
+#Preview("Read-back (night, AX)") {
     VStack(spacing: Theme.Space.s12) {
         NeedReadBackCard(
             number: 1,
@@ -120,6 +122,6 @@ struct SuggestionChip: View {
     }
     .screenMargins()
     .ambientScreen()
-    .preferredColorScheme(.light)
+    .preferredColorScheme(.dark)
     .dynamicTypeSize(.accessibility5)
 }
