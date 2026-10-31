@@ -1208,13 +1208,13 @@ final class FastCuesCoreTests: EngineTestCase {
         return v
     }
 
-    private func resolvedToys(resolution: Resolution?, partner: Bool?, hands: Bool?) -> ModelVerdict {
+    private func resolvedToys(resolution: Resolution?, partner: Bool?, hands: Bool?, sustained: Bool? = false) -> ModelVerdict {
         ModelVerdict(
             finishReason: .toolCalls,
             tool: .reportNeedResolved,
             assessment: SceneAssessment(
                 needID: "clean-floor-toys",
-                sustainedAcrossStrip: false,
+                sustainedAcrossStrip: sustained,
                 wearerHandsOccupied: false,
                 partnerInView: partner,
                 wearerHandsVisible: hands,
@@ -1532,5 +1532,34 @@ final class FastCuesCoreTests: EngineTestCase {
 
         XCTAssertEqual(events(.resolvedByPartner).count, 1)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
+    }
+
+    func testResolvedWhileStillVisibleWithRecentInterventionDoesNotCredit() throws {
+        engine = try NeedEngine(clock: clock, needs: [toysNeed()], timing: .quick)
+        try latchToys()
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(resolvedToys(resolution: .unknown, partner: false, hands: true, sustained: true))
+
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(engine.openNeedIDs, ["clean-floor-toys"])
+        XCTAssertEqual(events(.stillOpen).last?.detail, "resolved-but-still-visible")
+    }
+
+    func testResolvedWhileStillVisibleWithPendingActionDoesNotCredit() throws {
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [toysNeed()],
+            timing: .quick,
+            latency: LatencyTuning(creditRecentIntervention: false)
+        )
+        try latchToys()
+        try heartbeatToys(matchingIntervention())
+
+        try heartbeatToys(resolvedToys(resolution: .unknown, partner: false, hands: true, sustained: true))
+
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(engine.openNeedIDs, ["clean-floor-toys"])
+        XCTAssertEqual(events(.stillOpen).last?.detail, "resolved-but-still-visible")
     }
 }

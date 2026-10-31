@@ -1013,8 +1013,8 @@ public struct NeedEngine<TimeSource: Clock> {
         let wearerResolved: Bool
         if latency.strictCredit {
             wearerResolved = assessment.resolution == .caughtHimself
-                || (pendingAction != nil && assessment.resolution != .resolvedByPartner)
-                || (MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) && assessment.resolution != .resolvedByPartner)
+                || (pendingAction != nil && assessment.resolution != .resolvedByPartner && assessment.sustainedAcrossStrip != true)
+                || (MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) && assessment.resolution != .resolvedByPartner && assessment.sustainedAcrossStrip != true)
         } else {
             wearerResolved = assessment.resolution == .caughtHimself
                 || (pendingAction != nil && cleared)
@@ -1044,7 +1044,11 @@ public struct NeedEngine<TimeSource: Clock> {
             }
             return
         }
-        record(.stillOpen, needID: needID, detail: "unclear")
+        if blockedByVisibleProblem(at: index, assessment: assessment, tool: verdict.tool, pendingAction: pendingAction, need: need, now: now) {
+            record(.stillOpen, needID: needID, detail: "resolved-but-still-visible")
+        } else {
+            record(.stillOpen, needID: needID, detail: "unclear")
+        }
     }
 
     /// Recent-intervention credit: a matching intervention inside the window
@@ -1056,10 +1060,41 @@ public struct NeedEngine<TimeSource: Clock> {
             tool == .reportNeedResolved,
             assessment.resolution == .resolvedByPartner || assessment.resolution == .unknown || assessment.resolution == nil,
             assessment.partnerInView != true,
+            assessment.sustainedAcrossStrip != true,
             let actedAt = tracked[index].lastMatchingInterventionAt,
             now.timeIntervalSince(actedAt) <= latency.recentInterventionWindowSeconds
         else { return nil }
         return tracked[index].partnerEngagedAt == nil ? "recent-intervention" : "shared-finish"
+    }
+
+    /// A resolved verdict that would credit once the problem clears: the
+    /// recent-intervention memory or the strict pending/signal path applies,
+    /// but the problem is still visible. Stays open with its own detail.
+    private func blockedByVisibleProblem(
+        at index: Int,
+        assessment: SceneAssessment,
+        tool: ToolName,
+        pendingAction: String?,
+        need: Need,
+        now: Date
+    ) -> Bool {
+        guard tool == .reportNeedResolved,
+            assessment.sustainedAcrossStrip == true,
+            assessment.resolution != .resolvedByPartner
+        else { return false }
+        if latency.creditRecentIntervention,
+            assessment.resolution == .unknown || assessment.resolution == nil,
+            assessment.partnerInView != true,
+            let actedAt = tracked[index].lastMatchingInterventionAt,
+            now.timeIntervalSince(actedAt) <= latency.recentInterventionWindowSeconds {
+            return true
+        }
+        if latency.strictCredit,
+            pendingAction != nil
+                || MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) {
+            return true
+        }
+        return false
     }
 
     private mutating func noteResolution(needID: String, index: Int, shared: Bool, now: Date) {
