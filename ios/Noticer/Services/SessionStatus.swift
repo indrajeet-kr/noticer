@@ -15,7 +15,7 @@ enum SessionStatus: Equatable {
     case noticed(needName: String)
     case headStart(needName: String, fraction: Double, secondsLeft: Int)
     case cue(whisper: String)
-    case gotIt(needName: String)
+    case gotIt(needName: String, shared: Bool = false)
 
     var word: String {
         switch self {
@@ -24,7 +24,7 @@ enum SessionStatus: Equatable {
         case .noticed: return "Need noticed"
         case .headStart: return "Your head start"
         case .cue: return "Cue whispered"
-        case .gotIt: return "You got it"
+        case .gotIt(_, let shared): return shared ? "You finished it" : "You got it"
         }
     }
 
@@ -35,7 +35,7 @@ enum SessionStatus: Equatable {
         case .noticed(let name): return name
         case .headStart: return "Take a look around."
         case .cue(let whisper): return "“\(whisper)”"
-        case .gotIt: return "Nice catch."
+        case .gotIt(_, let shared): return shared ? "Nice teamwork." : "Nice catch."
         }
     }
 
@@ -113,7 +113,7 @@ enum SessionStatusResolver {
         headStart: (remaining: TimeInterval, total: TimeInterval)?,
         noticedAt: Date?,
         lastCue: (text: String, at: Date)?,
-        lastSelfNotice: (name: String, at: Date)?,
+        lastSelfNotice: (name: String, at: Date, shared: Bool)?,
         checking: Bool,
         now: Date
     ) -> SessionStatus {
@@ -122,7 +122,7 @@ enum SessionStatusResolver {
         }
         if let selfNotice = lastSelfNotice,
            now.timeIntervalSince(selfNotice.at) < recencyWindow {
-            return .gotIt(needName: selfNotice.name)
+            return .gotIt(needName: selfNotice.name, shared: selfNotice.shared)
         }
         if let cue = lastCue, now.timeIntervalSince(cue.at) < recencyWindow {
             return .cue(whisper: cue.text)

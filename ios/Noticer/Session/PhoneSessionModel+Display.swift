@@ -21,8 +21,9 @@ extension PhoneSessionModel {
         } else {
             nil
         }
-        let selfNotice: (String, Date)? = if let at = liveSelfNoticeAt {
-            (liveSelfNoticeNeedID.flatMap { needWords(for: $0) } ?? "that one", at)
+        let sharedSelfNotice = moments.last(where: { $0.needID == liveSelfNoticeNeedID })?.sharedWithPartner == true
+        let selfNotice: (name: String, at: Date, shared: Bool)? = if let at = liveSelfNoticeAt {
+            (liveSelfNoticeNeedID.flatMap { needWords(for: $0) } ?? "that one", at, sharedSelfNotice)
         } else {
             nil
         }

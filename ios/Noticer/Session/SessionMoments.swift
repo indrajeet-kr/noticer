@@ -21,14 +21,18 @@ struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
     /// session tracking existed; those use the legacy day/window fallback.
     /// Synthesized decoding reads a missing key as nil.
     var sessionID: UUID?
+    /// She started it, he wrapped it up. Nil for moments saved before the
+    /// shared finish existed; those decode unchanged.
+    var sharedWithPartner: Bool?
 
-    init(id: UUID = UUID(), at: Date, needID: String, kind: Kind, text: String, sessionID: UUID? = nil) {
+    init(id: UUID = UUID(), at: Date, needID: String, kind: Kind, text: String, sessionID: UUID? = nil, sharedWithPartner: Bool? = nil) {
         self.id = id
         self.at = at
         self.needID = needID
         self.kind = kind
         self.text = text
         self.sessionID = sessionID
+        self.sharedWithPartner = sharedWithPartner
     }
 }
 
