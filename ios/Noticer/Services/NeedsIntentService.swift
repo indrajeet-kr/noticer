@@ -39,12 +39,56 @@ final class NeedsIntentService {
     var notice: String?
     /// True when the toast carries an Undo action.
     var noticeHasUndo = false
+    /// Fresh id per toast: two identical texts in a row still restart the timer.
+    var noticeID = UUID()
+    /// The seeded "Your list tonight" entry, while it is still the live list.
+    /// Cleared when she accepts a newer list.
+    var seededEntryID: UUID?
 
     private var lastMessage: String?
     private var removed: (need: Need, index: Int)?
 
     var hasConversation: Bool {
         !entries.isEmpty
+    }
+
+    // MARK: - Seed
+
+    /// Shows the saved or default list on open. One accepted card, no send
+    /// needed; later turns supersede it but never rewrite it.
+    func seedIfNeeded(from model: PhoneSessionModel) {
+        guard entries.isEmpty, !model.needs.isEmpty else { return }
+        let id = UUID()
+        seededEntryID = id
+        entries = [.readBack(
+            id: id,
+            drafts: NeedsIntentConversion.fromNeeds(model.needs),
+            readBack: "",
+            changed: [],
+            accepted: true
+        )]
+    }
+
+    /// Remove is offered only on the live list: the seeded card, or the
+    /// latest read-back. Older accepted cards are history; touching them
+    /// must not mutate `model.needs`.
+    func canRemove(entryID: UUID) -> Bool {
+        if entryID == seededEntryID {
+            return true
+        }
+        let latest = entries.compactMap { entry -> UUID? in
+            if case .readBack(let id, _, _, _, _) = entry {
+                return id
+            }
+            return nil
+        }.last
+        return entryID == latest
+    }
+
+    private func postNotice(_ text: String, undo: Bool) {
+        notice = text
+        noticeHasUndo = undo
+        noticeID = UUID()
     }
 
     // MARK: - Send
@@ -83,6 +127,7 @@ final class NeedsIntentService {
         do {
             let result = try await client.interpret(currentList: model.needs, message: message)
             thinking = false
+            lastMessage = nil
             switch result {
             case .needs(let drafts, let readBack):
                 let changed = ChangedDrafts.between(drafts: drafts, current: model.needs)
@@ -130,13 +175,18 @@ final class NeedsIntentService {
             changed: changed,
             accepted: true
         )
-        notice = "Saved. He'll get a head start on these."
-        noticeHasUndo = false
+        if seededEntryID != entryID {
+            seededEntryID = nil
+        }
+        postNotice("Saved. He'll get a head start on these.", undo: false)
     }
 
     // MARK: - Remove with undo (accessibility shortcut; voice is primary)
 
     func removeDraft(entryID: UUID, draftID: String, model: PhoneSessionModel) {
+        guard canRemove(entryID: entryID) else {
+            return
+        }
         guard let index = entries.firstIndex(where: { $0.id == entryID }) else {
             return
         }
@@ -161,12 +211,8 @@ final class NeedsIntentService {
         } else {
             removed = nil
         }
-        notice = "Removed “\(draft.authorText)”."
-        noticeHasUndo = accepted
-        if !accepted {
-            // Pending read-backs re-derive from her words; nothing to undo.
-            noticeHasUndo = false
-        }
+        // Pending read-backs re-derive from her words; nothing to undo.
+        postNotice("Removed “\(draft.authorText)”.", undo: accepted)
     }
 
     func undoRemove(model: PhoneSessionModel) {
