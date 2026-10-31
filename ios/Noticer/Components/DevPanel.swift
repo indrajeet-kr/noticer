@@ -46,15 +46,11 @@ struct DevPanel: View {
                 }
                 .padding(.top, Theme.Space.s8)
             } label: {
-                HStack {
-                    Text("Developer")
-                        .font(Theme.Font.headline)
-                    Spacer()
-                    Image(systemName: open ? "chevron.down" : "chevron.right")
-                        .font(Theme.Font.footnote)
-                        .foregroundStyle(Theme.textSecondary)
-                }
-                .contentShape(Rectangle())
+                // No custom chevron: DisclosureGroup draws its own indicator.
+                Text("Developer")
+                    .font(Theme.Font.headline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
             .tint(Theme.textPrimary)
         }

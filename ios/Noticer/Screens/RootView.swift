@@ -60,7 +60,7 @@ struct RootView: View {
         }
         .onChange(of: model.isRunning) { _, running in
             defer { wasRunning = running }
-            guard wasRunning, !running, !model.moments.isEmpty else {
+            guard wasRunning, !running, !model.tonightMoments.isEmpty else {
                 return
             }
             showingWins = true

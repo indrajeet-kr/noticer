@@ -9,7 +9,7 @@ struct TeamWinsView: View {
     @State private var shareImage: Image?
 
     private var wins: [SessionMoment] {
-        model.moments.sorted { $0.at < $1.at }
+        model.tonightMoments.sorted { $0.at < $1.at }
     }
 
     private var selfNoticeCount: Int {
@@ -56,7 +56,7 @@ struct TeamWinsView: View {
                     GlassCard(padding: Theme.Space.card) {
                         VStack(spacing: 0) {
                             ForEach(wins) { win in
-                                WinRow(moment: win)
+                                WinRow(moment: win, wordsForMoment: { model.momentWords(for: $0) })
                                 if win.id != wins.last?.id {
                                     Divider().background(Theme.textPrimary.opacity(0.08))
                                 }
@@ -112,8 +112,7 @@ struct TeamWinsView: View {
     }
 
     private var summary: String {
-        let history = CueHistoryStore.load()
-        let prior = CueHistoryStore.mostRecentPriorDay(before: Date(), in: history)?.count
+        let prior = CueHistoryStore.mostRecentPriorDay(before: model.tonightSessionDay, in: model.cueHistory)?.count
         return WinsSummary.sentence(selfNotices: selfNoticeCount, cues: cueCount, priorCues: prior)
     }
 
@@ -131,9 +130,7 @@ struct TeamWinsView: View {
     }
 
     private var dayLine: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE"
-        return "\(formatter.string(from: Date())) evening"
+        DayPart.line(for: model.latestSessionStart)
     }
 
     @MainActor
@@ -142,7 +139,11 @@ struct TeamWinsView: View {
             shareImage = nil
             return
         }
-        let renderer = ImageRenderer(content: ShareSummaryCard(headline: headline, wins: wins))
+        let renderer = ImageRenderer(content: ShareSummaryCard(
+            headline: headline,
+            wins: wins,
+            wordsForMoment: { model.momentWords(for: $0) }
+        ))
         renderer.scale = 3
         if let uiImage = renderer.uiImage {
             shareImage = Image(uiImage: uiImage)

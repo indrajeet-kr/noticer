@@ -6,6 +6,9 @@ import SwiftUI
 struct TonightTimeline: View {
     var moments: [SessionMoment]
     var isRunning: Bool
+    /// One wording per need: callers pass the model's current words so a
+    /// reword doesn't leave old and new phrasing side by side.
+    var wordsForMoment: (SessionMoment) -> String = { $0.text }
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s12) {
@@ -21,7 +24,7 @@ struct TonightTimeline: View {
                     ForEach(sortedMoments) { moment in
                         timelineRow(
                             dot: moment.kind == .selfNotice ? .caught : .nudged,
-                            words: moment.text,
+                            words: wordsForMoment(moment),
                             time: moment.at,
                             detail: moment.kind == .selfNotice ? "Caught himself" : "With a nudge"
                         )

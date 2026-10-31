@@ -33,9 +33,11 @@ struct NeedDetailView: View {
                 VStack(alignment: .leading, spacing: Theme.Space.s4) {
                     Text(timing.main)
                         .font(Theme.Font.body)
-                    Text(timing.detail)
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(Theme.textSecondary)
+                    if let detail = timing.detail {
+                        Text(detail)
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                 }
                 .accessibilityElement(children: .combine)
 
@@ -85,7 +87,7 @@ struct NeedDetailView: View {
         return cue.isEmpty ? displayWords : cue
     }
 
-    private var timing: (main: String, detail: String) {
+    private var timing: (main: String, detail: String?) {
         TimingWords.headStartSentence(seconds: model.displayHeadStart(for: need))
     }
 }

@@ -8,14 +8,15 @@ import SwiftUI
 struct LearningView: View {
     @Bindable var model: PhoneSessionModel
     var onWins: () -> Void = {}
-    /// Preview-only history override; production always reads the store.
+    /// Preview-only history override for dots and bars. Production reads
+    /// the model's observable history so cues land without a restart.
     var sampleHistory: [String: Int]?
 
     @State private var path = NavigationPath()
     @State private var range = CueRange.day
 
     private var history: [String: Int] {
-        sampleHistory ?? CueHistoryStore.load()
+        sampleHistory ?? model.cueHistory
     }
 
     var body: some View {
@@ -40,6 +41,7 @@ struct LearningView: View {
                 .screenMargins()
                 .padding(.bottom, Theme.Space.s32)
             }
+            .contentMargins(.bottom, 96, for: .scrollContent)
             .ambientScreen()
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -173,17 +175,8 @@ struct LearningView: View {
     }
 
     private var weekSentence: String {
-        let tonight = CueHistoryStore.count(on: Date(), in: history)
-        let prior = CueHistoryStore.mostRecentPriorDay(before: Date(), in: history)?.count
-        let noun = tonight == 1 ? "1 cue" : "\(tonight) cues"
-        switch (tonight, prior) {
-        case (0, _):
-            return "No cues tonight."
-        case (_, let prior?) where prior > tonight:
-            return "\(noun) tonight, down from \(prior)."
-        default:
-            return "\(noun) tonight."
-        }
+        let prior = CueHistoryStore.mostRecentPriorDay(before: model.tonightSessionDay, in: history)?.count
+        return CueWeekSentence.text(tonight: model.tonightCueCount, prior: prior)
     }
 
     // MARK: - Cues per day
@@ -211,20 +204,14 @@ struct LearningView: View {
                 } else {
                     Chart(bars) { bar in
                         BarMark(
-                            x: .value("Day", bar.label),
+                            x: .value("Day", bar.date, unit: .day),
                             y: .value("Cues", bar.count)
                         )
                         .foregroundStyle(Theme.sagePale)
                         .cornerRadius(4)
                     }
                     .chartYAxis(.hidden)
-                    .chartXAxis {
-                        AxisMarks { _ in
-                            AxisValueLabel()
-                                .font(.caption)
-                                .foregroundStyle(Theme.textSecondary)
-                        }
-                    }
+                    .chartXAxis { xAxis() }
                     .frame(height: 140)
                     .accessibilityLabel("Cues per \(range == .day ? "day" : range == .week ? "week" : "month"): \(barSummary)")
                     if CueHistoryStore.isFading(history: history) {
@@ -242,21 +229,59 @@ struct LearningView: View {
         }
     }
 
+    /// Date-valued axes: distinct days never collapse the way the old
+    /// single-letter categories did ("S M T W F"). The last day bar reads
+    /// "Today".
+    @AxisContentBuilder
+    private func xAxis() -> some AxisContent {
+        switch range {
+        case .day:
+            AxisMarks(values: .stride(by: .day)) { value in
+                AxisGridLine()
+                AxisValueLabel(centered: true) {
+                    if let date = value.as(Date.self), Calendar.current.isDateInToday(date) {
+                        Text("Today")
+                    } else if let date = value.as(Date.self) {
+                        Text(date, format: .dateTime.weekday(.narrow))
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+            }
+        case .week, .month:
+            AxisMarks(values: bars.map(\.date)) { value in
+                AxisGridLine()
+                AxisValueLabel(centered: true) {
+                    Text(bucketLabel(for: value.as(Date.self)))
+                }
+                .font(.caption)
+                .foregroundStyle(Theme.textSecondary)
+            }
+        }
+    }
+
+    private func bucketLabel(for date: Date?) -> String {
+        guard let date else {
+            return ""
+        }
+        return bars.first { Calendar.current.isDate($0.date, inSameDayAs: date) }?.label ?? ""
+    }
+
     private var bars: [CueBar] {
         switch range {
         case .day:
             let formatter = DateFormatter()
             formatter.dateFormat = "EEEEE"
             return CueHistoryStore.lastDays(7, ending: Date(), in: history).map {
-                CueBar(label: formatter.string(from: $0.date), count: $0.count)
+                CueBar(date: $0.date, label: formatter.string(from: $0.date), count: $0.count)
             }
         case .week:
             return CueHistoryStore.weeklyBuckets(6, ending: Date(), in: history).map {
-                CueBar(label: $0.label, count: $0.count)
+                CueBar(date: $0.date, label: $0.label, count: $0.count)
             }
         case .month:
             return CueHistoryStore.monthlyBuckets(6, ending: Date(), in: history).map {
-                CueBar(label: $0.label, count: $0.count)
+                CueBar(date: $0.date, label: $0.label, count: $0.count)
             }
         }
     }
@@ -293,7 +318,8 @@ private enum CueRange: String, CaseIterable, Identifiable {
 }
 
 private struct CueBar: Identifiable {
-    var id: String { label }
+    var id: String { "\(date.timeIntervalSince1970)-\(label)" }
+    var date: Date
     var label: String
     var count: Int
 }
@@ -333,6 +359,20 @@ private struct LearningSamplePreview: View {
 
     var body: some View {
         LearningView(model: model, sampleHistory: history)
+            .onAppear {
+                let session = UUID()
+                model.currentSessionID = session
+                model.sessionStartedAt = Date()
+                model.moments = (0..<3).map { back in
+                    SessionMoment(
+                        at: Date().addingTimeInterval(Double(-back * 600)),
+                        needID: "take-baby",
+                        kind: .cued,
+                        text: "eating one-handed, take the baby",
+                        sessionID: session
+                    )
+                }
+            }
     }
 }
 #endif

@@ -100,9 +100,9 @@ enum CueHistoryStore {
         return zip(trail, trail.dropFirst()).allSatisfy { $0 >= $1 }
     }
 
-    /// Trailing 7-day buckets, oldest first, ending on `date`. Labels are
-    /// the bucket's first day as "M/d".
-    static func weeklyBuckets(_ weeks: Int, ending date: Date, in history: [String: Int]) -> [(label: String, count: Int)] {
+    /// Trailing 7-day buckets, oldest first, ending on `date`. Each
+    /// carries its first day for date-valued chart axes; labels are "M/d".
+    static func weeklyBuckets(_ weeks: Int, ending date: Date, in history: [String: Int]) -> [(date: Date, label: String, count: Int)] {
         let calendar = Calendar.current
         let start = calendar.startOfDay(for: date)
         let labeler = DateFormatter()
@@ -118,12 +118,13 @@ enum CueHistoryStore {
                 first = day
                 count += history[dayKey(for: day)] ?? 0
             }
-            return (labeler.string(from: first), count)
+            return (first, labeler.string(from: first), count)
         }
     }
 
-    /// Trailing calendar months, oldest first. Labels are "MMM".
-    static func monthlyBuckets(_ months: Int, ending date: Date, in history: [String: Int]) -> [(label: String, count: Int)] {
+    /// Trailing calendar months, oldest first. Each carries its first day
+    /// for date-valued chart axes; labels are "MMM".
+    static func monthlyBuckets(_ months: Int, ending date: Date, in history: [String: Int]) -> [(date: Date, label: String, count: Int)] {
         let calendar = Calendar.current
         let labeler = DateFormatter()
         labeler.dateFormat = "MMM"
@@ -140,7 +141,7 @@ enum CueHistoryStore {
                     }
                 }
             }
-            return (labeler.string(from: month), count)
+            return (month, labeler.string(from: month), count)
         }
     }
 
