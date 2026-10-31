@@ -49,6 +49,10 @@ public struct NeedEngine<TimeSource: Clock> {
         /// a resolution verdict can still credit it.
         var cueFiredAt: Date?
         var cueID: String?
+        /// Last matching intervention. Later replies never clear it.
+        var lastMatchingInterventionAt: Date? = nil
+        /// Last reply naming this need that saw the partner engaged.
+        var partnerEngagedAt: Date? = nil
     }
 
     private struct CueEffect {
@@ -108,6 +112,14 @@ public struct NeedEngine<TimeSource: Clock> {
     private var lastModelCallAt: Date?
     private var lastHeartbeatAt: Date?
     private var lastLatchCallAt: Date?
+    /// Idle-latch token bucket: capacity 2, refill 1 per 10 s. Every latch
+    /// call admitted from the idle band spends a token; the quiet cadence
+    /// stays 10 s and only early calls need a token waiting.
+    private var idleBucketTokens = 2.0
+    private var idleBucketUpdatedAt: Date?
+    /// The gate reported an activity edge or motion at or above
+    /// `SignalGateTuning.activityEdgeMotion` since the last latch call.
+    private var sceneChangedSinceLatchCall = false
     private var lastSuccessfulLatchAt: Date?
     private var revisionAtLastLatchCall = 0
     private var lastCueAt: Date?
@@ -154,6 +166,9 @@ public struct NeedEngine<TimeSource: Clock> {
 
     public var openNeedIDs: [String] { tracked.map(\.needID) }
 
+    /// How the latest `resolve()` close read. The phone logs shared finishes from this.
+    public private(set) var lastResolution: ResolutionOutcome?
+
     public func callsInLastMinute(now: Date? = nil) -> Int {
         let cutoff = (now ?? clock.now()).addingTimeInterval(-60)
         return callIssuedTimestamps.filter { $0 > cutoff }.count
@@ -175,7 +190,9 @@ public struct NeedEngine<TimeSource: Clock> {
                 awaitingRecheck: item.awaitingRecheck,
                 choreID: item.choreID,
                 pendingWearerAction: item.pendingWearerAction,
-                visibleAt: item.visibleAt
+                visibleAt: item.visibleAt,
+                lastMatchingInterventionAt: item.lastMatchingInterventionAt,
+                partnerEngagedAt: item.partnerEngagedAt
             )
         }
     }
@@ -258,6 +275,10 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         if gate.handGateRisingEdge || gate.activityEdge {
             handEdgePending = true
+        }
+        if gate.handGateRisingEdge || gate.activityEdge
+            || (gate.motionScore ?? 0) >= SignalGateTuning.activityEdgeMotion {
+            sceneChangedSinceLatchCall = true
         }
         // Evidence age follows a person rect or, later, Spark's partner_in_view.
         // A motion keyframe alone does not refresh it.
@@ -650,20 +671,27 @@ public struct NeedEngine<TimeSource: Clock> {
         if !tracked.isEmpty, latency.dedupeAllPurposes, !recentPerson {
             return
         }
-        let idleMinInterval: TimeInterval = {
-            if latency.dedupeAllPurposes,
-               tracked.isEmpty,
-               lastLatchCallAt != nil,
-               !recentPerson,
-               !handEdgePending,
-               now.timeIntervalSince(sessionStartedAt) >= latency.sessionWarmupSeconds {
-                return max(timing.latchMinIntervalSeconds, SessionLimits.latchMinIntervalSeconds)
+        var spendIdleToken = false
+        if latency.sceneChangeLatchBypass {
+            let admission = admitIdleLatch(now: now, recentPerson: recentPerson)
+            guard admission != .denied else { return }
+            spendIdleToken = admission == .admittedSpendingToken
+        } else {
+            let idleMinInterval: TimeInterval = {
+                if latency.dedupeAllPurposes,
+                   tracked.isEmpty,
+                   lastLatchCallAt != nil,
+                   !recentPerson,
+                   !handEdgePending,
+                   now.timeIntervalSince(sessionStartedAt) >= latency.sessionWarmupSeconds {
+                    return max(timing.latchMinIntervalSeconds, SessionLimits.latchMinIntervalSeconds)
+                }
+                return timing.latchMinIntervalSeconds
+            }()
+            if let lastLatchCallAt,
+               now.timeIntervalSince(lastLatchCallAt) < idleMinInterval {
+                return
             }
-            return timing.latchMinIntervalSeconds
-        }()
-        if let lastLatchCallAt,
-           now.timeIntervalSince(lastLatchCallAt) < idleMinInterval {
-            return
         }
         if let lastSuccessfulLatchAt,
            now.timeIntervalSince(lastSuccessfulLatchAt) < timing.latchMinIntervalSeconds {
@@ -681,7 +709,18 @@ public struct NeedEngine<TimeSource: Clock> {
         let minKeyframes = hasUrgentCandidate ? 1 : timing.latchMinKeyframes
         guard strip.count >= minKeyframes else { return }
         guard shouldIssue(purpose: .latch, now: now) else { return }
+        if spendIdleToken {
+            idleBucketTokens = max(0, idleBucketTokens - 1)
+        }
         issue(.latch, now: now)
+    }
+
+    /// Idle-gate decision. The token is spent at issue time, not here: the
+    /// strip and dedupe checks below can still refuse after admission.
+    private enum IdleLatchAdmission {
+        case denied
+        case admitted
+        case admittedSpendingToken
     }
 
     /// Unified call gate across latch, heartbeat, and recheck.
@@ -721,6 +760,44 @@ public struct NeedEngine<TimeSource: Clock> {
         record(.skip, needID: nil, detail: detail)
     }
 
+    /// Idle-latch admission with the scene-change bucket. A scene change may
+    /// spend a token for an early call (still paced by the quick latch
+    /// interval); with no scene change the 10 s cadence stands. Every call
+    /// admitted from the idle band spends a token, which keeps ≤ 6/min
+    /// sustained. Suppression logs `idle-bucket` so dedupe shows on device.
+    private mutating func admitIdleLatch(now: Date, recentPerson: Bool) -> IdleLatchAdmission {
+        let quick = timing.latchMinIntervalSeconds
+        let idleLike = tracked.isEmpty && !recentPerson && !handEdgePending
+        let warmedUp = now.timeIntervalSince(sessionStartedAt) >= latency.sessionWarmupSeconds
+        if latency.dedupeAllPurposes, idleLike, warmedUp {
+            refillIdleBucket(now: now)
+            guard let last = lastLatchCallAt else {
+                return .admittedSpendingToken
+            }
+            let elapsed = now.timeIntervalSince(last)
+            if sceneChangedSinceLatchCall, idleBucketTokens >= 1, elapsed >= quick {
+                return .admittedSpendingToken
+            }
+            if elapsed < max(quick, SessionLimits.latchMinIntervalSeconds) {
+                recordSkip("idle-bucket")
+                return .denied
+            }
+            return .admittedSpendingToken
+        }
+        if let last = lastLatchCallAt, now.timeIntervalSince(last) < quick {
+            return .denied
+        }
+        return .admitted
+    }
+
+    /// Refill 1 token per 10 s up to the capacity of 2.
+    private mutating func refillIdleBucket(now: Date) {
+        if let updatedAt = idleBucketUpdatedAt {
+            idleBucketTokens = min(2, idleBucketTokens + now.timeIntervalSince(updatedAt) / 10)
+        }
+        idleBucketUpdatedAt = now
+    }
+
     private func canIssueCall(now: Date) -> Bool {
         if visitorUploadPaused || sessionIsOver(now) { return false }
         return callsIssued < SessionLimits.maxModelCallsPerSession
@@ -740,6 +817,7 @@ public struct NeedEngine<TimeSource: Clock> {
                 lastHeartbeatAt = now
             }
             handEdgePending = false
+            sceneChangedSinceLatchCall = false
         }
         if purpose == .heartbeat || purpose == .recheck {
             lastHeartbeatAt = now
@@ -758,7 +836,9 @@ public struct NeedEngine<TimeSource: Clock> {
                 latchedSecondsAgo: now.timeIntervalSince(item.latchedAt),
                 cueSpoken: item.cueDelivered,
                 problemCondition: problem,
-                resolutionSignal: Self.resolutionSignal(for: need, latency: latency)
+                resolutionSignal: Self.resolutionSignal(for: need, latency: latency),
+                wearerActedSecondsAgo: latency.creditRecentIntervention
+                    ? item.lastMatchingInterventionAt.map { now.timeIntervalSince($0) } : nil
             )
         }
         pendingModelCalls.append(
@@ -916,7 +996,14 @@ public struct NeedEngine<TimeSource: Clock> {
         guard var need = catalog.need(id: needID) else { return }
         guard let index = indexOfOpen(needID) else { return }
         let assessment = verdict.assessment
-        if assessment.resolution == .resolvedByPartner {
+        // A resolved verdict that still sees her keeps the handoff on record
+        // even when she closes it.
+        if assessment.resolution == .resolvedByPartner, assessment.partnerInView == true {
+            tracked[index].partnerEngagedAt = now
+        }
+        let recentCreditDetail = recentInterventionDetail(at: index, assessment: assessment, tool: verdict.tool, now: now)
+        if assessment.resolution == .resolvedByPartner, recentCreditDetail == nil {
+            noteResolution(needID: needID, index: index, shared: false, now: now)
             close(needID, now: now, cooldown: true)
             record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
             return
@@ -935,19 +1022,21 @@ public struct NeedEngine<TimeSource: Clock> {
                 || (assessment.sustainedAcrossStrip == false && assessment.wearerHandsVisible == true && assessment.partnerInView == false)
                 || (tracked[index].cueDelivered && assessment.sustainedAcrossStrip == false)
         }
-        if wearerResolved {
+        if wearerResolved || recentCreditDetail != nil {
             if tracked[index].cueDelivered {
                 // The cue already applied applyCueFired: no self-notice step,
                 // but the success still fires so the phone shows "You got it".
+                noteResolution(needID: needID, index: index, shared: recentCreditDetail == "shared-finish", now: now)
                 close(needID, now: now, cooldown: true)
-                record(.caughtHimself, needID: needID, detail: "after-cue")
+                record(.caughtHimself, needID: needID, detail: recentCreditDetail ?? "after-cue")
             } else {
                 let before = need.mastery
                 need.mastery = MasteryMath.applySelfNotice(need.mastery)
                 let becameRetired = before.phase != .retired && need.mastery.phase == .retired
                 catalog.update(need)
+                noteResolution(needID: needID, index: index, shared: recentCreditDetail == "shared-finish", now: now)
                 close(needID, now: now, cooldown: true)
-                let detail = assessment.resolution == .caughtHimself ? "before-cue" : (pendingAction ?? "before-cue")
+                let detail = recentCreditDetail ?? (assessment.resolution == .caughtHimself ? "before-cue" : (pendingAction ?? "before-cue"))
                 record(.caughtHimself, needID: needID, detail: detail)
                 if becameRetired {
                     record(.masteryRetired, needID: needID, detail: nil)
@@ -956,6 +1045,32 @@ public struct NeedEngine<TimeSource: Clock> {
             return
         }
         record(.stillOpen, needID: needID, detail: "unclear")
+    }
+
+    /// Recent-intervention credit: a matching intervention inside the window
+    /// beats a partner/unknown verdict when no partner is in view. Shared when
+    /// she was engaged earlier ("she started, he finished"), solo otherwise.
+    /// Only `report_need_resolved` can credit; `report_no_transition` never does.
+    private func recentInterventionDetail(at index: Int, assessment: SceneAssessment, tool: ToolName, now: Date) -> String? {
+        guard latency.creditRecentIntervention,
+            tool == .reportNeedResolved,
+            assessment.resolution == .resolvedByPartner || assessment.resolution == .unknown || assessment.resolution == nil,
+            assessment.partnerInView != true,
+            let actedAt = tracked[index].lastMatchingInterventionAt,
+            now.timeIntervalSince(actedAt) <= latency.recentInterventionWindowSeconds
+        else { return nil }
+        return tracked[index].partnerEngagedAt == nil ? "recent-intervention" : "shared-finish"
+    }
+
+    private mutating func noteResolution(needID: String, index: Int, shared: Bool, now: Date) {
+        let item = tracked[index]
+        lastResolution = ResolutionOutcome(
+            needID: needID,
+            sharedWithPartner: shared,
+            partnerSeenSecondsAgo: item.partnerEngagedAt.map { now.timeIntervalSince($0) },
+            wearerActedSecondsAgo: item.lastMatchingInterventionAt.map { now.timeIntervalSince($0) },
+            at: now
+        )
     }
 
     private mutating func applyAssessment(
@@ -981,6 +1096,11 @@ public struct NeedEngine<TimeSource: Clock> {
 
         guard let index = indexOfOpen(needID) else { return }
 
+        // Any reply naming an open need that still sees her engaged keeps the
+        // handoff on record. Never cleared while the need is open.
+        if assessment.partnerInView == true, assessment.sustainedAcrossStrip != false {
+            tracked[index].partnerEngagedAt = now
+        }
         if assessment.sustainedAcrossStrip == true {
             tracked[index].evidenceAt = now
             tracked[index].inconclusiveHold = false
@@ -1035,6 +1155,7 @@ public struct NeedEngine<TimeSource: Clock> {
             if verdict.tool == .logWearerIntervention {
                 if MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) {
                     tracked[index].pendingWearerAction = assessment.actionCode
+                    tracked[index].lastMatchingInterventionAt = now
                 } else if MasteryMath.hasWearerPrefix(assessment.actionCode) {
                     record(.actionRejected, needID: needID, detail: "unrelated-wearer-action")
                 } else {
@@ -1079,6 +1200,9 @@ public struct NeedEngine<TimeSource: Clock> {
 
         if wearerAction {
             tracked[index].pendingWearerAction = assessment.actionCode
+            if MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) {
+                tracked[index].lastMatchingInterventionAt = now
+            }
         } else if assessment.resolution == .caughtHimself {
             record(.actionRejected, needID: needID, detail: "unconfirmed")
         }

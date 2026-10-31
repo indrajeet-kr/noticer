@@ -71,6 +71,33 @@ final class DictationServiceTests: XCTestCase {
         XCTAssertEqual(notice, "Voice typing is off during a session")
     }
 
+    /// The OS answers authorization requests on a background queue. A
+    /// MainActor-isolated resume closure traps there (EXC_BREAKPOINT, seen
+    /// twice on device); these fire the callbacks off-main like TCC does.
+    func testSpeechAuthorizationSurvivesBackgroundCallback() async {
+        let granted = await LiveSpeechTranscriber.speechAuthorization { handler in
+            DispatchQueue.global(qos: .default).async {
+                handler(.authorized)
+            }
+        }
+        XCTAssertTrue(granted)
+        let denied = await LiveSpeechTranscriber.speechAuthorization { handler in
+            DispatchQueue.global(qos: .default).async {
+                handler(.denied)
+            }
+        }
+        XCTAssertFalse(denied)
+    }
+
+    func testMicrophoneAuthorizationSurvivesBackgroundCallback() async {
+        let granted = await LiveSpeechTranscriber.microphoneAuthorization { handler in
+            DispatchQueue.global(qos: .default).async {
+                handler(true)
+            }
+        }
+        XCTAssertTrue(granted)
+    }
+
     func testDeniedPermissionsShowNotice() async {
         let fake = await MainActor.run {
             let fake = FakeSpeechTranscriber()

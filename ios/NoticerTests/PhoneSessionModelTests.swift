@@ -1,5 +1,6 @@
 import Foundation
 import NoticerCore
+import NoticerPipeline
 import XCTest
 
 /// Model wiring: observable cue history, session boundaries, latest-session
@@ -152,5 +153,124 @@ final class PhoneSessionModelTests: XCTestCase {
         XCTAssertTrue(model.isRunning)
         XCTAssertNil(model.resetLearningProgress(), "reset must be refused while a session runs")
         model.stop()
+    }
+
+    @MainActor
+    func testSharedFinishShowsYouFinishedIt() throws {
+        let model = PhoneSessionModel()
+        model.moments = []
+        let at = Date()
+        model.applyLiveState(SessionView(
+            now: at,
+            needs: [],
+            openNeeds: [],
+            cues: [],
+            log: [EngineEvent(kind: .caughtHimself, needID: "take-baby", at: at, detail: "shared-finish")],
+            modelCalls: 1,
+            lastResolution: ResolutionOutcome(
+                needID: "take-baby",
+                sharedWithPartner: true,
+                partnerSeenSecondsAgo: 38,
+                wearerActedSecondsAgo: 3,
+                at: at
+            )
+        ))
+
+        let moment = try XCTUnwrap(model.moments.last)
+        XCTAssertEqual(moment.sharedWithPartner, true)
+        XCTAssertEqual(SessionStatus.gotIt(needName: "take-baby", shared: true).word, "You finished it")
+        XCTAssertEqual(SessionStatus.gotIt(needName: "take-baby", shared: true).line, "Nice teamwork.")
+        XCTAssertEqual(
+            SessionCircleWords.text(for: .gotIt(needName: "take-baby", shared: true)),
+            "You finished it. Nice teamwork."
+        )
+        XCTAssertEqual(
+            PhoneSessionModel.describe(EngineEvent(kind: .caughtHimself, needID: "take-baby", at: at, detail: "shared-finish")),
+            "You finished it take-baby. She started, you wrapped it up."
+        )
+        XCTAssertTrue(model.sessionLog.entries.contains {
+            $0.message.contains("sharedFinish take-baby partnerSeen=38s wearerActed=3s")
+        })
+    }
+
+    @MainActor
+    func testSoloStillYouGotIt() throws {
+        let model = PhoneSessionModel()
+        model.moments = []
+        let at = Date()
+        let event = EngineEvent(kind: .caughtHimself, needID: "take-baby", at: at, detail: "before-cue")
+        model.applyLiveState(SessionView(
+            now: at,
+            needs: [],
+            openNeeds: [],
+            cues: [],
+            log: [event],
+            modelCalls: 1
+        ))
+
+        let moment = try XCTUnwrap(model.moments.last)
+        XCTAssertEqual(moment.kind, .selfNotice)
+        XCTAssertNotEqual(moment.sharedWithPartner, true)
+        XCTAssertEqual(SessionStatus.gotIt(needName: "take-baby", shared: false).word, "You got it")
+        XCTAssertEqual(SessionStatus.gotIt(needName: "take-baby", shared: false).line, "Nice catch.")
+        XCTAssertEqual(
+            SessionCircleWords.text(for: .gotIt(needName: "take-baby", shared: false)),
+            "You got it. Nice catch."
+        )
+        XCTAssertEqual(PhoneSessionModel.describe(event), "Caught it himself take-baby.")
+        XCTAssertFalse(model.sessionLog.entries.contains { $0.message.contains("sharedFinish") })
+    }
+
+    @MainActor
+    func testSharedFinishCopyHasNoForbiddenWords() {
+        let lines = [
+            "You finished it",
+            "Nice teamwork.",
+            "You finished it. Nice teamwork.",
+            "You finished it take-baby. She started, you wrapped it up.",
+            "sharedFinish take-baby partnerSeen=38s wearerActed=3s",
+            SessionStatus.gotIt(needName: "take-baby", shared: true).word,
+            SessionStatus.gotIt(needName: "take-baby", shared: true).line,
+            SessionCircleWords.text(for: .gotIt(needName: "take-baby", shared: true)),
+            PhoneSessionModel.describe(EngineEvent(
+                kind: .caughtHimself,
+                needID: "take-baby",
+                at: Date(),
+                detail: "shared-finish"
+            )),
+        ]
+        for line in lines {
+            XCTAssertNil(NeedsIntentWhisper.forbiddenWord(in: line), line)
+        }
+    }
+
+    @MainActor
+    func testSkipEventsReachSessionLogThrottled() {
+        let model = PhoneSessionModel()
+        let t0 = Date()
+        let first = EngineEvent(kind: .skip, needID: nil, at: t0, detail: "idle-bucket")
+        let repeatDetail = EngineEvent(kind: .skip, needID: nil, at: t0.addingTimeInterval(1), detail: "idle-bucket")
+        let other = EngineEvent(kind: .skip, needID: nil, at: t0.addingTimeInterval(2), detail: "min-gap purpose=latch")
+        model.applyLiveState(SessionView(now: t0, needs: [], openNeeds: [], cues: [], log: [first], modelCalls: 1))
+        model.applyLiveState(SessionView(
+            now: t0.addingTimeInterval(1),
+            needs: [],
+            openNeeds: [],
+            cues: [],
+            log: [first, repeatDetail],
+            modelCalls: 1
+        ))
+        model.applyLiveState(SessionView(
+            now: t0.addingTimeInterval(2),
+            needs: [],
+            openNeeds: [],
+            cues: [],
+            log: [first, repeatDetail, other],
+            modelCalls: 1
+        ))
+
+        let lines = model.sessionLog.entries.map(\.message)
+        XCTAssertEqual(lines.filter { $0.contains("skip idle-bucket") }.count, 1)
+        XCTAssertEqual(lines.filter { $0.contains("skip min-gap purpose=latch") }.count, 1)
     }
 }

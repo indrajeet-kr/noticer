@@ -37,6 +37,12 @@ public struct OpenNeedState: Equatable, Sendable {
     public var pendingWearerAction: String?
     /// Capture time of the oldest keyframe in the strip that latched this need.
     public var visibleAt: Date
+    /// Last `log_wearer_intervention` whose action matched this need's signal.
+    /// Unlike `pendingWearerAction`, later replies never clear it.
+    public var lastMatchingInterventionAt: Date?
+    /// Last reply naming this need that saw the partner engaged. Never cleared
+    /// while the need is open.
+    public var partnerEngagedAt: Date?
 
     public init(
         needID: String,
@@ -48,7 +54,9 @@ public struct OpenNeedState: Equatable, Sendable {
         awaitingRecheck: Bool,
         choreID: String?,
         pendingWearerAction: String?,
-        visibleAt: Date? = nil
+        visibleAt: Date? = nil,
+        lastMatchingInterventionAt: Date? = nil,
+        partnerEngagedAt: Date? = nil
     ) {
         self.needID = needID
         self.latchedAt = latchedAt
@@ -60,6 +68,8 @@ public struct OpenNeedState: Equatable, Sendable {
         self.choreID = choreID
         self.pendingWearerAction = pendingWearerAction
         self.visibleAt = visibleAt ?? latchedAt
+        self.lastMatchingInterventionAt = lastMatchingInterventionAt
+        self.partnerEngagedAt = partnerEngagedAt
     }
 }
 
@@ -119,6 +129,35 @@ public struct EngineEvent: Equatable, Sendable {
         self.needID = needID
         self.at = at
         self.detail = detail
+    }
+
+    /// A shared finish: she started it, he wrapped it up.
+    public var isSharedFinish: Bool {
+        kind == .caughtHimself && detail == "shared-finish"
+    }
+}
+
+/// How the latest close read, for the phone's shared-finish log line. No new
+/// `EngineEventKind`, so persistence stays backward-compatible.
+public struct ResolutionOutcome: Equatable, Sendable {
+    public var needID: String
+    public var sharedWithPartner: Bool
+    public var partnerSeenSecondsAgo: TimeInterval?
+    public var wearerActedSecondsAgo: TimeInterval?
+    public var at: Date
+
+    public init(
+        needID: String,
+        sharedWithPartner: Bool,
+        partnerSeenSecondsAgo: TimeInterval? = nil,
+        wearerActedSecondsAgo: TimeInterval? = nil,
+        at: Date
+    ) {
+        self.needID = needID
+        self.sharedWithPartner = sharedWithPartner
+        self.partnerSeenSecondsAgo = partnerSeenSecondsAgo
+        self.wearerActedSecondsAgo = wearerActedSecondsAgo
+        self.at = at
     }
 }
 

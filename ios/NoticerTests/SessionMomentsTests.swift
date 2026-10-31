@@ -86,4 +86,25 @@ final class SessionMomentsTests: XCTestCase {
         let gone = moment(at: Date(), needID: "removed-need", text: "what she said then")
         XCTAssertEqual(MomentWords.text(for: gone, needs: []), "what she said then")
     }
+
+    func testOldSavedMomentsDecodeWithoutSharedFlag() throws {
+        let json = """
+        {"id":"\(UUID().uuidString)","at":\(Date().timeIntervalSince1970),"needID":"take-baby","kind":"selfNotice","text":"take the baby"}
+        """.data(using: .utf8)!
+        let moment = try JSONDecoder().decode(SessionMoment.self, from: json)
+        XCTAssertNil(moment.sharedWithPartner)
+    }
+
+    func testSharedMomentRoundTrips() throws {
+        let moment = SessionMoment(
+            at: Date(),
+            needID: "take-baby",
+            kind: .selfNotice,
+            text: "take the baby",
+            sharedWithPartner: true
+        )
+        let back = try JSONDecoder().decode(SessionMoment.self, from: JSONEncoder().encode(moment))
+        XCTAssertEqual(back.sharedWithPartner, true)
+        XCTAssertEqual(back, moment)
+    }
 }

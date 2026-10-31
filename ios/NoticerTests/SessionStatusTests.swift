@@ -14,7 +14,7 @@ final class SessionStatusTests: XCTestCase {
                 headStart: (10, 20),
                 noticedAt: now,
                 lastCue: ("Hi.", now),
-                lastSelfNotice: ("Water", now),
+                lastSelfNotice: ("Water", now, false),
                 checking: true,
                 now: now
             ),
@@ -97,11 +97,26 @@ final class SessionStatusTests: XCTestCase {
             headStart: nil,
             noticedAt: nil,
             lastCue: ("Her water's low.", now.addingTimeInterval(-3)),
-            lastSelfNotice: ("Water", now.addingTimeInterval(-2)),
+            lastSelfNotice: ("Water", now.addingTimeInterval(-2), false),
             checking: false,
             now: now
         )
         XCTAssertEqual(gotIt, .gotIt(needName: "Water"))
+        XCTAssertEqual(gotIt.word, "You got it")
+
+        let shared = SessionStatusResolver.resolve(
+            isRunning: true,
+            openNeedName: nil,
+            headStart: nil,
+            noticedAt: nil,
+            lastCue: nil,
+            lastSelfNotice: ("Water", now.addingTimeInterval(-2), true),
+            checking: false,
+            now: now
+        )
+        XCTAssertEqual(shared, .gotIt(needName: "Water", shared: true))
+        XCTAssertEqual(shared.word, "You finished it")
+        XCTAssertEqual(shared.line, "Nice teamwork.")
     }
 
     func testNoticedWithoutHeadStart() {

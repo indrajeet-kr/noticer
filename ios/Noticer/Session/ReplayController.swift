@@ -322,7 +322,7 @@ private struct ReplayStatusMemory {
     private var openName = ""
     private var openSince: Date?
     private var lastCue: (text: String, at: Date)?
-    private var lastSelfNotice: (name: String, at: Date)?
+    private var lastSelfNotice: (name: String, at: Date, shared: Bool)?
     private var seenLogCount = 0
     private var current: SessionStatus = .listening(checking: false)
 
@@ -341,7 +341,7 @@ private struct ReplayStatusMemory {
         }
         for event in view.log.dropFirst(seenLogCount) {
             if event.kind == .caughtHimself, let needID = event.needID {
-                lastSelfNotice = (ReplayStatusMemory.words(for: needID, in: view), event.at)
+                lastSelfNotice = (ReplayStatusMemory.words(for: needID, in: view), event.at, event.isSharedFinish)
             }
         }
         seenLogCount = view.log.count
@@ -355,7 +355,7 @@ private struct ReplayStatusMemory {
             lastSelfNotice != nil
         }
         if selfFresh, selfWins {
-            current = .gotIt(needName: lastSelfNotice?.name ?? "")
+            current = .gotIt(needName: lastSelfNotice?.name ?? "", shared: lastSelfNotice?.shared == true)
             return
         }
         if cueFresh, !selfWins || lastSelfNotice == nil {

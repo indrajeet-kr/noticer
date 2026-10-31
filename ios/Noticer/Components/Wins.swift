@@ -16,7 +16,11 @@ struct WinRow: View {
             Text(wordsForMoment(moment))
                 .font(Theme.Font.body)
             Spacer()
-            if moment.kind == .selfNotice {
+            if moment.sharedWithPartner == true {
+                Text("You finished it")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.gotIt)
+            } else if moment.kind == .selfNotice {
                 Text("On his own")
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.gotIt)
@@ -60,7 +64,7 @@ struct ShareSummaryCard: View {
                     Text(wordsForMoment(win))
                         .font(Theme.Font.body)
                     Spacer()
-                    Text(win.kind == .selfNotice ? "On his own" : "With a little nudge")
+                    Text(win.sharedWithPartner == true ? "You finished it" : (win.kind == .selfNotice ? "On his own" : "With a little nudge"))
                         .font(Theme.Font.caption)
                         .foregroundStyle(Theme.textSecondary)
                 }

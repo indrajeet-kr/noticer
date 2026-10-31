@@ -26,7 +26,7 @@ struct TonightTimeline: View {
                             dot: moment.kind == .selfNotice ? .caught : .nudged,
                             words: wordsForMoment(moment),
                             time: moment.at,
-                            detail: moment.kind == .selfNotice ? "Caught himself" : "With a nudge"
+                            detail: moment.sharedWithPartner == true ? "You finished it" : (moment.kind == .selfNotice ? "You got it" : "With a nudge")
                         )
                         if moment.id != sortedMoments.last?.id {
                             Divider().background(Theme.textPrimary.opacity(0.08))

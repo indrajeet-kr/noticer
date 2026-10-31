@@ -15,8 +15,8 @@ enum SessionCircleWords {
             return "Noticed: \(name) · about \(secondsLeft) s for you"
         case .cue(let whisper):
             return "We gave you a nudge: \(whisper)"
-        case .gotIt:
-            return "You got it. Nice catch."
+        case .gotIt(_, let shared):
+            return shared ? "You finished it. Nice teamwork." : "You got it. Nice catch."
         }
     }
 }

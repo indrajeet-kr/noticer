@@ -91,7 +91,8 @@ class EngineTestCase: XCTestCase {
         jpeg: UInt8 = 1,
         handsEdge: Bool = false,
         sceneActive: Bool = false,
-        activityEdge: Bool = false
+        activityEdge: Bool = false,
+        motion: Double? = nil
     ) {
         let now = clock.now()
         let frame = CameraFrame(capturedAt: now, jpegData: Data([jpeg]), width: 8, height: 8)
@@ -100,6 +101,7 @@ class EngineTestCase: XCTestCase {
             people: people,
             wearerHandsVisible: handsEdge,
             handGateRisingEdge: handsEdge,
+            motionScore: motion,
             sharpness: sharpness,
             sceneActive: sceneActive,
             activityEdge: activityEdge

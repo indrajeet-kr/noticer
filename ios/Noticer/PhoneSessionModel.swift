@@ -87,6 +87,9 @@ final class PhoneSessionModel {
     var liveLastLatchedAt: Date?
     /// Engine event timeline for the dev panel, oldest first, capped.
     var liveEventTimeline: [String] = []
+    /// Last log time per skip detail. Skip lines are chatty by design; the
+    /// transcript keeps one per detail per 5 s.
+    private var lastSkipLogAt: [String: Date] = [:]
     /// Developer-mode transcript: lifecycle, frames, model turns, engine
     /// events, speech, errors. Cleared on start, kept after stop for review.
     var sessionLog = SessionLog()
@@ -699,6 +702,7 @@ final class PhoneSessionModel {
         seenCueIDs = []
         seenLogCount = 0
         lastSeenModelCalls = 0
+        lastSkipLogAt = [:]
     }
 
     private func apply(_ step: PipelineStep, _ view: SessionView) {
@@ -741,7 +745,9 @@ final class PhoneSessionModel {
     /// Display-only mirror of the pipeline view. Writes the live display
     /// state, tonight's wins, and the authored list's mastery. Never feeds
     /// anything back into the session.
-    private func applyLiveState(_ view: SessionView) {
+    /// Drain one pipeline view into live state, moments, and the transcript.
+    /// Internal so tests can feed engine events directly.
+    func applyLiveState(_ view: SessionView) {
         if view.modelCalls != lastSeenModelCalls {
             lastSeenModelCalls = view.modelCalls
             liveLastModelActivityAt = Date()
@@ -768,18 +774,30 @@ final class PhoneSessionModel {
         }
         let fresh = Array(view.log.dropFirst(seenLogCount))
         for event in fresh {
+            if event.kind == .skip, shouldThrottleSkip(event.detail, now: view.now) {
+                continue
+            }
             sessionLog.append("ENGINE", Self.describeLogEvent(event))
             switch event.kind {
             case .caughtHimself:
                 liveSelfNoticeAt = Date()
                 liveSelfNoticeNeedID = event.needID
+                if event.isSharedFinish, let needID = event.needID {
+                    let outcome = view.lastResolution.flatMap { $0.needID == needID ? $0 : nil }
+                    let partner = outcome?.partnerSeenSecondsAgo.map { "\(Int($0))s" } ?? "?"
+                    let acted = outcome?.wearerActedSecondsAgo.map { "\(Int($0))s" } ?? "?"
+                    sessionLog.append("ENGINE", "sharedFinish \(needID) partnerSeen=\(partner) wearerActed=\(acted)")
+                }
                 if let needID = event.needID {
+                    let cueFired = event.detail == "after-cue"
+                        || moments.contains { $0.needID == needID && $0.kind == .cued }
                     moments.append(SessionMoment(
                         at: Date(),
                         needID: needID,
-                        kind: event.detail == "after-cue" ? .nudge : .selfNotice,
+                        kind: cueFired ? .nudge : .selfNotice,
                         text: Self.words(for: needID, in: view),
-                        sessionID: currentSessionID
+                        sessionID: currentSessionID,
+                        sharedWithPartner: event.isSharedFinish
                     ))
                 }
             case .cueFired:
@@ -830,6 +848,16 @@ final class PhoneSessionModel {
                 masterySamples[need.id] = Array(samples.suffix(30))
             }
         }
+    }
+
+    /// True when this skip line was logged less than 5 s ago for its detail.
+    private func shouldThrottleSkip(_ detail: String?, now: Date) -> Bool {
+        let key = detail ?? ""
+        if let last = lastSkipLogAt[key], now.timeIntervalSince(last) < 5 {
+            return true
+        }
+        lastSkipLogAt[key] = now
+        return false
     }
 
     private static func describeLogEvent(_ event: EngineEvent) -> String {
@@ -914,7 +942,9 @@ final class PhoneSessionModel {
         return "motion \(motion), sharpness \(sharp), \(decisionText)"
     }
 
-    private static func describe(_ event: EngineEvent) -> String {
+    /// One human line per engine event, for the verdict line. Internal so
+    /// tests can pin the shared-finish copy.
+    static func describe(_ event: EngineEvent) -> String {
         let who = event.needID.map { " \($0)" } ?? ""
         switch event.kind {
         case .needLatched:
@@ -922,6 +952,9 @@ final class PhoneSessionModel {
         case .cueFired:
             return "Cue fired\(who)."
         case .caughtHimself:
+            if event.isSharedFinish {
+                return "You finished it\(who). She started, you wrapped it up."
+            }
             return "Caught it himself\(who)."
         case .headStartExtended:
             return "Head start extended\(who)."

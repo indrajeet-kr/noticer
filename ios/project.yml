@@ -69,6 +69,7 @@ targets:
       - path: Noticer/Support
       - path: Noticer/Replay
       - path: Noticer/Components/ReplayScrubber.swift
+      - path: Noticer/Components/SessionCircle.swift
       - path: Noticer/Theme
     dependencies:
       - package: NoticerPackage
