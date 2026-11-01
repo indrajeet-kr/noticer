@@ -381,6 +381,21 @@ final class PhoneSessionModel {
         }
     }
 
+    /// Toggles the safety flag the engine reads (`isUrgent`: zero head
+    /// start, latches on one clear keyframe). Saves immediately; pending
+    /// read-backs keep it through `toNeeds`, so nothing is superseded.
+    func setUrgent(_ needID: String, urgent: Bool) {
+        guard let index = needs.firstIndex(where: { $0.id == needID }),
+              needs[index].isUrgent != urgent
+        else {
+            return
+        }
+        let before = needs
+        needs[index].isUrgent = urgent
+        logListDiff(old: before, cause: "priority-toggle")
+        commitNeeds()
+    }
+
     /// Sets every need's mastery back to initial. Refused (nil) while a
     /// session is running. Returns the prior mastery by need id for Undo.
     /// Tonight's wins are untouched. Never called automatically.

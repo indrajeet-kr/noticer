@@ -198,6 +198,23 @@ struct AddNeedSheet: View {
                 }
             }
             .transition(.opacity.combined(with: .move(edge: .bottom)))
+        case .swapQuestion(_, let text, _, let candidates):
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                SparkBubble(text: text)
+                FlowLayout {
+                    ForEach(candidates, id: \.id) { candidate in
+                        SuggestionChip(text: candidate.shortName) {
+                            service.noteSendSource(.chip)
+                            service.chooseSwap(candidateID: candidate.id, model: model)
+                        }
+                    }
+                    SuggestionChip(text: NeedListEdit.keepAllChip()) {
+                        service.noteSendSource(.chip)
+                        service.keepAll(model: model)
+                    }
+                }
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
         }
     }
 

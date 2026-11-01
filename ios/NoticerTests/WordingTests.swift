@@ -22,6 +22,14 @@ final class WordingTests: XCTestCase {
         XCTAssertEqual(TimingWords.headStartSentence(seconds: 90).detail, "90 seconds")
     }
 
+    func testHeadStartZeroMeansRightAway() {
+        XCTAssertEqual(
+            TimingWords.headStartSentence(seconds: 0).main,
+            "He'll hear it right away"
+        )
+        XCTAssertNil(TimingWords.headStartSentence(seconds: 0).detail)
+    }
+
     func testHeadStartMinutes() {
         XCTAssertEqual(
             TimingWords.headStartSentence(seconds: 60).main,

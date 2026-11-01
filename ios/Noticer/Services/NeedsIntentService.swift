@@ -19,13 +19,74 @@ final class NeedsIntentService {
             superseded: Bool
         )
         case question(id: UUID, text: String, suggestions: [String])
+        /// App-owned full-list question. Chips carry need ids (plus Keep);
+        /// nothing is added until she picks.
+        case swapQuestion(id: UUID, text: String, newText: String, candidates: [NeedListEdit.SwapCandidate])
 
         var id: UUID {
             switch self {
-            case .her(let id, _), .readBack(let id, _, _, _, _, _), .question(let id, _, _):
+            case .her(let id, _), .readBack(let id, _, _, _, _, _),
+                 .question(let id, _, _), .swapQuestion(let id, _, _, _):
                 return id
             }
         }
+    }
+
+    /// Where a turn goes. Pure so tests pin it without networking.
+    enum Route: Equatable {
+        case swapAnswer
+        case swapQuestion
+        case model
+    }
+
+    static func route(
+        message: String,
+        needsCount: Int,
+        pendingSwap: Bool,
+        lastEntryIsOpenQuestion: Bool
+    ) -> Route {
+        if pendingSwap {
+            return .swapAnswer
+        }
+        if needsCount >= SessionLimits.maxAuthoredNeeds,
+           !NeedListEdit.isEditMessage(message),
+           !lastEntryIsOpenQuestion {
+            return .swapQuestion
+        }
+        return .model
+    }
+
+    /// What a model `.needs` turn becomes: a guarded read-back, or the
+    /// app-owned swap question when the model tried to add past a full list.
+    enum NeedsEntryAction: Equatable {
+        case readBack([NeedsIntentDraft])
+        case swap(String)
+    }
+
+    static func needsEntryAction(
+        drafts: [NeedsIntentDraft],
+        message: String,
+        current: [Need],
+        explicit: Set<String>
+    ) -> NeedsEntryAction {
+        let merged = NeedListEdit.merge(
+            current: current,
+            drafts: drafts,
+            message: message,
+            explicitRemovals: explicit
+        )
+        if NeedListEdit.isFull(current) {
+            let currentIDs = Set(current.map(\.id))
+            let mergedIDs = Set(merged.map(\.id))
+            let ids = current.map(\.id)
+            for draft in drafts {
+                let id = NeedsIntentSlug.repair(draft.id, against: ids)
+                if !currentIDs.contains(id), !mergedIDs.contains(id) {
+                    return .swap(draft.authorText)
+                }
+            }
+        }
+        return .readBack(NeedsIntentConversion.fromNeeds(merged))
     }
 
     var entries: [Entry] = []
@@ -46,8 +107,19 @@ final class NeedsIntentService {
     /// Cleared when she accepts a newer list.
     var seededEntryID: UUID?
 
-    private var lastMessage: String?
+    private enum LastAction: Equatable {
+        case modelTurn(String)
+        case structureSwap(newText: String, pickID: String)
+    }
+
+    private var lastAction: LastAction?
     private var removed: (need: Need, index: Int)?
+    /// Her new-need text while the app-owned swap question is open.
+    private(set) var pendingSwapText: String?
+    /// Swap picks: the only ids a merge may drop without her naming them.
+    private(set) var pendingExplicitRemovals: Set<String> = []
+    /// Test seam: when set, turns call this instead of the live client.
+    var interpretHook: (([Need], String) async throws -> NeedsIntentResult)?
 
     var hasConversation: Bool {
         !entries.isEmpty
@@ -146,8 +218,13 @@ final class NeedsIntentService {
         guard !message.isEmpty, !thinking else {
             return
         }
+        let route = Self.route(
+            message: message,
+            needsCount: model.needs.count,
+            pendingSwap: pendingSwapText != nil,
+            lastEntryIsOpenQuestion: isOpenQuestion(entries.last)
+        )
         entries.append(.her(id: UUID(), text: message))
-        lastMessage = message
         model.sessionLog.appendActivity(
             "CONV",
             ActivityConversation.herLine(text: message, source: lastSource.rawValue)
@@ -155,69 +232,272 @@ final class NeedsIntentService {
         offline = false
         needsKey = false
         failureDetail = nil
-        thinking = true
-        Task {
-            await interpret(message: message, model: model)
+        switch route {
+        case .swapAnswer:
+            lastAction = nil
+            handleSwapAnswer(message, model: model)
+        case .swapQuestion:
+            lastAction = nil
+            showSwapQuestion(newText: message, model: model)
+        case .model:
+            lastAction = .modelTurn(message)
+            thinking = true
+            Task {
+                await interpret(message: message, model: model)
+            }
         }
+    }
+
+    /// An unanswered model question with chips: her next text answers it,
+    /// so it goes to the model, never the swap flow.
+    private func isOpenQuestion(_ entry: Entry?) -> Bool {
+        guard case .question(_, _, let suggestions) = entry else {
+            return false
+        }
+        return !suggestions.isEmpty
     }
 
     func retry(model: PhoneSessionModel) {
-        guard let lastMessage, !thinking else {
+        guard !thinking else {
             return
         }
-        offline = false
-        needsKey = false
-        failureDetail = nil
-        thinking = true
-        Task {
-            await interpret(message: lastMessage, model: model)
+        switch lastAction {
+        case .modelTurn(let message):
+            offline = false
+            needsKey = false
+            failureDetail = nil
+            thinking = true
+            Task {
+                await interpret(message: message, model: model)
+            }
+        case .structureSwap(let newText, let pickID):
+            offline = false
+            needsKey = false
+            failureDetail = nil
+            thinking = true
+            Task {
+                await structureNewNeed(newText: newText, pickID: pickID, model: model)
+            }
+        case nil:
+            return
         }
     }
 
-    private func interpret(message: String, model: PhoneSessionModel) async {
-        let client = NeedsIntentClient(apiKey: ModelKeyStore.currentKey())
+    func interpret(message: String, model: PhoneSessionModel) async {
         do {
-            let result = try await client.interpret(currentList: model.needs, message: message)
+            let result: NeedsIntentResult
+            if let hook = interpretHook {
+                result = try await hook(model.needs, message)
+            } else {
+                result = try await NeedsIntentClient(apiKey: ModelKeyStore.currentKey())
+                    .interpret(currentList: model.needs, message: message)
+            }
             thinking = false
-            lastMessage = nil
+            lastAction = nil
             switch result {
             case .needs(let drafts, let readBack):
                 model.sessionLog.appendActivity(
                     "CONV",
                     ActivityConversation.replyNeedsLine(count: drafts.count, readBack: readBack)
                 )
-                let changed = ChangedDrafts.between(drafts: drafts, current: model.needs)
-                entries.append(.readBack(
-                    id: UUID(),
+                switch Self.needsEntryAction(
                     drafts: drafts,
-                    readBack: readBack,
-                    changed: changed,
-                    accepted: false,
-                    superseded: false
-                ))
+                    message: message,
+                    current: model.needs,
+                    explicit: pendingExplicitRemovals
+                ) {
+                case .readBack(let guarded):
+                    let changed = ChangedDrafts.between(drafts: guarded, current: model.needs)
+                    entries.append(.readBack(
+                        id: UUID(),
+                        drafts: guarded,
+                        readBack: readBack,
+                        changed: changed,
+                        accepted: false,
+                        superseded: false
+                    ))
+                case .swap(let newText):
+                    showSwapQuestion(newText: newText, model: model)
+                }
+                pendingExplicitRemovals = []
             case .question(let question, let suggestions):
                 model.sessionLog.appendActivity(
                     "CONV",
                     ActivityConversation.replyQuestionLine(question: question, chips: suggestions)
                 )
+                pendingExplicitRemovals = []
                 entries.append(.question(id: UUID(), text: question, suggestions: suggestions))
             }
-        } catch let error as NeedsIntentError {
-            thinking = false
+        } catch {
+            failInterpret(error, model: model)
+        }
+    }
+
+    private func failInterpret(_ error: Error, model: PhoneSessionModel) {
+        thinking = false
+        if let error = error as? NeedsIntentError {
             if case .missingAPIKey = error {
                 needsKey = true
             }
             failureDetail = error.description
             offline = true
             model.sessionLog.appendActivity("CONV", "turn failed: \(error.description)")
-        } catch is CancellationError {
-            thinking = false
-        } catch {
-            thinking = false
+        } else if error is CancellationError {
+            return
+        } else {
             failureDetail = nil
             offline = true
             model.sessionLog.appendActivity("CONV", "turn failed: request failed (\(error.localizedDescription))")
         }
+    }
+
+    // MARK: - Swap flow (full list)
+
+    /// App-owned full-list question. Nothing is added until she picks.
+    func showSwapQuestion(newText: String, model: PhoneSessionModel) {
+        pendingSwapText = newText
+        model.sessionLog.appendActivity("CONV", "limit hit, swap offered for \"\(newText)\"")
+        entries.append(.swapQuestion(
+            id: UUID(),
+            text: NeedListEdit.swapQuestion(newText: newText),
+            newText: newText,
+            candidates: NeedListEdit.swapCandidates(for: model.needs)
+        ))
+    }
+
+    /// Her typed answer while a swap is pending: keep-all backs out, a
+    /// named need confirms the swap, anything else re-asks with fresh chips.
+    /// No model call: the answer resolves locally or not at all.
+    func handleSwapAnswer(_ message: String, model: PhoneSessionModel) {
+        guard let newText = pendingSwapText else {
+            return
+        }
+        if NeedListEdit.isKeepAllAnswer(message) {
+            appendKeepAllConfirmation(model: model)
+            return
+        }
+        if let pick = NeedListEdit.resolveNamedNeed(message: message, in: model.needs) {
+            confirmSwap(pickID: pick.id, model: model)
+            return
+        }
+        entries.append(.swapQuestion(
+            id: UUID(),
+            text: NeedListEdit.swapReaskQuestion(newText: newText),
+            newText: newText,
+            candidates: NeedListEdit.swapCandidates(for: model.needs)
+        ))
+    }
+
+    /// Swap chip tap: her explicit pick. Structures the new need with an
+    /// empty list (the model never sees the saved six, so it can't rewrite
+    /// them), then swaps it into the picked slot.
+    func chooseSwap(candidateID: String, model: PhoneSessionModel) {
+        guard let newText = pendingSwapText, !thinking else {
+            return
+        }
+        guard let pick = model.needs.first(where: { $0.id == candidateID }) else {
+            entries.append(.swapQuestion(
+                id: UUID(),
+                text: NeedListEdit.swapReaskQuestion(newText: newText),
+                newText: newText,
+                candidates: NeedListEdit.swapCandidates(for: model.needs)
+            ))
+            return
+        }
+        entries.append(.her(id: UUID(), text: "Swap out \(NeedListEdit.shortName(for: pick))"))
+        confirmSwap(pickID: candidateID, model: model)
+    }
+
+    func confirmSwap(pickID: String, model: PhoneSessionModel) {
+        guard let newText = pendingSwapText else {
+            return
+        }
+        model.sessionLog.appendActivity("CONV", "swap chosen pick=\(pickID)")
+        pendingExplicitRemovals = [pickID]
+        lastAction = .structureSwap(newText: newText, pickID: pickID)
+        thinking = true
+        Task {
+            await structureNewNeed(newText: newText, pickID: pickID, model: model)
+        }
+    }
+
+    func structureNewNeed(newText: String, pickID: String, model: PhoneSessionModel) async {
+        do {
+            let result: NeedsIntentResult
+            if let hook = interpretHook {
+                result = try await hook([], newText)
+            } else {
+                result = try await NeedsIntentClient(apiKey: ModelKeyStore.currentKey())
+                    .interpret(currentList: [], message: newText)
+            }
+            thinking = false
+            lastAction = nil
+            switch result {
+            case .needs(let drafts, _):
+                model.sessionLog.appendActivity("CONV", "structured \(drafts.count) draft(s) for swap")
+                applyStructuredSwap(drafts: drafts, pickID: pickID, model: model)
+            case .question(let question, let suggestions):
+                model.sessionLog.appendActivity(
+                    "CONV",
+                    ActivityConversation.replyQuestionLine(question: question, chips: suggestions)
+                )
+                pendingSwapText = nil
+                pendingExplicitRemovals = []
+                entries.append(.question(id: UUID(), text: question, suggestions: suggestions))
+            }
+        } catch {
+            failInterpret(error, model: model)
+        }
+    }
+
+    /// Sync seam: swaps the first structured draft into the picked slot and
+    /// shows the normal read-back. Empty drafts keep the pending swap and
+    /// ask again.
+    func applyStructuredSwap(drafts: [NeedsIntentDraft], pickID: String, model: PhoneSessionModel) {
+        let converted = NeedsIntentConversion.toNeeds(drafts, current: model.needs)
+        guard let first = converted.first, pendingSwapText != nil else {
+            entries.append(.question(id: UUID(), text: NeedReplyText.fallbackQuestion, suggestions: []))
+            return
+        }
+        let merged = NeedListEdit.applySwap(current: model.needs, removeID: pickID, newNeed: first)
+        let old = model.needs.first { $0.id == pickID }
+        let entryDrafts = NeedsIntentConversion.fromNeeds(merged)
+        let changed = ChangedDrafts.between(drafts: entryDrafts, current: model.needs)
+        entries.append(.readBack(
+            id: UUID(),
+            drafts: entryDrafts,
+            readBack: swapReadBack(old: old, newText: first.authorText),
+            changed: changed,
+            accepted: false,
+            superseded: false
+        ))
+        pendingSwapText = nil
+        pendingExplicitRemovals = []
+    }
+
+    private func swapReadBack(old: Need?, newText: String) -> String {
+        let oldWords = old.map {
+            let words = $0.authorText.trimmingCharacters(in: .whitespacesAndNewlines)
+            return words.isEmpty ? $0.id : words
+        } ?? "that one"
+        let trimmed = newText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return "Swapped “\(oldWords)” for “\(trimmed.isEmpty ? "the new need" : trimmed)”."
+    }
+
+    /// "Keep all 6" chip: discards the new need, leaves the list unchanged.
+    func keepAll(model: PhoneSessionModel) {
+        guard pendingSwapText != nil, !thinking else {
+            return
+        }
+        entries.append(.her(id: UUID(), text: NeedListEdit.keepAllChip()))
+        appendKeepAllConfirmation(model: model)
+    }
+
+    private func appendKeepAllConfirmation(model: PhoneSessionModel) {
+        model.sessionLog.appendActivity("CONV", "swap declined (keep all)")
+        entries.append(.question(id: UUID(), text: NeedListEdit.keepAllConfirmation(), suggestions: []))
+        pendingSwapText = nil
+        pendingExplicitRemovals = []
     }
 
     // MARK: - Accept
