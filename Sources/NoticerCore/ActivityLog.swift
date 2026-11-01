@@ -17,11 +17,11 @@ public struct ActivityEvent: Sendable, Equatable, Codable {
     }
 }
 
-/// Rolling activity buffer: newest 2000 entries, oldest-first. Dropped
+/// Rolling activity buffer: newest 20,000 entries, oldest-first. Dropped
 /// entries are counted so the export can say so.
 public struct ActivityBuffer: Sendable, Equatable, Codable {
-    public static let maxEntries = 2000
-    public static let maxBytes = 1_000_000
+    public static let maxEntries = 20_000
+    public static let maxBytes = 8_000_000
 
     public private(set) var entries: [ActivityEvent]
     public private(set) var droppedCount: Int
