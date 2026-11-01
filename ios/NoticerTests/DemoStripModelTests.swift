@@ -96,8 +96,9 @@ final class DemoStripModelTests: XCTestCase {
         XCTAssertFalse(model.demoModeActive)
         XCTAssertNil(model.demoChip)
         XCTAssertNil(model.speaker.onSpeechStart)
+        XCTAssertEqual(calls, [true], "the session keeps the screen on; demo off adds no extra write")
         model.stop()
-        XCTAssertTrue(calls.isEmpty, "demo off touches nothing")
+        XCTAssertEqual(calls, [true, false])
     }
 
     @MainActor
@@ -121,9 +122,15 @@ final class DemoStripModelTests: XCTestCase {
         model.applyLiveState(view(at: at, log: [EngineEvent(kind: .needLatched, needID: "take-baby", at: at)]))
         XCTAssertEqual(model.demoStrip.items.map(\.text), ["Noticed: take the baby", "Head start: 10s for you"])
 
+        model.endDemoSession()
+        XCTAssertEqual(calls, [true], "releasing demo leaves the session's screen demand in place")
+        XCTAssertTrue(model.keepsScreenOn)
+        XCTAssertFalse(model.demoModeActive)
+
         model.stop()
         XCTAssertEqual(calls, [true, false])
         XCTAssertFalse(model.demoModeActive)
+        XCTAssertFalse(model.keepsScreenOn)
         XCTAssertFalse(model.demoStrip.items.isEmpty, "strip stays for the recording")
     }
 

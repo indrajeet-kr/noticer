@@ -11,9 +11,9 @@ enum CaptureMode: String, CaseIterable, Identifiable, Hashable {
     var id: String { rawValue }
 }
 
-/// Demo mode's idle-timer switch. The default implementation drives the real
-/// setting; tests replace it because unit tests run hostless and the real
-/// property does not round-trip there.
+/// The one idle-timer switch. Session keep-awake and Demo mode both decide
+/// through `IdleTimerPolicy`, then this writes the result. Tests replace it
+/// because unit tests run hostless and the real property does not round-trip there.
 @MainActor
 enum DemoIdleTimer {
     static var setDisabled: (Bool) -> Void = { disabled in
@@ -104,8 +104,14 @@ final class PhoneSessionModel {
     private(set) var demoStrip = DemoStripBuffer()
     private(set) var demoChip: String?
     private(set) var demoModeActive = false
-    /// True when this session disabled the idle timer for Demo mode.
+    /// True while this session's Demo mode wants the screen kept awake.
     private var demoOwnsIdleTimer = false
+    /// False after the root view leaves, so a disappeared screen can sleep.
+    private var idleTimerViewVisible = true
+    /// Last value written through `DemoIdleTimer`, so unchanged decisions do not rewrite it.
+    private var appliedIdleTimerDisabled: Bool?
+    /// Bumped on every scene change so a stale foreground task cannot rewrite a newer one.
+    private var foregroundTicket = 0
     /// Last log time per skip detail. Skip lines are chatty by design; the
     /// transcript keeps one per detail per 5 s.
     private var lastSkipLogAt: [String: Date] = [:]
@@ -382,12 +388,46 @@ final class PhoneSessionModel {
         keyStatus = ModelKeyStore.statusLine()
     }
 
-    func setForeground(_ active: Bool) async {
+    /// Scene phase, applied immediately so the idle timer does not wait on the stream.
+    @discardableResult
+    func setSceneActive(_ active: Bool) -> Int {
+        foregroundTicket += 1
         sceneActive = active
         if !active, keepsScreenOn {
             phase = "Paused — bring the app to the front"
         }
-        await liveSource?.setForeground(active)
+        applyIdleTimer()
+        return foregroundTicket
+    }
+
+    /// Stream follow-up for a scene change. Drops the work if a newer change won.
+    func propagateForeground(_ ticket: Int) async {
+        guard foregroundTicket == ticket else { return }
+        await liveSource?.setForeground(sceneActive)
+    }
+
+    /// Root view is on screen again. Reapplies whatever the session and Demo mode want.
+    func refreshIdleTimer() {
+        idleTimerViewVisible = true
+        applyIdleTimer()
+    }
+
+    /// Root view left. Allows sleep until it returns, without clearing session demand.
+    func releaseIdleTimer() {
+        idleTimerViewVisible = false
+        applyIdleTimer()
+    }
+
+    /// Writes the idle timer from every current reason. A repeat of the same decision does nothing.
+    private func applyIdleTimer() {
+        let disabled = IdleTimerPolicy.disableIdleTimer(
+            keepsScreenOn: keepsScreenOn,
+            demoSession: demoOwnsIdleTimer,
+            sceneActive: sceneActive && idleTimerViewVisible
+        )
+        guard disabled != appliedIdleTimerDisabled else { return }
+        appliedIdleTimerDisabled = disabled
+        DemoIdleTimer.setDisabled(disabled)
     }
 
     func start() {
@@ -420,8 +460,8 @@ final class PhoneSessionModel {
             demoStrip.reset(sessionStart: Date())
             demoChip = nil
             demoOwnsIdleTimer = true
-            DemoIdleTimer.setDisabled(true)
         }
+        applyIdleTimer()
         // Replay pipelines speak through this same speaker, so the speech
         // callback is live-only: replays caption whispers from cueFired
         // instead. Each mode gets exactly one whisper source.
@@ -452,8 +492,9 @@ final class PhoneSessionModel {
         liveSource = nil
         loop?.cancel()
         loop = nil
-        keepsScreenOn = false
         endDemoSession()
+        keepsScreenOn = false
+        applyIdleTimer()
         phase = "Idle"
         sessionLog.append("SESSION", "stop frames=\(framesSeen)/\(framesPassed) calls=\(modelCalls)")
         SessionLogStore.save(sessionLog.text)
@@ -485,12 +526,14 @@ final class PhoneSessionModel {
         }
     }
 
-    /// Demo teardown: idle timer back (only if this session set it), speech
-    /// callback off. The strip contents stay for the recording.
-    private func endDemoSession() {
+    /// Demo teardown: drop Demo mode's claim on the screen, speech callback
+    /// off. The strip contents stay for the recording. The session's own
+    /// keep-awake demand is left for the caller. Internal so tests can drop
+    /// Demo mode without ending the session.
+    func endDemoSession() {
         if demoOwnsIdleTimer {
             demoOwnsIdleTimer = false
-            DemoIdleTimer.setDisabled(false)
+            applyIdleTimer()
         }
         speaker.onSpeechStart = nil
         demoModeActive = false
@@ -553,8 +596,9 @@ final class PhoneSessionModel {
         let source = liveSource
         liveSource = nil
         await source?.stop()
-        keepsScreenOn = false
         endDemoSession()
+        keepsScreenOn = false
+        applyIdleTimer()
         if outcome == "Finished", framesSeen > 0, framesPassed == 0 {
             outcome = "Finished. The gate held every frame, so nothing was sent on."
         }
@@ -613,7 +657,7 @@ final class PhoneSessionModel {
             )
             pipeline = session
             await gate.reset()
-            phase = "Watching"
+            phase = DemoStripMapper.listeningStatus
             let source = ReplayFrameSource(frames: frames)
             let interval = Duration.milliseconds(1_000 / SessionLimits.requestedFramesPerSecond)
             while !Task.isCancelled {
@@ -647,7 +691,7 @@ final class PhoneSessionModel {
         pipeline = session
         await gate.reset()
         await session.prepareSpeaker()
-        phase = "Watching"
+        phase = DemoStripMapper.listeningStatus
         var lastDroppedBusyLog: Date?
         let ticker = Task { @MainActor [weak self] in
             while !Task.isCancelled {
@@ -673,7 +717,7 @@ final class PhoneSessionModel {
             if Task.isCancelled {
                 break
             }
-            phase = "Watching"
+            phase = DemoStripMapper.listeningStatus
             guard let frame = try await live.nextFrame() else {
                 break
             }

@@ -136,7 +136,14 @@ public enum DemoStripMapper {
     }
 
     public static let firstFrame = "Live · first frame in"
+    /// Short label: the demo strip's empty row and Tonight's "now" line.
     public static let listening = "Listening quietly"
+    /// Sentence form for the Tonight status line and the session phase.
+    public static let listeningStatus = "Listening quietly."
+
+    /// Listening lines the phone shows. The forbidden-word check covers these
+    /// without the iOS target.
+    public static let userFacingListeningLines = [listening, listeningStatus]
 
     /// The need's words, never its id. Trimmed to 40 chars on a word
     /// boundary with "…" when longer; "a need" when missing.

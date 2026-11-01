@@ -1,11 +1,10 @@
 import SwiftUI
-import UIKit
 
 /// App root: onboarding until it's done, then three tabs — Tonight, Her
-/// list, Learning. Owns the foreground/idle-timer contract the old
-/// ContentView held: streaming pauses if the app leaves the foreground, and
-/// the screen stays on in a session. Night look is a persisted in-app toggle,
-/// applied at the root.
+/// list, Learning. Streaming pauses if the app leaves the foreground. The
+/// model is the only owner of the idle timer: the screen stays awake while a
+/// session or Demo mode wants it, and sleeps when the view leaves. Night
+/// look is a persisted in-app toggle, applied at the root.
 struct RootView: View {
     @Bindable var model: PhoneSessionModel
     @AppStorage("noticer.onboarding.done") private var onboardingDone = false
@@ -44,19 +43,16 @@ struct RootView: View {
             model.reloadLibrary()
             model.refreshKeyStatus()
             wasRunning = model.isRunning
-            updateIdleTimer()
+            model.refreshIdleTimer()
         }
         .onDisappear {
-            UIApplication.shared.isIdleTimerDisabled = false
+            model.releaseIdleTimer()
         }
         .onChange(of: scenePhase) { _, phase in
+            let ticket = model.setSceneActive(phase == .active)
             Task {
-                await model.setForeground(phase == .active)
+                await model.propagateForeground(ticket)
             }
-            updateIdleTimer()
-        }
-        .onChange(of: model.keepsScreenOn) { _, _ in
-            updateIdleTimer()
         }
         .onChange(of: model.isRunning) { _, running in
             defer { wasRunning = running }
@@ -65,10 +61,6 @@ struct RootView: View {
             }
             showingWins = true
         }
-    }
-
-    private func updateIdleTimer() {
-        UIApplication.shared.isIdleTimerDisabled = model.keepsScreenOn && scenePhase == .active
     }
 }
 

@@ -175,7 +175,7 @@ final class DemoStripTests: XCTestCase {
     }
 
     func testAllFixedStringsPassWordRules() {
-        var corpus = [DemoStripMapper.firstFrame, DemoStripMapper.listening]
+        var corpus = [DemoStripMapper.firstFrame] + DemoStripMapper.userFacingListeningLines
         for kind in Self.allKinds {
             for detail in [nil, "out-of-view", "no-change", "shared-finish", "after-cue", "whisper", "idle-bucket"] {
                 if let mapped = mapped(event(kind, needID: "couch-water", detail: detail)) {
@@ -195,10 +195,22 @@ final class DemoStripTests: XCTestCase {
             XCTAssertTrue(DemoStripMapper.passesWordRules(text), text)
         }
         XCTAssertFalse(DemoStripMapper.passesWordRules("Watching quietly"))
+        XCTAssertFalse(DemoStripMapper.passesWordRules("Watching quietly."))
+        XCTAssertFalse(DemoStripMapper.passesWordRules("Watching"))
+    }
+
+    func testUserFacingListeningStatusAvoidsForbiddenWords() {
+        XCTAssertFalse(DemoStripMapper.userFacingListeningLines.isEmpty)
+        for line in DemoStripMapper.userFacingListeningLines {
+            XCTAssertTrue(DemoStripMapper.passesWordRules(line), line)
+            XCTAssertFalse(line.lowercased().contains("watching"), line)
+        }
+        XCTAssertEqual(DemoStripMapper.listening, "Listening quietly")
+        XCTAssertEqual(DemoStripMapper.listeningStatus, "Listening quietly.")
     }
 
     func testNoSecretsOrJSON() {
-        var corpus: [String] = [DemoStripMapper.firstFrame, DemoStripMapper.listening]
+        var corpus: [String] = [DemoStripMapper.firstFrame] + DemoStripMapper.userFacingListeningLines
         for kind in Self.allKinds {
             for detail in [nil, "out-of-view", "no-change", "shared-finish", "after-cue", "whisper", "idle-bucket"] {
                 if let mapped = mapped(event(kind, needID: "couch-water", detail: detail)) {

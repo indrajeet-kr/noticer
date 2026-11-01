@@ -1001,20 +1001,31 @@ public struct NeedEngine<TimeSource: Clock> {
         if assessment.resolution == .resolvedByPartner, assessment.partnerInView == true {
             tracked[index].partnerEngagedAt = now
         }
-        let recentCreditDetail = recentInterventionDetail(at: index, assessment: assessment, tool: verdict.tool, now: now)
+        let pendingAction = tracked[index].pendingWearerAction
+        let cleared = assessment.sustainedAcrossStrip != true
+        // One eligibility check for both the credit and the still-visible log.
+        // Callers apply visibility: credit needs the problem gone, the log needs it still there.
+        let eligibility = wearerCreditEligibility(
+            at: index,
+            assessment: assessment,
+            tool: verdict.tool,
+            pendingAction: pendingAction,
+            need: need,
+            now: now
+        )
+        let recentCreditDetail = (eligibility.recentIntervention && cleared)
+            ? recentInterventionLabel(at: index)
+            : nil
         if assessment.resolution == .resolvedByPartner, recentCreditDetail == nil {
             noteResolution(needID: needID, index: index, shared: false, now: now)
             close(needID, now: now, cooldown: true)
             record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
             return
         }
-        let pendingAction = tracked[index].pendingWearerAction
-        let cleared = assessment.sustainedAcrossStrip != true
         let wearerResolved: Bool
         if latency.strictCredit {
             wearerResolved = assessment.resolution == .caughtHimself
-                || (pendingAction != nil && assessment.resolution != .resolvedByPartner && assessment.sustainedAcrossStrip != true)
-                || (MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) && assessment.resolution != .resolvedByPartner && assessment.sustainedAcrossStrip != true)
+                || (eligibility.strictPendingOrSignal && cleared)
         } else {
             wearerResolved = assessment.resolution == .caughtHimself
                 || (pendingAction != nil && cleared)
@@ -1044,57 +1055,78 @@ public struct NeedEngine<TimeSource: Clock> {
             }
             return
         }
-        if blockedByVisibleProblem(at: index, assessment: assessment, tool: verdict.tool, pendingAction: pendingAction, need: need, now: now) {
+        if blockedByVisibleProblem(eligibility, assessment: assessment, tool: verdict.tool) {
             record(.stillOpen, needID: needID, detail: "resolved-but-still-visible")
         } else {
             record(.stillOpen, needID: needID, detail: "unclear")
         }
     }
 
-    /// Recent-intervention credit: a matching intervention inside the window
-    /// beats a partner/unknown verdict when no partner is in view. Shared when
-    /// she was engaged earlier ("she started, he finished"), solo otherwise.
-    /// Only `report_need_resolved` can credit; `report_no_transition` never does.
-    private func recentInterventionDetail(at index: Int, assessment: SceneAssessment, tool: ToolName, now: Date) -> String? {
-        guard latency.creditRecentIntervention,
-            tool == .reportNeedResolved,
-            assessment.resolution == .resolvedByPartner || assessment.resolution == .unknown || assessment.resolution == nil,
-            assessment.partnerInView != true,
-            assessment.sustainedAcrossStrip != true,
-            let actedAt = tracked[index].lastMatchingInterventionAt,
-            now.timeIntervalSince(actedAt) <= latency.recentInterventionWindowSeconds
-        else { return nil }
-        return tracked[index].partnerEngagedAt == nil ? "recent-intervention" : "shared-finish"
+    /// Wearer-credit paths shared by the credit decision and the
+    /// "resolved-but-still-visible" log. Visibility is not part of this:
+    /// `caughtHimself` is also separate and credits on its own.
+    private struct WearerCreditEligibility {
+        /// Recent-intervention memory matches, ignoring whether the problem is still visible.
+        var recentIntervention: Bool
+        /// Strict pending-action or self-notice signal, ignoring visibility.
+        var strictPendingOrSignal: Bool
     }
 
-    /// A resolved verdict that would credit once the problem clears: the
-    /// recent-intervention memory or the strict pending/signal path applies,
-    /// but the problem is still visible. Stays open with its own detail.
-    private func blockedByVisibleProblem(
+    private func wearerCreditEligibility(
         at index: Int,
         assessment: SceneAssessment,
         tool: ToolName,
         pendingAction: String?,
         need: Need,
         now: Date
+    ) -> WearerCreditEligibility {
+        WearerCreditEligibility(
+            recentIntervention: recentInterventionApplies(at: index, assessment: assessment, tool: tool, now: now),
+            strictPendingOrSignal: latency.strictCredit
+                && strictPendingOrSignalApplies(assessment: assessment, pendingAction: pendingAction, need: need)
+        )
+    }
+
+    /// Recent-intervention memory: a matching intervention inside the window
+    /// when no partner is in view. Shared vs solo is `recentInterventionLabel`.
+    /// Only `report_need_resolved` qualifies; `report_no_transition` never does.
+    /// Partner, unknown, and omitted resolutions all qualify; the caller drops
+    /// a still-visible partner resolution so she can close it herself.
+    private func recentInterventionApplies(at index: Int, assessment: SceneAssessment, tool: ToolName, now: Date) -> Bool {
+        guard latency.creditRecentIntervention,
+            tool == .reportNeedResolved,
+            assessment.resolution == .resolvedByPartner || assessment.resolution == .unknown || assessment.resolution == nil,
+            assessment.partnerInView != true,
+            let actedAt = tracked[index].lastMatchingInterventionAt,
+            now.timeIntervalSince(actedAt) <= latency.recentInterventionWindowSeconds
+        else { return false }
+        return true
+    }
+
+    /// Strict path: a pending wearer action, or a self-notice signal, and not her close.
+    private func strictPendingOrSignalApplies(assessment: SceneAssessment, pendingAction: String?, need: Need) -> Bool {
+        assessment.resolution != .resolvedByPartner
+            && (pendingAction != nil
+                || MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal))
+    }
+
+    /// Solo when she was never engaged, shared when she started and he finished.
+    private func recentInterventionLabel(at index: Int) -> String {
+        tracked[index].partnerEngagedAt == nil ? "recent-intervention" : "shared-finish"
+    }
+
+    /// Same eligibility as the credit paths, but the problem is still visible,
+    /// so the need stays open. A partner resolution is her close, not this log.
+    private func blockedByVisibleProblem(
+        _ eligibility: WearerCreditEligibility,
+        assessment: SceneAssessment,
+        tool: ToolName
     ) -> Bool {
         guard tool == .reportNeedResolved,
             assessment.sustainedAcrossStrip == true,
             assessment.resolution != .resolvedByPartner
         else { return false }
-        if latency.creditRecentIntervention,
-            assessment.resolution == .unknown || assessment.resolution == nil,
-            assessment.partnerInView != true,
-            let actedAt = tracked[index].lastMatchingInterventionAt,
-            now.timeIntervalSince(actedAt) <= latency.recentInterventionWindowSeconds {
-            return true
-        }
-        if latency.strictCredit,
-            pendingAction != nil
-                || MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) {
-            return true
-        }
-        return false
+        return eligibility.recentIntervention || eligibility.strictPendingOrSignal
     }
 
     private mutating func noteResolution(needID: String, index: Int, shared: Bool, now: Date) {
