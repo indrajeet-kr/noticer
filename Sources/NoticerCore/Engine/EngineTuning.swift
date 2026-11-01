@@ -59,3 +59,47 @@ public enum EngineTuning {
     /// passes. No extra model call is issued.
     public static let partnerInFlightCueHoldSeconds: TimeInterval = 3
 }
+
+/// How a cue sounds. One place so the speaker, the repeat, and the tests
+/// share the same numbers. `speechRateScale` is a fraction of the system
+/// speech default (`AVSpeechUtteranceDefaultSpeechRate` on device).
+public enum CueSpeechTuning {
+    /// 17% slower than the system default. Inside the 15–20% target.
+    public static let speechRateScale: Float = 0.83
+    /// The one repeat, slower than the first cue (0.70 / 0.83 ≈ another 16%).
+    public static let repeatRateScale: Float = 0.70
+    /// Synthesizer default is 1. A little under that is a calmer voice.
+    public static let pitchMultiplier: Float = 0.92
+    /// Whisper loudness. Quiet on purpose; the glasses are in his ear.
+    public static let whisperVolume: Float = 0.35
+    /// Quiet-phase "mm". Unchanged from the previous chime.
+    public static let chimeVolume: Float = 0.20
+    /// Silence before the words so a Bluetooth route can open without eating the first syllable.
+    public static let preUtteranceSilence: TimeInterval = 0.30
+    /// Soft one-note lead-in. On unless he turns it off.
+    public static let leadInChimeDefault = true
+    public static let leadInChimeDefaultsKey = "noticer.cue.leadInChime"
+    /// Length of the synthesized note. Short enough to be a cue, not a tune.
+    public static let leadInDuration: TimeInterval = 0.18
+    /// C5. Low and plain.
+    public static let leadInFrequencyHz: Double = 523
+    /// Fraction of full scale. The note should be felt more than noticed.
+    public static let leadInAmplitude: Float = 0.12
+    /// Say it once more this long after the cue, if nothing has happened.
+    public static let repeatDelaySeconds: TimeInterval = 8
+    /// A tick may still speak the repeat until this long after the delay.
+    /// The live loop ticks several times a second, so this only drops a
+    /// repeat that would land long after the moment (a jumped clock).
+    public static let repeatWindowSeconds: TimeInterval = 4
+    public static let repeatPrefix = "Again,"
+    /// `cueFired` detail for the repeat. The first cue keeps the kind name.
+    public static let repeatEventDetail = "repeat"
+    /// Spoken line cap. Already-short actions are kept even under three words.
+    public static let spokenWordLimit = 5
+    /// Repeat while he is still new to the need. One self-notice from zero
+    /// lands at 0.25; two land at 0.4375; the whisper itself becomes a chime
+    /// at `CueFadeSpec.quietThreshold` (0.5). 0.40 sits between the first and
+    /// the second self-notice, so a need he has caught once still gets the
+    /// repeat, and the repeat drops off while the cue is still words.
+    public static let repeatMasteryCutoff: Double = 0.40
+}

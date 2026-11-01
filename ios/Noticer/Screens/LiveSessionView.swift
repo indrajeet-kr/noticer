@@ -1,3 +1,4 @@
+import NoticerCore
 import SwiftUI
 
 /// Tonight: a serif title above one big centered circle, with nothing
@@ -9,6 +10,7 @@ struct LiveSessionView: View {
 
     @State private var path = NavigationPath()
     @AppStorage("noticer.demo.mode") private var demoSettingOn = false
+    @AppStorage(CueSpeechTuning.leadInChimeDefaultsKey) private var leadInChime = CueSpeechTuning.leadInChimeDefault
 
     /// Demo strip shows while a demo session runs, and after stop while its
     /// rows remain and the setting is still on. Off means off: nothing extra
@@ -25,7 +27,7 @@ struct LiveSessionView: View {
                         VStack(spacing: Theme.Space.sectionGap) {
                             header
                             deviceRow
-                            circleSection
+                            circleSection(now: context.date)
                             if showDemoStrip {
                                 DemoLiveStrip(
                                     items: model.demoStrip.visibleItems(),
@@ -140,7 +142,7 @@ struct LiveSessionView: View {
 
     // MARK: - Circle
 
-    private var circleSection: some View {
+    private func circleSection(now: Date) -> some View {
         VStack(spacing: Theme.Space.s16) {
             // About 64% of a phone's content width; smaller while the demo
             // strip shows so everything fits without scrolling.
@@ -157,6 +159,13 @@ struct LiveSessionView: View {
                 .foregroundStyle(Theme.textSecondary)
                 .multilineTextAlignment(.center)
                 .contentTransition(.opacity)
+            if let glance = model.lastCueGlance(at: now) {
+                Text(glance)
+                    .font(Theme.Font.footnote.monospacedDigit())
+                    .foregroundStyle(Theme.textSecondary)
+                    .multilineTextAlignment(.center)
+                    .accessibilityLabel("Last cue, \(glance)")
+            }
             if model.isRunning {
                 Button("Stop") {
                     model.stop()
@@ -191,20 +200,32 @@ struct LiveSessionView: View {
 
     private var quickTiming: some View {
         GlassCard(padding: Theme.Space.card) {
-            Toggle(isOn: Binding(
-                get: { model.quickTiming },
-                set: { model.setQuickTiming($0) }
-            )) {
-                VStack(alignment: .leading, spacing: Theme.Space.s4) {
-                    Text("Quick timing")
-                        .font(Theme.Font.headline)
-                    Text("Shorter head start for testing and demos")
-                        .font(Theme.Font.caption)
-                        .foregroundStyle(Theme.textSecondary)
+            VStack(alignment: .leading, spacing: Theme.Space.s16) {
+                Toggle(isOn: Binding(
+                    get: { model.quickTiming },
+                    set: { model.setQuickTiming($0) }
+                )) {
+                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                        Text("Quick timing")
+                            .font(Theme.Font.headline)
+                        Text("Shorter head start for testing and demos")
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
                 }
+                .tint(Theme.sage)
+                .disabled(model.isRunning)
+                Toggle(isOn: $leadInChime) {
+                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                        Text("Soft chime")
+                            .font(Theme.Font.headline)
+                        Text("A quiet note before each cue, so the first word comes through")
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .tint(Theme.sage)
             }
-            .tint(Theme.sage)
-            .disabled(model.isRunning)
         }
         .sensoryFeedback(.selection, trigger: model.quickTiming)
     }

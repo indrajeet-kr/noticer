@@ -40,7 +40,7 @@ final class StaleNeedTests: EngineTestCase {
         engine.handle(callID: recheck.id, verdict: noTransition("take-baby", sustained: true))
         let cue = try XCTUnwrap(engine.cues.first)
         XCTAssertEqual(cue.kind, .whisper)
-        XCTAssertEqual(cue.text, Self.takeBaby().cueWording)
+        XCTAssertEqual(cue.text, "Take the baby")
         XCTAssertTrue(events(.cueFired).contains { $0.detail == CueKind.whisper.rawValue })
     }
 
@@ -56,7 +56,7 @@ final class StaleNeedTests: EngineTestCase {
 
         let cue = try XCTUnwrap(engine.cues.first)
         XCTAssertEqual(cue.kind, .checkIn)
-        XCTAssertEqual(cue.text, Self.takeBaby().cueWording)
+        XCTAssertEqual(cue.text, "Take the baby")
     }
 
     func testAnInconclusiveRecheckDoesNotWhisperWhenCheckInIsOff() throws {

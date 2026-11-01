@@ -489,6 +489,7 @@ final class PhoneSessionModel {
 
     func stop() {
         let source = liveSource
+        let current = pipeline
         liveSource = nil
         loop?.cancel()
         loop = nil
@@ -498,13 +499,15 @@ final class PhoneSessionModel {
         phase = "Idle"
         sessionLog.append("SESSION", "stop frames=\(framesSeen)/\(framesPassed) calls=\(modelCalls)")
         SessionLogStore.save(sessionLog.text)
-        resetLiveState()
+        resetLiveState(clearLastCue: false)
         saveNeeds()
         SessionMomentsStore.save(moments)
         sessionEndedAt = Date()
         saveSessionInfo()
         recordSessionDayHistory()
         Task {
+            await current?.stopSession()
+            await self.speaker.stop()
             await source?.stop()
         }
     }
@@ -521,7 +524,8 @@ final class PhoneSessionModel {
     func demoSpeechCallback() -> (@Sendable (String) -> Void) {
         { [weak self] text in
             Task { @MainActor in
-                self?.demoStrip.append(DemoStripMapper.whisperCaption(text), style: .whisper, at: Date())
+                let caption = DemoStripMapper.stepCaption(spoken: text, isRepeat: SpokenCueForm.isRepeat(text))
+                self?.demoStrip.append(caption, style: .whisper, at: Date())
             }
         }
     }
@@ -627,6 +631,7 @@ final class PhoneSessionModel {
             addNotice("Replay clock. No API key. The scenario uses its own need list.")
             let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker, timing: activeTiming)
             pipeline = playback.pipeline
+            await playback.pipeline.setCueRepeatsEnabled(demoModeActive)
             phase = "Replaying \(scenario.scenarioID)"
             gateLine = "Scripted gate: \(scenario.people)"
             _ = try await playback.run(pace: .milliseconds(40)) { step, view in
@@ -656,6 +661,7 @@ final class PhoneSessionModel {
                 timing: activeTiming
             )
             pipeline = session
+            await session.setCueRepeatsEnabled(demoModeActive)
             await gate.reset()
             phase = DemoStripMapper.listeningStatus
             let source = ReplayFrameSource(frames: frames)
@@ -689,6 +695,7 @@ final class PhoneSessionModel {
             timing: activeTiming
         )
         pipeline = session
+        await session.setCueRepeatsEnabled(true)
         await gate.reset()
         await session.prepareSpeaker()
         phase = DemoStripMapper.listeningStatus
@@ -788,13 +795,15 @@ final class PhoneSessionModel {
         }
     }
 
-    private func resetLiveState() {
+    private func resetLiveState(clearLastCue: Bool = true) {
         liveOpenNeedID = nil
         liveHeadStartRemaining = nil
         liveHeadStartTotal = nil
-        liveLastCueText = ""
-        liveLastCueIsChime = false
-        liveLastCueAt = nil
+        if clearLastCue {
+            liveLastCueText = ""
+            liveLastCueIsChime = false
+            liveLastCueAt = nil
+        }
         liveNoticedAt = nil
         liveSelfNoticeAt = nil
         liveSelfNoticeNeedID = nil
@@ -912,15 +921,18 @@ final class PhoneSessionModel {
                     ))
                 }
             case .cueFired:
-                recordCueHistory()
-                if let needID = event.needID {
-                    moments.append(SessionMoment(
-                        at: Date(),
-                        needID: needID,
-                        kind: .cued,
-                        text: Self.words(for: needID, in: view),
-                        sessionID: currentSessionID
-                    ))
+                let isRepeat = event.detail == CueSpeechTuning.repeatEventDetail
+                if !isRepeat {
+                    recordCueHistory()
+                    if let needID = event.needID {
+                        moments.append(SessionMoment(
+                            at: Date(),
+                            needID: needID,
+                            kind: .cued,
+                            text: Self.words(for: needID, in: view),
+                            sessionID: currentSessionID
+                        ))
+                    }
                 }
             case .needLatched:
                 // Event-driven: a snapshot between ingests can miss a whole
@@ -968,8 +980,11 @@ final class PhoneSessionModel {
     /// view, appends rows, changes nothing else.
     private func demoStripIngest(_ event: EngineEvent, in view: SessionView) {
         if mode == .replay, event.kind == .cueFired {
-            if let cue = view.cues.last(where: { $0.needID == event.needID }) ?? view.cues.last,
-               cue.kind != .chime {
+            if event.detail == CueSpeechTuning.repeatEventDetail {
+                demoStrip.append(DemoStripMapper.repeatCaption, style: .whisper, at: Date())
+            } else if let cue = view.cues.last(where: { $0.needID == event.needID && !$0.isRepeat })
+                ?? view.cues.last(where: { !$0.isRepeat }),
+                cue.kind != .chime {
                 demoStrip.append(DemoStripMapper.whisperCaption(cue.text), style: .whisper, at: Date())
             }
             return

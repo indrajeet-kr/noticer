@@ -125,6 +125,14 @@ public enum DemoStripMapper {
         "Whispered: “\(spokenText)”"
     }
 
+    /// The one repeat, on the demo strip. Not the spoken "Again," line.
+    public static let repeatCaption = "Repeated once"
+
+    /// Live speech and replay `cueFired` both use this, so each mode shows the step once.
+    public static func stepCaption(spoken: String, isRepeat: Bool) -> String {
+        isRepeat ? repeatCaption : whisperCaption(spoken)
+    }
+
     /// Parses "call=… purpose=… model=2604ms …" into "Muse Spark · 2.6s".
     /// Any other timing line returns nil.
     public static func latencyChip(fromTimingLine line: String) -> String? {
