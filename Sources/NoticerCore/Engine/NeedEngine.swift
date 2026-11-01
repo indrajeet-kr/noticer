@@ -24,7 +24,24 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private struct PendingConfirm: Equatable {
         var dueAt: Date
-        var hypothesisFrame: Keyframe?
+        /// The actual source frames: what the model cited, or the strip's
+        /// newest frame when it cited nothing. Capture times ride along.
+        var sourceFrames: [Keyframe]
+        /// When the hypothesis call returned. New confirm frames must be
+        /// captured after this, and the 8 s cap runs from here.
+        var hypothesisAt: Date
+        var attemptsIssued: Int
+        /// New-frame ids already sent for this sighting. Never resent.
+        var usedNewFrameIDs: Set<String>
+    }
+
+    private enum ConfirmOutcome: String {
+        case latched
+        case cleared
+        case exhausted
+        case expired
+        case stopped
+        case removed
     }
 
     private struct TrackedNeed {
@@ -159,7 +176,8 @@ public struct NeedEngine<TimeSource: Clock> {
     private var recheckSameStripBypassAvailable = true
     private var latchConfirmPending = false
     private var lastLoggedSkip: String?
-    /// One focused second look per brief sighting, due 1.5 s after the verdict.
+    /// One sighting per need: source frames plus up to three attempts with
+    /// new frames inside 8 s. Cleared only through `finishConfirm`.
     private var pendingConfirms: [String: PendingConfirm] = [:]
     /// Last latch hypothesis per need, for the sustained-by-repeat rule.
     private var recentHypothesisAt: [String: Date] = [:]
@@ -258,6 +276,11 @@ public struct NeedEngine<TimeSource: Clock> {
         let replacement = try Catalog(needs)
         catalog = replacement
         tracked.removeAll { catalog.need(id: $0.needID) == nil }
+        // A removed or paused need ends its sighting too: the phone never
+        // sends paused needs here, so absence covers both.
+        for needID in Array(pendingConfirms.keys) where catalog.need(id: needID) == nil {
+            finishConfirm(needID: needID, outcome: .removed)
+        }
     }
 
     /// Mom resets a need back to coaching. An open copy closes and the
@@ -307,6 +330,9 @@ public struct NeedEngine<TimeSource: Clock> {
         if !didLogSessionEnd {
             didLogSessionEnd = true
             record(.sessionEnded, needID: nil, detail: "stopped")
+        }
+        for needID in Array(pendingConfirms.keys) {
+            finishConfirm(needID: needID, outcome: .stopped)
         }
         pendingModelCalls.removeAll()
     }
@@ -449,7 +475,16 @@ public struct NeedEngine<TimeSource: Clock> {
             noteStillOpen(assessment: assessment, now: now)
         }
 
-        if verdict.tool == .latchNeedHypothesis {
+        if completedCall.purpose == .confirm {
+            handleConfirmReply(call: completedCall, verdict: verdict, now: now)
+            // A confirm verdict naming a different need is still a
+            // hypothesis about that need; the focus path above ignores it.
+            if let named = assessment.needID,
+               let focus = completedCall.request.focusNeedID,
+               named != focus {
+                tryLatch(assessment, callKeyframes: completedCall.request.keyframes, now: now)
+            }
+        } else if verdict.tool == .latchNeedHypothesis {
             tryLatch(assessment, callKeyframes: completedCall.request.keyframes, now: now)
         }
 
@@ -534,6 +569,13 @@ public struct NeedEngine<TimeSource: Clock> {
             && MasteryMath.matchesSelfNoticeSignal(start.actionCode, selfNoticeSignal: need.selfNoticeSignal)
             && assessment.partnerInView != true
         guard wearerCompletion || unclearCompletion else { return }
+        // Completion counts only with every part handled. The start stays
+        // armed; a later verdict can still complete it.
+        if CompoundParts.isCompound(need),
+           !CompoundParts.allHandled(need: need, tokens: assessment.partnerStateEvidence) {
+            record(.stillOpen, needID: needID, detail: "partial")
+            return
+        }
         if let last = unpromptedCreditedAt[needID],
            now.timeIntervalSince(last) < EngineTuning.unpromptedDebounceSeconds {
             return
@@ -571,6 +613,9 @@ public struct NeedEngine<TimeSource: Clock> {
                 record(.sessionEnded, needID: nil, detail: nil)
             }
             retireStaleInFlight(now: now)
+            for needID in Array(pendingConfirms.keys) {
+                finishConfirm(needID: needID, outcome: .stopped)
+            }
             pendingModelCalls.removeAll()
             return
         }
@@ -966,6 +1011,14 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private mutating func scheduleModelCall(now: Date) {
         retireStaleInFlight(now: now)
+        // Sightings expire on their own clock: darkness, a full flight
+        // deck, or a spent budget never holds one open past 8 s.
+        for needID in Array(pendingConfirms.keys) {
+            if let pending = pendingConfirms[needID],
+               now >= pending.hypothesisAt.addingTimeInterval(EngineTuning.confirmMaxElapsedSeconds) {
+                finishConfirm(needID: needID, outcome: .expired)
+            }
+        }
         // Dark: the lens is covered or the lights are out. No call could
         // see anything, so none goes out until it clears. No skip is
         // logged; the single dark line already says why.
@@ -993,7 +1046,7 @@ public struct NeedEngine<TimeSource: Clock> {
         // while the sighting is fresh.
         if let due = pendingConfirms.min(by: { $0.value.dueAt < $1.value.dueAt }),
            now >= due.value.dueAt {
-            issueConfirm(needID: due.key, pending: due.value, now: now)
+            issueConfirm(needID: due.key, now: now)
             return
         }
 
@@ -1164,23 +1217,44 @@ public struct NeedEngine<TimeSource: Clock> {
         return callsIssued < SessionLimits.maxModelCallsPerSession
     }
 
-    /// The confirm strip is the frame the hypothesis came from plus the
-    /// freshest admitted frame. An empty strip stays pending: the call goes
-    /// out on a later tick instead of burning budget on nothing.
-    private mutating func issueConfirm(needID: String, pending: PendingConfirm, now: Date) {
-        var strip: [Keyframe] = []
-        if let hypothesis = pending.hypothesisFrame {
-            strip.append(hypothesis)
+    /// The confirm strip is the stored source frames plus one new frame:
+    /// admitted, captured after the hypothesis call returned, never sent
+    /// for this sighting. Sharpness orders the candidates; a soft frame
+    /// still goes when it is the only new one. Every age is recomputed
+    /// against the strip's own newest frame. With no new frame the
+    /// sighting stays pending: a later tick sends it, or the 8 s cap ends
+    /// it. One attempt in flight at a time.
+    private mutating func issueConfirm(needID: String, now: Date) {
+        guard var pending = pendingConfirms[needID] else { return }
+        let inFlight = pendingModelCalls.contains {
+            $0.purpose == .confirm && $0.request.focusNeedID == needID
         }
-        let fresh = buffer.modelStrip(now: now, purpose: .latch, confirm: true, latency: latency)
-            .max(by: { $0.capturedAt < $1.capturedAt })
-        if let fresh, !strip.contains(where: { $0.id == fresh.id }) {
-            strip.append(fresh)
-        }
-        guard !strip.isEmpty else {
+        guard !inFlight else { return }
+        guard pending.attemptsIssued < EngineTuning.confirmMaxAttempts else {
+            finishConfirm(needID: needID, outcome: .exhausted)
             return
         }
-        pendingConfirms.removeValue(forKey: needID)
+        let sourceIDs = Set(pending.sourceFrames.map(\.id))
+        let candidates = buffer.keyframes(now: now)
+            .filter { $0.capturedAt > pending.hypothesisAt }
+            .filter { !sourceIDs.contains($0.id) && !pending.usedNewFrameIDs.contains($0.id) }
+            .sorted {
+                let left = $0.sharpness ?? -1
+                let right = $1.sharpness ?? -1
+                if left != right { return left > right }
+                return $0.capturedAt > $1.capturedAt
+            }
+        guard let fresh = candidates.first else { return }
+        pending.usedNewFrameIDs.insert(fresh.id)
+        pending.attemptsIssued += 1
+        pendingConfirms[needID] = pending
+        var strip = pending.sourceFrames
+        strip.append(fresh)
+        if let newestAt = strip.map(\.capturedAt).max() {
+            for index in strip.indices {
+                strip[index].ageSeconds = max(0, newestAt.timeIntervalSince(strip[index].capturedAt))
+            }
+        }
         issue(.confirm, now: now, focusNeedID: needID, keyframes: strip)
     }
 
@@ -1324,6 +1398,17 @@ public struct NeedEngine<TimeSource: Clock> {
         if let actionCode = assessment.actionCode, omittedNeedID(actionCode) {
             assessment.actionCode = nil
         }
+        if let anchor = assessment.newestAnchorState, !AnchorState.recognized.contains(anchor) {
+            assessment.newestAnchorState = nil
+            record(.assessmentDropped, needID: assessment.needID, detail: "unknown-anchor-state")
+        }
+        if let cited = assessment.evidenceKeyframeIDs {
+            // Decoding already dropped ids outside the request strip. Blanks
+            // can still arrive on direct-built verdicts; they cite nothing.
+            assessment.evidenceKeyframeIDs = cited
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+        }
         return assessment
     }
 
@@ -1410,6 +1495,13 @@ public struct NeedEngine<TimeSource: Clock> {
         guard let need = catalog.need(id: needID) else { return }
         guard let index = indexOfOpen(needID) else { return }
         let assessment = verdict.assessment
+        // A compound need resolves only with every part handled. One part
+        // fixed is still open, not complete, whoever fixed it.
+        if CompoundParts.isCompound(need),
+           !CompoundParts.allHandled(need: need, tokens: assessment.partnerStateEvidence) {
+            record(.stillOpen, needID: needID, detail: "partial")
+            return
+        }
         // A resolved verdict that still sees her keeps the handoff on record
         // even when she closes it.
         if assessment.resolution == .resolvedByPartner, assessment.partnerInView == true {
@@ -1553,6 +1645,11 @@ public struct NeedEngine<TimeSource: Clock> {
 
         if !latency.strictCredit && assessment.resolution == .resolvedByPartner {
             guard indexOfOpen(needID) != nil else { return }
+            if CompoundParts.isCompound(need),
+               !CompoundParts.allHandled(need: need, tokens: assessment.partnerStateEvidence) {
+                record(.stillOpen, needID: needID, detail: "partial")
+                return
+            }
             close(needID, now: now, cooldown: true)
             record(.resolvedByOther, needID: needID, detail: verdict.tool.rawValue)
             return
@@ -1669,9 +1766,33 @@ public struct NeedEngine<TimeSource: Clock> {
             record(.latchRejected, needID: needID, detail: "session-ended")
             return
         }
+        let isUrgent = latency.urgentNeedsEnabled && need.isUrgent
+        var urgentEvidence: (frame: Keyframe, confidence: Double)?
         if assessment.sustainedAcrossStrip != true {
-            if let last = recentHypothesisAt[needID],
-               now.timeIntervalSince(last) < EngineTuning.hypothesisRepeatWindowSeconds {
+            if isUrgent {
+                // Urgent skips the wait, not the evidence: one fresh cited
+                // frame or the confirm path. No repeat bypass.
+                guard let fresh = UrgentEvidence.freshFrame(
+                    assessment: assessment,
+                    callKeyframes: callKeyframes,
+                    now: now
+                ) else {
+                    recentHypothesisAt[needID] = now
+                    latchConfirmPending = true
+                    record(.latchRejected, needID: needID, detail: "urgent-no-fresh-evidence")
+                    scheduleConfirm(
+                        needID: needID,
+                        confidence: assessment.confidence,
+                        callKeyframes: callKeyframes,
+                        assessment: assessment,
+                        now: now
+                    )
+                    return
+                }
+                recentHypothesisAt[needID] = now
+                urgentEvidence = fresh
+            } else if let last = recentHypothesisAt[needID],
+                      now.timeIntervalSince(last) < EngineTuning.hypothesisRepeatWindowSeconds {
                 record(.sustainedByRepeat, needID: needID, detail: nil)
             } else {
                 recentHypothesisAt[needID] = now
@@ -1681,6 +1802,7 @@ public struct NeedEngine<TimeSource: Clock> {
                     needID: needID,
                     confidence: assessment.confidence,
                     callKeyframes: callKeyframes,
+                    assessment: assessment,
                     now: now
                 )
                 return
@@ -1688,29 +1810,55 @@ public struct NeedEngine<TimeSource: Clock> {
         } else {
             recentHypothesisAt[needID] = now
         }
+        let acceptDetail = urgentEvidence.map {
+            "urgent-single-frame evidence=\($0.frame.id) conf=\($0.confidence)"
+        }
+        finishLatch(
+            needID: needID,
+            assessment: assessment,
+            callKeyframes: callKeyframes,
+            now: now,
+            acceptDetail: acceptDetail,
+            visibleAt: urgentEvidence?.frame.capturedAt
+        )
+    }
+
+    /// The gates after the sustained check, shared by fresh hypotheses
+    /// and confirmed sightings. True when the need opened. A coincident
+    /// pending confirm ends `latched` with it.
+    @discardableResult
+    private mutating func finishLatch(
+        needID: String,
+        assessment: SceneAssessment,
+        callKeyframes: [Keyframe],
+        now: Date,
+        acceptDetail: String? = nil,
+        visibleAt: Date? = nil
+    ) -> Bool {
+        guard let need = catalog.need(id: needID) else { return false }
         if indexOfOpen(needID) != nil {
             record(.latchRejected, needID: needID, detail: "already-open")
-            return
+            return false
         }
         if let closed = closedAt[needID],
            now.timeIntervalSince(closed) < timing.relatchCooldownSeconds {
             record(.latchRejected, needID: needID, detail: "cooldown")
-            return
+            return false
         }
         if let lastSuccessfulLatchAt,
            now.timeIntervalSince(lastSuccessfulLatchAt) < timing.latchMinIntervalSeconds {
             record(.latchRejected, needID: needID, detail: "latch-interval")
-            return
+            return false
         }
         let liveStrip = buffer.modelStrip(now: now, purpose: .latch, confirm: latchConfirmPending, latency: latency)
         let effectiveCount = max(callKeyframes.count, liveStrip.count)
         let minKeyframes = (latency.urgentNeedsEnabled && need.isUrgent) ? 1 : timing.latchMinKeyframes
         if effectiveCount < minKeyframes {
             record(.latchRejected, needID: needID, detail: "strip-too-thin")
-            return
+            return false
         }
         if tracked.count >= SessionLimits.maxOpenNeeds {
-            guard let worst = worstOpenIndex() else { return }
+            guard let worst = worstOpenIndex() else { return false }
             let candidatePriority = catalog.priority(of: needID)
             let worstPriority = catalog.priority(of: tracked[worst].needID)
             if candidatePriority < worstPriority {
@@ -1719,28 +1867,33 @@ public struct NeedEngine<TimeSource: Clock> {
                 record(.closedUnknown, needID: displaced, detail: "preempted")
             } else {
                 record(.latchRejected, needID: needID, detail: "max-open")
-                return
+                return false
             }
         }
         latchConfirmPending = false
-        pendingConfirms.removeValue(forKey: needID)
-        let visibleAt = (callKeyframes.first ?? liveStrip.first)?.capturedAt ?? now
+        if let acceptDetail {
+            record(.latchAccepted, needID: needID, detail: acceptDetail)
+        }
+        finishConfirm(needID: needID, outcome: .latched)
         open(
             needID,
             now: now,
-            visibleAt: visibleAt,
+            visibleAt: visibleAt ?? (callKeyframes.first ?? liveStrip.first)?.capturedAt ?? now,
             absent: assessment.partnerInView == false,
             handsBusy: assessment.wearerHandsOccupied == true
         )
+        return true
     }
 
-    /// One confirm call for a high-confidence brief sighting. Skipped
-    /// while one is already pending or in flight for the need, and when
-    /// the verdict carried no usable confidence.
+    /// One sighting for a high-confidence brief sighting. Skipped while
+    /// one is already pending or in flight for the need, and when the
+    /// verdict carried no usable confidence. The sources are the actual
+    /// frames the model cited, or the strip's newest frame.
     private mutating func scheduleConfirm(
         needID: String,
         confidence: Double?,
         callKeyframes: [Keyframe],
+        assessment: SceneAssessment,
         now: Date
     ) {
         guard let confidence, confidence >= EngineTuning.confirmMinConfidence else {
@@ -1755,11 +1908,93 @@ public struct NeedEngine<TimeSource: Clock> {
         guard !inFlight else {
             return
         }
+        let cited = Set(assessment.evidenceKeyframeIDs ?? [])
+        var sources = callKeyframes.filter { cited.contains($0.id) }
+        if sources.isEmpty, let newest = callKeyframes.max(by: { $0.capturedAt < $1.capturedAt }) {
+            sources = [newest]
+        }
         pendingConfirms[needID] = PendingConfirm(
             dueAt: now.addingTimeInterval(EngineTuning.confirmDelaySeconds),
-            hypothesisFrame: callKeyframes.max(by: { $0.capturedAt < $1.capturedAt })
+            sourceFrames: sources,
+            hypothesisAt: now,
+            attemptsIssued: 0,
+            usedNewFrameIDs: []
         )
         record(.confirmScheduled, needID: needID, detail: nil)
+    }
+
+    /// The one place confirm state clears. A late reply for an in-flight
+    /// attempt drops once its sighting is gone.
+    private mutating func finishConfirm(needID: String, outcome: ConfirmOutcome) {
+        guard pendingConfirms.removeValue(forKey: needID) != nil else { return }
+        for call in pendingModelCalls where call.purpose == .confirm && call.request.focusNeedID == needID {
+            abandonInFlightCall(id: call.id)
+        }
+        record(.confirmEnded, needID: needID, detail: "outcome=\(outcome.rawValue)")
+    }
+
+    /// An inconclusive attempt schedules the next one inside the caps, or
+    /// ends the sighting. Elapsed time beats attempt count.
+    private mutating func retryConfirm(needID: String, pending: PendingConfirm, reason: String, now: Date) {
+        if now >= pending.hypothesisAt.addingTimeInterval(EngineTuning.confirmMaxElapsedSeconds) {
+            finishConfirm(needID: needID, outcome: .expired)
+            return
+        }
+        let next = pending.attemptsIssued + 1
+        guard next <= EngineTuning.confirmMaxAttempts else {
+            finishConfirm(needID: needID, outcome: .exhausted)
+            return
+        }
+        var pending = pending
+        pending.dueAt = now.addingTimeInterval(EngineTuning.confirmDelaySeconds)
+        pendingConfirms[needID] = pending
+        record(.confirmRetry, needID: needID, detail: "attempt=\(next) reason=\(reason)")
+    }
+
+    /// Reads a confirm reply against its sighting. Only a cited new frame
+    /// with an unmet anchor latches; handled in a new frame clears; the
+    /// rest retries inside the caps.
+    private mutating func handleConfirmReply(call: PendingModelCall, verdict: ModelVerdict, now: Date) {
+        guard let needID = call.request.focusNeedID,
+              let pending = pendingConfirms[needID] else { return }
+        // Time beats content: a late reply ends the sighting, whatever it saw.
+        if now >= pending.hypothesisAt.addingTimeInterval(EngineTuning.confirmMaxElapsedSeconds) {
+            finishConfirm(needID: needID, outcome: .expired)
+            return
+        }
+        let assessment = verdict.assessment
+        let strip = call.request.keyframes
+        let sourceIDs = Set(pending.sourceFrames.map(\.id))
+        let newIDs = Set(strip.map(\.id)).subtracting(sourceIDs)
+        let cited = Set(assessment.evidenceKeyframeIDs ?? [])
+        let newestIsNew = strip.max(by: { $0.capturedAt < $1.capturedAt }).map { newIDs.contains($0.id) } ?? false
+
+        // Handled in a new frame beats older unmet evidence.
+        if assessment.newestAnchorState == .handled, newestIsNew {
+            record(.confirmCleared, needID: needID, detail: "reason=handled")
+            finishConfirm(needID: needID, outcome: .cleared)
+            return
+        }
+        // A cited new frame plus an unmet newest anchor confirms.
+        if !cited.intersection(newIDs).isEmpty, assessment.newestAnchorState == .unmet {
+            if finishLatch(needID: needID, assessment: assessment, callKeyframes: strip, now: now) {
+                return
+            }
+            finishConfirm(needID: needID, outcome: .exhausted)
+            return
+        }
+        // Cites only the old sources with an unmet anchor: looks
+        // confirming, proves nothing.
+        if !cited.isEmpty, cited.isSubset(of: sourceIDs), assessment.newestAnchorState == .unmet {
+            record(.confirmSelfOnly, needID: needID, detail: nil)
+            retryConfirm(needID: needID, pending: pending, reason: "self-only", now: now)
+            return
+        }
+        if assessment.newestAnchorState == .notVisible, newestIsNew {
+            retryConfirm(needID: needID, pending: pending, reason: "not-visible", now: now)
+            return
+        }
+        retryConfirm(needID: needID, pending: pending, reason: "unclear", now: now)
     }
 
     private mutating func open(

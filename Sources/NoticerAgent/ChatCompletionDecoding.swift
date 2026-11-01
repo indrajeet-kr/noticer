@@ -34,7 +34,12 @@ enum ChatCompletionResponse {
         }
     }
 
-    static func parse(data: Data, rates: UsageCostRates) throws -> DetailedModelCompletion {
+    static func parse(
+        data: Data,
+        rates: UsageCostRates,
+        knownKeyframeIDs: Set<String> = [],
+        onUnknownEvidenceID: ((String, String?) -> Void)? = nil
+    ) throws -> DetailedModelCompletion {
         let raw: JSONValue
         do {
             raw = try JSONDecoder().decode(JSONValue.self, from: data)
@@ -87,7 +92,11 @@ enum ChatCompletionResponse {
                 throw ModelClientError.multipleToolCalls(count: calls.count)
             }
             let call = calls[0]
-            let parsed = try parseArguments(call.arguments)
+            let parsed = try parseArguments(
+                call.arguments,
+                knownKeyframeIDs: knownKeyframeIDs,
+                onUnknownEvidenceID: onUnknownEvidenceID
+            )
             // tool_calls wins when the same message also has content.
             let verdict = try ModelTurnNormalizer.verdict(
                 finishReason: .toolCalls,
@@ -139,7 +148,14 @@ enum ChatCompletionResponse {
         return ParsedToolCall(name: name, arguments: arguments)
     }
 
-    static func parseArguments(_ value: JSONValue) throws -> (assessment: SceneAssessment, extensionReason: String?) {
+    /// `knownKeyframeIDs` is the request's strip. Cited evidence ids outside
+    /// it are dropped, one `onUnknownEvidenceID` report per id (with the
+    /// verdict's need id for the log line). Blanks drop silently.
+    static func parseArguments(
+        _ value: JSONValue,
+        knownKeyframeIDs: Set<String> = [],
+        onUnknownEvidenceID: ((String, String?) -> Void)? = nil
+    ) throws -> (assessment: SceneAssessment, extensionReason: String?) {
         let object: [String: JSONValue]
         switch value {
         case .string(let text):
@@ -201,6 +217,21 @@ enum ChatCompletionResponse {
             if let resolvedBy {
                 assessment.resolution = Self.resolution(forResolvedBy: resolvedBy)
             }
+            if let cited = assessment.evidenceKeyframeIDs {
+                var kept: [String] = []
+                for raw in cited {
+                    let id = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if id.isEmpty {
+                        continue
+                    }
+                    if knownKeyframeIDs.contains(id) {
+                        kept.append(id)
+                    } else {
+                        onUnknownEvidenceID?(id, assessment.needID)
+                    }
+                }
+                assessment.evidenceKeyframeIDs = kept
+            }
             return (assessment, extensionReason)
         } catch {
             throw ModelClientError.malformedResponse(
@@ -220,6 +251,7 @@ enum ChatCompletionResponse {
     private static let nullableStringFields: Set<String> = [
         AssessmentField.resolution,
         AssessmentField.actionCode,
+        AssessmentField.newestAnchorState,
     ]
 
     private static func isNullPlaceholder(_ raw: String) -> Bool {
@@ -253,6 +285,8 @@ enum ChatCompletionResponse {
                     result[key] = .number(number)
                 }
             } else if key == AssessmentField.partnerStateEvidence, isNullPlaceholder(folded) {
+                result[key] = .null
+            } else if key == AssessmentField.evidenceKeyframeIDs, isNullPlaceholder(folded) {
                 result[key] = .null
             }
         }

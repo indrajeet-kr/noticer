@@ -68,6 +68,7 @@ public enum NeedsIntentSystemPrompt {
         - whisper is a calm, warm coaching invitation of 8 words or fewer for her partner, e.g. "Maybe offer to take the baby?" or "Grab her a water refill?". For a safety need it may be a little firmer but still kind, e.g. "Could you move that glass from the baby?". Never scold, never state blunt alarms, and never mention glasses, camera, cameras, watch, watching, saw, see or seeing.
         - problem_visual is the UNMET state you would see when she needs help, as seen in a first-person frame, always with its person or place anchor, never the goal: "dining table surface visible with no water bottle on it", NOT "water bottle on dining table".
         - handled_visual is the state after it is done, what the same scene looks like once it is handled: "water bottle standing on the dining table".
+        - A compound chore (a thing plus where it sits) keeps all three conditions: problem_visual joins the parts with OR, handled_visual joins them with AND, and unknown_visual says when a part cannot be judged. "Close the lid of trash can and move it to the corner" -> problem_visual "lid visibly open, OR can visibly outside the designated corner", handled_visual "lid closed AND can in the designated corner", unknown_visual "placement cannot be judged when the corner is out of view".
         - wearer_signal is his helping action in snake_case starting with wearer_: "wearer_placing_water_bottle_on_table".
         - urgent is true only for immediate physical safety hazards (such as a glass or sharp object on the floor near the baby), otherwise false.
         - Priority: "important" if she stresses urgency or safety, "gentle" if casual, otherwise "normal". allowsCheckIn is true only if she says asking her is fine.
@@ -229,6 +230,12 @@ public enum NeedsIntentTools {
                                         "type": .string("string"),
                                         "description": .string(
                                             "what the same scene looks like once handled, e.g. 'water bottle standing on the dining table'"
+                                        ),
+                                    ]),
+                                    "unknown_visual": .object([
+                                        "type": .string("string"),
+                                        "description": .string(
+                                            "when a compound part cannot be judged, e.g. 'corner out of view so placement unknown'; empty for single-part needs"
                                         ),
                                     ]),
                                     "wearer_signal": .object([
@@ -406,6 +413,7 @@ public enum NeedsIntentResponse {
                 throw NeedsIntentError.invalidNeeds("A need came back without an observable cue.")
             }
             let handledVisual = (raw.handledVisual ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            let unknownVisual = (raw.unknownVisual ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedSignal = (raw.wearerSignal ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
             let wearerSignal: String
             if trimmedSignal.range(of: #"^wearer_[a-z0-9_]+$"#, options: .regularExpression) != nil {
@@ -428,6 +436,7 @@ public enum NeedsIntentResponse {
                 allowsCheckIn: raw.allowsCheckIn,
                 visualCue: visualCue,
                 handledVisual: handledVisual,
+                unknownVisual: unknownVisual,
                 wearerSignal: wearerSignal,
                 isUrgent: raw.urgent ?? false
             ))
@@ -501,6 +510,7 @@ public enum NeedsIntentResponse {
         var allowsCheckIn: Bool
         var problemVisual: String?
         var handledVisual: String?
+        var unknownVisual: String?
         var wearerSignal: String?
         var visualCue: String?
         var urgent: Bool?
@@ -513,6 +523,7 @@ public enum NeedsIntentResponse {
             case allowsCheckIn
             case problemVisual = "problem_visual"
             case handledVisual = "handled_visual"
+            case unknownVisual = "unknown_visual"
             case wearerSignal = "wearer_signal"
             case visualCue
             case urgent
