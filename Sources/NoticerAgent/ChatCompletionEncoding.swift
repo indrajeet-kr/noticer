@@ -49,7 +49,7 @@ enum ChatCompletionRequest {
             parts.append(.object([
                 "type": .string("text"),
                 "text": .string(
-                    "Keyframe \(ordinal + 1) id=\(frame.id) age_seconds=\(frame.ageSeconds) episode=\(frame.episodeID)"
+                    "kf\(ordinal + 1) id=\(frame.id) age_seconds=\(frame.ageSeconds)"
                 ),
             ]))
             let encoded = frame.jpegData.base64EncodedString()
@@ -76,20 +76,28 @@ enum ChatCompletionRequest {
     }
 
     static func sceneText(_ request: ModelRequest) -> String {
-        var lines = ["Mom's needs:"]
+        var lines = ["Needs:"]
         if request.needs.isEmpty {
             lines.append("(none)")
         } else {
             for need in request.needs {
                 lines.append("need_id=\(need.id)")
-                lines.append("author_text=\(need.authorText)")
+                if need.visualCondition == nil {
+                    lines.append("author_text=\(need.authorText)")
+                }
                 if let visual = need.visualCondition {
                     lines.append("visual_condition=\(visual)")
+                }
+                if let unknown = need.unknownCondition?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !unknown.isEmpty {
+                    if let handled = need.handledCondition {
+                        lines.append("handled_when=\(handled)")
+                    }
+                    lines.append("unknown_when=\(unknown)")
                 }
                 if let signal = need.selfNoticeSignal {
                     lines.append("self_notice_signal=\(signal)")
                 }
-                lines.append("priority=\(need.priority)")
                 if need.isUrgent {
                     lines.append("urgent=true")
                 }
@@ -126,9 +134,7 @@ enum ChatCompletionRequest {
         if !request.unpromptedStartedIDs.isEmpty {
             lines.append("Started by wearer: \(request.unpromptedStartedIDs.joined(separator: ", "))")
         }
-        lines.append(
-            "Keyframes follow, oldest first. Each image is one keyframe. age_seconds is printed in the text part before that image."
-        )
+        lines.append("Keyframes follow, oldest first.")
         return lines.joined(separator: "\n")
     }
 }

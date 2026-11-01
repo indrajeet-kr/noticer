@@ -12,6 +12,8 @@ public enum AssessmentField {
     public static let actionCode = "action_code"
     public static let confidence = "confidence"
     public static let partnerAsleep = "partner_asleep"
+    public static let evidenceKeyframeIDs = "evidence_keyframe_ids"
+    public static let newestAnchorState = "newest_anchor_state"
 
     public static let all = [
         needID,
@@ -24,6 +26,8 @@ public enum AssessmentField {
         actionCode,
         confidence,
         partnerAsleep,
+        evidenceKeyframeIDs,
+        newestAnchorState,
     ]
 }
 
@@ -45,6 +49,50 @@ public struct Resolution: RawRepresentable, Codable, Equatable, Hashable, Sendab
         .resolvedByPartner,
         .unknown,
     ]
+}
+
+/// The named need's anchor state in the newest keyframe only. Any other
+/// string the model sends decodes but never matches a known state.
+public struct AnchorState: RawRepresentable, Codable, Equatable, Hashable, Sendable {
+    public let rawValue: String
+
+    public init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    public static let unmet = AnchorState(rawValue: "unmet")
+    public static let handled = AnchorState(rawValue: "handled")
+    public static let notVisible = AnchorState(rawValue: "not_visible")
+    public static let unclear = AnchorState(rawValue: "unclear")
+
+    public static let recognized: [AnchorState] = [
+        .unmet,
+        .handled,
+        .notVisible,
+        .unclear,
+    ]
+}
+
+/// The urgent single-frame rule, shared by the engine and the hard-cap
+/// gate so the two can never disagree: the newest strip frame cited as
+/// evidence, fresh at verdict time, anchor unmet, confidence on top.
+public enum UrgentEvidence {
+    public static func freshFrame(
+        assessment: SceneAssessment,
+        callKeyframes: [Keyframe],
+        now: Date
+    ) -> (frame: Keyframe, confidence: Double)? {
+        guard assessment.newestAnchorState == .unmet else { return nil }
+        guard let confidence = assessment.confidence,
+              confidence >= EngineTuning.urgentSingleFrameMinConfidence else { return nil }
+        guard let newest = callKeyframes.max(by: { $0.capturedAt < $1.capturedAt }) else { return nil }
+        // Recomputed from capture time: the strip's stored ages are stale
+        // by the time the verdict lands.
+        let age = max(0, now.timeIntervalSince(newest.capturedAt))
+        guard age <= EngineTuning.urgentFreshFrameMaxAgeSeconds else { return nil }
+        guard let cited = assessment.evidenceKeyframeIDs, cited.contains(newest.id) else { return nil }
+        return (newest, confidence)
+    }
 }
 
 /// Action-code strings the PRD actually names. This is not a closed catalog.
@@ -73,6 +121,11 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
     /// She is visibly asleep or her eyes are closed. Check-in needs stay
     /// quiet; chores still cue. Nil means the model did not say.
     public var partnerAsleep: Bool?
+    /// Keyframe ids that clearly show the named need's anchor AND its
+    /// unmet condition. Empty or omitted when no frame shows both.
+    public var evidenceKeyframeIDs: [String]?
+    /// The named need's anchor state in the newest keyframe only.
+    public var newestAnchorState: AnchorState?
 
     public init(
         needID: String? = nil,
@@ -84,7 +137,9 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         resolution: Resolution? = nil,
         actionCode: String? = nil,
         confidence: Double? = nil,
-        partnerAsleep: Bool? = nil
+        partnerAsleep: Bool? = nil,
+        evidenceKeyframeIDs: [String]? = nil,
+        newestAnchorState: AnchorState? = nil
     ) {
         self.needID = needID
         self.sustainedAcrossStrip = sustainedAcrossStrip
@@ -96,6 +151,8 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         self.actionCode = actionCode
         self.confidence = confidence
         self.partnerAsleep = partnerAsleep
+        self.evidenceKeyframeIDs = evidenceKeyframeIDs
+        self.newestAnchorState = newestAnchorState
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -109,5 +166,7 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         case actionCode = "action_code"
         case confidence
         case partnerAsleep = "partner_asleep"
+        case evidenceKeyframeIDs = "evidence_keyframe_ids"
+        case newestAnchorState = "newest_anchor_state"
     }
 }

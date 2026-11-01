@@ -56,6 +56,8 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
     private let jitter: any JitterSource
     private let callBudget: SessionCallBudget?
     private let completionLog = CompletionLog()
+    /// Tagged developer-log lines (`MODEL`, ...). Nil keeps the client silent.
+    private let log: (@Sendable (String, String) -> Void)?
 
     /// `apiKey` nil means the key is absent. This initializer does not read the environment.
     /// `transport` nil keeps the Step 0 stub. Use `fromEnvironment()` or `live(apiKey:)` for HTTP.
@@ -66,7 +68,8 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
         transport: (any HTTPTransport)? = nil,
         sleeper: any RetrySleeper = TaskRetrySleeper(),
         jitter: any JitterSource = SystemJitter(),
-        callBudget: SessionCallBudget? = nil
+        callBudget: SessionCallBudget? = nil,
+        log: (@Sendable (String, String) -> Void)? = nil
     ) {
         self.backend = backend
         self.apiKey = apiKey
@@ -75,6 +78,7 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
         self.sleeper = sleeper
         self.jitter = jitter
         self.callBudget = callBudget
+        self.log = log
     }
 
     public static func fromEnvironment(
@@ -96,7 +100,8 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
         transport: (any HTTPTransport)? = nil,
         sleeper: any RetrySleeper = TaskRetrySleeper(),
         jitter: any JitterSource = SystemJitter(),
-        callBudget: SessionCallBudget? = SessionCallBudget()
+        callBudget: SessionCallBudget? = SessionCallBudget(),
+        log: (@Sendable (String, String) -> Void)? = nil
     ) -> MuseSparkModelClient {
         MuseSparkModelClient(
             backend: .museSpark,
@@ -105,7 +110,8 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
             transport: transport ?? URLSessionHTTPTransport(timeout: configuration.requestTimeout),
             sleeper: sleeper,
             jitter: jitter,
-            callBudget: callBudget
+            callBudget: callBudget,
+            log: log
         )
     }
 
@@ -139,7 +145,15 @@ public struct MuseSparkModelClient: DetailedModelClient, Sendable {
             let body = try ChatCompletionRequest.body(request: request, configuration: configuration)
             try callBudget?.reserve()
             let response = try await perform(url: url, body: body, apiKey: apiKey, transport: transport)
-            let detailed = try ChatCompletionResponse.parse(data: response.body, rates: configuration.costRates)
+            let knownIDs = Set(request.keyframes.map(\.id))
+            let detailed = try ChatCompletionResponse.parse(
+                data: response.body,
+                rates: configuration.costRates,
+                knownKeyframeIDs: knownIDs,
+                onUnknownEvidenceID: { [log] id, needID in
+                    log?("MODEL", "evidence-id-unknown id=\(id) need=\(needID ?? "—")")
+                }
+            )
             completionLog.store(detailed)
             return detailed
         }

@@ -8,6 +8,7 @@ public enum ToolRejectionCode {
     public static let missingNeed = "missing_need"
     public static let notOnList = "not_on_list"
     public static let notSustained = "not_sustained"
+    public static let urgentNoFreshEvidence = "urgent_no_fresh_evidence"
     public static let keyframeCount = "keyframe_count"
     public static let keyframeSpacing = "keyframe_spacing"
     public static let alreadyOpen = "already_open"
@@ -195,14 +196,23 @@ public struct HardCapGate: Equatable, Sendable {
         guard let needID = need(verdict, session: session) else {
             return rejectedNeed(verdict)
         }
-        guard verdict.assessment.sustainedAcrossStrip == true else {
-            return reject(
-                verdict,
-                code: ToolRejectionCode.notSustained,
-                message: "A latch needs sustained_across_strip to be true. Confidence is not a gate."
-            )
-        }
         let isUrgent = latency.urgentNeedsEnabled && session.urgentNeedIDs.contains(needID)
+        if verdict.assessment.sustainedAcrossStrip != true {
+            let fresh = isUrgent ? UrgentEvidence.freshFrame(
+                assessment: verdict.assessment,
+                callKeyframes: keyframes,
+                now: session.now
+            ) : nil
+            if fresh == nil {
+                return reject(
+                    verdict,
+                    code: isUrgent ? ToolRejectionCode.urgentNoFreshEvidence : ToolRejectionCode.notSustained,
+                    message: isUrgent
+                        ? "An urgent latch without sustained_across_strip needs the newest keyframe cited as evidence, fresh within 2.5 seconds, newest_anchor_state unmet, and confidence at least 0.75."
+                        : "A latch needs sustained_across_strip to be true. Confidence is not a gate."
+                )
+            }
+        }
         let minKeyframes = isUrgent ? 1 : timing.latchMinKeyframes
         guard keyframes.count >= minKeyframes else {
             return reject(

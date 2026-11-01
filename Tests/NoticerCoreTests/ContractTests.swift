@@ -127,7 +127,9 @@ final class ContractTests: XCTestCase {
             resolution: .unknown,
             actionCode: ActionCodeExamples.waterGlassPresent,
             confidence: 0.7,
-            partnerAsleep: false
+            partnerAsleep: false,
+            evidenceKeyframeIDs: ["kf-1"],
+            newestAnchorState: .unmet
         )
         let data = try JSONEncoder().encode(assessment)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

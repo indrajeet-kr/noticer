@@ -59,12 +59,27 @@ public enum EngineTuning {
     /// passes. No extra model call is issued.
     public static let partnerInFlightCueHoldSeconds: TimeInterval = 3
 
+    /// An urgent single-frame latch needs its evidence frame this fresh:
+    /// the recomputed age of the cited newest frame at verdict time.
+    public static let urgentFreshFrameMaxAgeSeconds: TimeInterval = 2.5
+
+    /// Confidence floor for an urgent single-frame latch. An extra bar on
+    /// top of named fresh evidence, never enough on its own.
+    public static let urgentSingleFrameMinConfidence: Double = 0.75
+
     /// A not-sustained hypothesis at or above this confidence earns one
     /// confirm call instead of being dropped.
     public static let confirmMinConfidence: Double = 0.6
 
     /// The confirm call goes out this soon after the brief sighting.
     public static let confirmDelaySeconds: TimeInterval = 1.5
+
+    /// Confirm attempts per sighting. The first look plus two retries.
+    public static let confirmMaxAttempts = 3
+
+    /// A sighting ends this long after the original hypothesis, however
+    /// many attempts went out. Caps before attempts do.
+    public static let confirmMaxElapsedSeconds: TimeInterval = 8
 
     /// Two hypotheses for one need inside this window count as sustained,
     /// even when each was individually sustained=false.

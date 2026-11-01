@@ -44,6 +44,9 @@ public struct NeedsIntentDraft: Sendable, Equatable {
     /// Stores `problem_visual` (kept under the `visualCue` property name for source compatibility).
     public var visualCue: String
     public var handledVisual: String
+    /// Stores `unknown_visual`: when a compound part cannot be judged.
+    /// Empty for single-part needs.
+    public var unknownVisual: String
     public var wearerSignal: String
     public var isUrgent: Bool
 
@@ -60,6 +63,7 @@ public struct NeedsIntentDraft: Sendable, Equatable {
         allowsCheckIn: Bool,
         visualCue: String,
         handledVisual: String = "",
+        unknownVisual: String = "",
         wearerSignal: String = "",
         isUrgent: Bool = false
     ) {
@@ -70,6 +74,7 @@ public struct NeedsIntentDraft: Sendable, Equatable {
         self.allowsCheckIn = allowsCheckIn
         self.visualCue = visualCue
         self.handledVisual = handledVisual
+        self.unknownVisual = unknownVisual
         self.wearerSignal = wearerSignal
         self.isUrgent = isUrgent
     }
@@ -184,6 +189,7 @@ public enum NeedsIntentConversion {
             taken.insert(id)
             let old = existing[id]
             let handled = draft.handledVisual.trimmingCharacters(in: .whitespacesAndNewlines)
+            let unknown = draft.unknownVisual.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedSignal = draft.wearerSignal.trimmingCharacters(in: .whitespacesAndNewlines)
             let signal: String
             if trimmedSignal.range(of: #"^wearer_[a-z0-9_]+$"#, options: .regularExpression) != nil {
@@ -197,6 +203,7 @@ public enum NeedsIntentConversion {
                 cueWording: draft.whisper,
                 visualCondition: draft.visualCue.isEmpty ? old?.visualCondition : draft.visualCue,
                 handledCondition: handled.isEmpty ? old?.handledCondition : handled,
+                unknownCondition: unknown.isEmpty ? old?.unknownCondition : unknown,
                 selfNoticeSignal: signal.isEmpty ? old?.selfNoticeSignal : signal,
                 dwellSeconds: old?.dwellSeconds,
                 priority: draft.priority.needPriority,
@@ -222,6 +229,7 @@ public enum NeedsIntentConversion {
                 allowsCheckIn: $0.allowsCheckIn,
                 visualCue: $0.visualCondition ?? "",
                 handledVisual: $0.handledCondition ?? "",
+                unknownVisual: $0.unknownCondition ?? "",
                 wearerSignal: $0.selfNoticeSignal ?? "",
                 isUrgent: $0.isUrgent
             )
@@ -238,6 +246,7 @@ public enum NeedsIntentConversion {
             var allowsCheckIn: Bool
             var problemVisual: String
             var handledVisual: String
+            var unknownVisual: String
             var wearerSignal: String
             var urgent: Bool
 
@@ -249,6 +258,7 @@ public enum NeedsIntentConversion {
                 case allowsCheckIn
                 case problemVisual = "problem_visual"
                 case handledVisual = "handled_visual"
+                case unknownVisual = "unknown_visual"
                 case wearerSignal = "wearer_signal"
                 case urgent
             }
@@ -262,6 +272,7 @@ public enum NeedsIntentConversion {
                 allowsCheckIn: need.allowsCheckIn,
                 problemVisual: need.visualCondition ?? "",
                 handledVisual: need.handledCondition ?? "",
+                unknownVisual: need.unknownCondition ?? "",
                 wearerSignal: need.selfNoticeSignal ?? "",
                 urgent: need.isUrgent
             )
