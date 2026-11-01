@@ -16,13 +16,17 @@ public struct DemoStripItem: Equatable, Sendable, Identifiable {
     public var style: Style
     /// Head start only.
     public var countdownEndsAt: Date?
+    /// The need this row speaks for, when it speaks for one. Drives the
+    /// repeat collapse; never shown.
+    public var needID: String?
 
-    public init(id: Int, at: Date, text: String, style: Style, countdownEndsAt: Date? = nil) {
+    public init(id: Int, at: Date, text: String, style: Style, countdownEndsAt: Date? = nil, needID: String? = nil) {
         self.id = id
         self.at = at
         self.text = text
         self.style = style
         self.countdownEndsAt = countdownEndsAt
+        self.needID = needID
     }
 }
 
@@ -45,8 +49,30 @@ public struct DemoStripBuffer: Sendable {
         nextID = 0
     }
 
-    public mutating func append(_ text: String, style: DemoStripItem.Style, at: Date, countdownEndsAt: Date? = nil) {
-        items.append(DemoStripItem(id: nextID, at: at, text: text, style: style, countdownEndsAt: countdownEndsAt))
+    public mutating func append(
+        _ text: String,
+        style: DemoStripItem.Style,
+        at: Date,
+        countdownEndsAt: Date? = nil,
+        needID: String? = nil
+    ) {
+        // Consecutive identical captions for the same need collapse into
+        // one row with the latest time. Anything else appends.
+        if let needID,
+           let last = items.last,
+           last.needID == needID, last.text == text, last.style == style {
+            items[items.count - 1].at = at
+            items[items.count - 1].countdownEndsAt = countdownEndsAt
+            return
+        }
+        items.append(DemoStripItem(
+            id: nextID,
+            at: at,
+            text: text,
+            style: style,
+            countdownEndsAt: countdownEndsAt,
+            needID: needID
+        ))
         nextID += 1
         if items.count > Self.capacity {
             items.removeFirst(items.count - Self.capacity)

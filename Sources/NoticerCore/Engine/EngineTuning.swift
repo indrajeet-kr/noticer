@@ -95,6 +95,9 @@ public enum EngineTuning {
     /// A started unprompted action must show its handled state inside this
     /// window, or the start expires with no credit.
     public static let unpromptedCompleteWindowSeconds: TimeInterval = 60
+    /// A seen wearer action stays pending this long without a verdict
+    /// either way. Out-of-view frames never clear it sooner.
+    public static let pendingActionTTLSeconds: TimeInterval = 30
 
     /// Below this sharpness a frame reads as dark (lens covered or lights
     /// out). Three in a row logs once and holds model calls.
@@ -139,7 +142,7 @@ public enum CueSpeechTuning {
     /// `cueFired` detail for the repeat. The first cue keeps the kind name.
     public static let repeatEventDetail = "repeat"
     /// Spoken line cap. Already-short actions are kept even under three words.
-    public static let spokenWordLimit = 5
+    public static let spokenWordLimit = 8
     /// Repeat while he is still new to the need. One self-notice from zero
     /// lands at 0.25; two land at 0.4375; the whisper itself becomes a chime
     /// at `CueFadeSpec.quietThreshold` (0.5). 0.40 sits between the first and

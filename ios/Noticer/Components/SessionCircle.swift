@@ -114,6 +114,8 @@ struct SessionCircle: View {
                     .font(.system(size: heroSize, design: .serif))
                     .foregroundStyle(Theme.textPrimary)
                     .multilineTextAlignment(.center)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.6)
                 Image(systemName: "heart.fill")
                     .fontWeight(.light)
                     .foregroundStyle(Theme.terracotta)

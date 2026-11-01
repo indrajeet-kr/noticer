@@ -16,7 +16,7 @@ final class SpokenCueFormTests: XCTestCase {
         )
         XCTAssertEqual(
             SpokenCueForm.line(cueWording: "Could you move that glass from the baby?"),
-            "Move that glass"
+            "Move that glass from the baby"
         )
         XCTAssertEqual(
             SpokenCueForm.line(cueWording: "Clear the table a bit?"),
@@ -54,15 +54,15 @@ final class SpokenCueFormTests: XCTestCase {
             ("nursing, no water", "Her water's empty.", "Refill her water"),
             ("Keep water bottle on dining table", "Water on the table helps.", "Set water on the table"),
             ("Pick the kid he is roaming around", "Maybe pick up the little roamer?", "Pick up the little roamer"),
-            ("Remove the empty glasses from the dinning table", "", "Remove the empty glasses"),
-            ("Help clean the toys from floor", "", "Help clean the toys"),
+            ("Remove the empty glasses from the dinning table", "", "Remove the empty glasses from the dinning table"),
+            ("Help clean the toys from floor", "", "Help clean the toys from floor"),
             ("Fold the mat if on the floor", "", "Fold the mat"),
             // The compiled line has no verb, so her words supply the action.
             ("Fold the mat if on the floor", "The mat is out.", "Fold the mat"),
             ("eating one-handed, take the baby", "She could use a hand.", "Take the baby"),
             ("Pick the kid he is roaming around", "She could use a hand.", "Pick the kid"),
-            ("Help clean the toys from floor", "Toys are everywhere.", "Help clean the toys"),
-            ("Remove the empty glasses from the dinning table", "The table is crowded.", "Remove the empty glasses"),
+            ("Help clean the toys from floor", "Toys are everywhere.", "Help clean the toys from floor"),
+            ("Remove the empty glasses from the dinning table", "The table is crowded.", "Remove the empty glasses from the dinning table"),
         ]
         for row in rows {
             let spoken = SpokenCueForm.line(cueWording: row.cue, authorText: row.author)
@@ -121,7 +121,7 @@ final class SpokenCueFormTests: XCTestCase {
         XCTAssertEqual(SpokenCueForm.line(cueWording: "She could use a hand."), "Lend a hand")
     }
 
-    func testSpokenLinesStayInsideThreeToFiveWords() {
+    func testSpokenLinesStayInsideThreeToEightWords() {
         let lines = [
             "Take the baby",
             "Refill her water",
@@ -143,6 +143,22 @@ final class SpokenCueFormTests: XCTestCase {
         XCTAssertTrue(SpokenCueForm.isRepeat("Again, Take the baby"))
         XCTAssertFalse(SpokenCueForm.isRepeat("Take the baby"))
         XCTAssertEqual(SpokenCueForm.repeatLine("Again, Take the baby"), "Again, Take the baby")
+    }
+
+    func testCompoundActionSpeaksItsFirstAction() {
+        XCTAssertEqual(
+            SpokenCueForm.line(authorText: "Close the lid of trash can and move it to the corner"),
+            "Close the lid of trash can"
+        )
+        XCTAssertEqual(
+            SpokenCueForm.line(cueWording: "Close the lid of trash can and move it to the corner"),
+            "Close the lid of trash can"
+        )
+        XCTAssertEqual(SpokenCueForm.line(authorText: "Refill her water"), "Refill her water")
+        XCTAssertEqual(
+            SpokenCueForm.line(authorText: "Ask me for heat pack while on couch"),
+            "Offer her the heat pack"
+        )
     }
 
     func testHeatPackAndBlanketSpeakActions() {
@@ -185,8 +201,8 @@ final class SpokenCueFormTests: XCTestCase {
             ("nursing, no water", "Her water's empty.", "Refill her water"),
             ("Keep water bottle on dining table", "Water on the table helps.", "Set water on the table"),
             ("Pick the kid he is roaming around", "Maybe pick up the little roamer?", "Pick up the little roamer"),
-            ("Remove the empty glasses from the dinning table", "", "Remove the empty glasses"),
-            ("Help clean the toys from floor", "", "Help clean the toys"),
+            ("Remove the empty glasses from the dinning table", "", "Remove the empty glasses from the dinning table"),
+            ("Help clean the toys from floor", "", "Help clean the toys from floor"),
             ("Fold the mat if on the floor", "", "Fold the mat"),
             ("Ask me for heat pack while on couch", "Maybe ask if she wants heat pack?", "Offer her the heat pack"),
         ]

@@ -1186,10 +1186,10 @@ final class PhoneSessionModel {
         guard let row = DemoStripMapper.item(for: event, needs: view.needs, headStartSeconds: headStartSeconds) else {
             return
         }
-        demoStrip.append(row.0, style: row.1, at: Date(), countdownEndsAt: row.2)
+        demoStrip.append(row.0, style: row.1, at: Date(), countdownEndsAt: row.2, needID: event.needID)
         if event.kind == .needLatched,
            let followUp = DemoStripMapper.headStartFollowUp(for: event, headStartSeconds: headStartSeconds) {
-            demoStrip.append(followUp.0, style: followUp.1, at: Date(), countdownEndsAt: followUp.2)
+            demoStrip.append(followUp.0, style: followUp.1, at: Date(), countdownEndsAt: followUp.2, needID: event.needID)
         }
     }
 
