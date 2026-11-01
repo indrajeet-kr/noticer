@@ -35,7 +35,7 @@ public struct ModelRequest: Equatable, Sendable {
 /// One open need, as the scene checker sees it. Tells the model what is
 /// already open so it reports "handled" or "still open" instead of answering
 /// `unknown` or re-latching.
-public struct OpenNeedContext: Equatable, Sendable {
+public struct OpenNeedContext: Equatable, Sendable, Codable {
     public var needID: String
     public var latchedSecondsAgo: TimeInterval
     public var cueSpoken: Bool

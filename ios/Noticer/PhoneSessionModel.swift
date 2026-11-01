@@ -820,7 +820,7 @@ final class PhoneSessionModel {
             needs: needsForSession(),
             model: AgentSeam.makeLiveClient(log: { [log = sessionLog] tag, message in
                 Task { await MainActor.run { log.append(tag, message) } }
-            }),
+            }, needs: needsForSession(), mode: "live"),
             speaker: speaker,
             timing: activeTiming
         )
