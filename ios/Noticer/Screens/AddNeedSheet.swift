@@ -1,3 +1,4 @@
+import NoticerCore
 import SwiftUI
 
 /// Add a need: a bottom sheet with a single free-text input, docked
@@ -183,6 +184,21 @@ struct AddNeedSheet: View {
                                 send()
                             }
                         }
+                    }
+                }
+            }
+            .transition(.opacity.combined(with: .move(edge: .bottom)))
+        case .swapQuestion(_, let text, _, let candidates):
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                SparkBubble(text: text)
+                FlowLayout {
+                    ForEach(candidates, id: \.id) { candidate in
+                        SuggestionChip(text: candidate.shortName) {
+                            service.chooseSwap(candidateID: candidate.id, model: model)
+                        }
+                    }
+                    SuggestionChip(text: NeedListEdit.keepAllChip()) {
+                        service.keepAll(model: model)
                     }
                 }
             }

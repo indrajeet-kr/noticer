@@ -120,8 +120,12 @@ extension PhoneSessionModel {
     }
 
     /// Display-only mirror of the engine's `H = H0 * (1 + 2m)`, capped.
-    /// Read from the run timing; never written back anywhere.
+    /// Read from the run timing; never written back anywhere. Mirrors the
+    /// engine's urgent rule: safety needs skip the head start entirely.
     func displayHeadStart(for need: Need) -> TimeInterval {
+        if LatencyTuning.default.urgentNeedsEnabled, need.isUrgent {
+            return 0
+        }
         let base = need.dwellSeconds.map { max(0, $0) } ?? runTiming.defaultHeadStartSeconds
         let scaled = base * (1 + CueFadeSpec.headStartMasteryCoefficient * need.mastery.score)
         return min(scaled, runTiming.headStartCapSeconds)

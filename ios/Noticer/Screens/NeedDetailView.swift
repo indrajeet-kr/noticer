@@ -41,7 +41,25 @@ struct NeedDetailView: View {
                 }
                 .accessibilityElement(children: .combine)
 
-                PriorityChip(priority: NeedsIntentPriority.word(forNeedPriority: need.priority))
+                VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                    Button {
+                        model.setUrgent(liveNeed.id, urgent: !liveNeed.isUrgent)
+                    } label: {
+                        PriorityChip(
+                            priority: NeedsIntentPriority.word(forNeedPriority: liveNeed.priority),
+                            urgent: liveNeed.isUrgent
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(
+                        liveNeed.isUrgent
+                            ? "Priority Urgent. Tap to change priority."
+                            : "Priority \(priorityWord). Tap to change priority."
+                    )
+                    Text("Tap to change priority")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
 
                 VStack(spacing: Theme.Space.s12) {
                     Button(paused ? "Resume" : "Pause tonight") {
@@ -88,7 +106,21 @@ struct NeedDetailView: View {
     }
 
     private var timing: (main: String, detail: String?) {
-        TimingWords.headStartSentence(seconds: model.displayHeadStart(for: need))
+        TimingWords.headStartSentence(seconds: model.displayHeadStart(for: liveNeed))
+    }
+
+    /// The saved row, so the pill and timing follow the toggle. Falls back
+    /// to the passed need if the row is gone.
+    private var liveNeed: Need {
+        model.needs.first { $0.id == need.id } ?? need
+    }
+
+    private var priorityWord: String {
+        switch NeedsIntentPriority.word(forNeedPriority: liveNeed.priority) {
+        case .gentle: return "Gentle"
+        case .normal: return "Normal"
+        case .important: return "Important"
+        }
     }
 }
 

@@ -426,6 +426,67 @@ final class NeedsIntentTests: XCTestCase {
         XCTAssertTrue(suggestions.isEmpty)
     }
 
+    func testProseWrappedQuestionJSONDecodes() async throws {
+        let content = "Here you go: {\"question\":\"Which one?\",\"suggestions\":[\"Water\"]} thanks!"
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "something vague")
+
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a question, got \(result)")
+        }
+        XCTAssertEqual(question, "Which one?")
+        XCTAssertEqual(suggestions, ["Water"])
+    }
+
+    func testTruncatedJSONInContentFallsBack() async throws {
+        let content = "{\"question\": \"You already have 6 needs — which one should I swap out\", \"suggestions\": [\"Swap out"
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "Fold the mat if on the floor")
+
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a fallback question, got \(result)")
+        }
+        XCTAssertEqual(question, NeedReplyText.fallbackQuestion)
+        XCTAssertTrue(suggestions.isEmpty)
+        XCTAssertFalse(question.contains("{"))
+    }
+
+    func testUnknownJSONShapeInContentFallsBack() async throws {
+        let content = "{\"foo\": 1, \"bar\": [true]}"
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "something vague")
+
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a fallback question, got \(result)")
+        }
+        XCTAssertEqual(question, NeedReplyText.fallbackQuestion)
+        XCTAssertTrue(suggestions.isEmpty)
+    }
+
+    func testNonJSONBracesInContentStayProse() async throws {
+        let content = "Use {brackets} here."
+        let transport = ScriptedIntentTransport(steps: [.response(httpJSON(200, completionBody(
+            content: content
+        )))])
+        let client = NeedsIntentClient(apiKey: "test-key", transport: transport, configuration: .fast)
+        let result = try await client.interpret(currentList: [], message: "something vague")
+
+        guard case .question(let question, let suggestions) = result else {
+            return XCTFail("expected a question, got \(result)")
+        }
+        XCTAssertEqual(question, content)
+        XCTAssertTrue(suggestions.isEmpty)
+    }
+
     // MARK: Typo repair ("takeq-baby" snaps to "take-baby").
 
     func testRepairSnapsSingleTypos() {
