@@ -105,11 +105,22 @@ public enum SpokenCueForm {
         if water {
             return "Refill her water"
         }
-        if t.contains("baby") || t.contains("infant") || t.contains("newborn") || t.contains("roam") {
+        // A roaming kid is a toddler, not the baby. "roamer" must not match "roam".
+        if hasWord(t, "roam") || hasWord(t, "roaming") || hasWord(t, "kid") || hasWord(t, "kids")
+            || hasWord(t, "toddler") || hasWord(t, "toddlers") {
+            return "Pick up the kid"
+        }
+        if hasWord(t, "baby") || hasWord(t, "infant") || hasWord(t, "newborn") {
             return "Take the baby"
+        }
+        if hasWord(t, "mat") || hasWord(t, "mats") {
+            return "Fold the mat"
         }
         if t.contains("burp") {
             return "Hand her a burp cloth"
+        }
+        if t.contains("toy") && t.contains("floor") {
+            return "Pick up the toys"
         }
         if t.contains("toy") {
             return "Pick up the toys"
@@ -136,6 +147,9 @@ public enum SpokenCueForm {
 
     private static func limit(_ text: String) -> String {
         var words = tokens(stripPoliteness(text))
+        // Drop the reason clause before counting, so "if on the floor" cannot
+        // eat the word budget and leave "Fold the mat if".
+        words = cutAtClauseBreak(words)
         if words.count >= 2, words.suffix(2).map({ $0.lowercased() }) == ["a", "bit"] {
             words.removeLast(2)
         }
@@ -147,23 +161,52 @@ public enum SpokenCueForm {
         while let last = words.last?.lowercased(), hedges.contains(last) {
             words.removeLast()
         }
-        let truncated = words.count > CueSpeechTuning.spokenWordLimit
-        if truncated {
+        if words.count > CueSpeechTuning.spokenWordLimit {
             words = Array(words.prefix(CueSpeechTuning.spokenWordLimit))
         }
-        if truncated {
-            while words.count > 2, let last = words.last?.lowercased(), dangling.contains(last) {
-                words.removeLast()
-            }
+        while words.count > 1, let last = words.last?.lowercased(), dangling.contains(last) {
+            words.removeLast()
         }
         return capitalize(words)
     }
 
-    /// Words a cut must not end on. "Move that glass from the" loses the tail.
+    /// Subordinators and conjunctions. The action is the words before the first one.
+    private static let clauseBreaks: Set<String> = [
+        "if", "when", "while", "because", "so", "but", "he", "she", "it", "is",
+        "that's", "thats", "who", "which", "since", "until", "before", "after",
+    ]
+
+    private static func cutAtClauseBreak(_ words: [String]) -> [String] {
+        guard let index = words.firstIndex(where: { clauseBreaks.contains($0.lowercased()) }), index > 0 else {
+            return words
+        }
+        return Array(words.prefix(index))
+    }
+
+    /// Words a spoken line must not end on. Includes the clause breaks, so a
+    /// cut that still lands on one loses that word too.
     private static let dangling: Set<String> = [
         "a", "an", "the", "her", "his", "some", "that", "to", "of", "from", "for",
         "on", "in", "with", "and", "or", "at", "by",
+        "if", "when", "while", "because", "so", "but", "he", "she", "it", "is",
+        "that's", "thats", "who", "which", "since", "until", "before", "after",
     ]
+
+    /// Whole word, so "roam" does not match "roamer" and "water" still matches "water's".
+    private static func hasWord(_ text: String, _ word: String) -> Bool {
+        var start = text.startIndex
+        while let range = text.range(of: word, range: start..<text.endIndex) {
+            let beforeOK = range.lowerBound == text.startIndex
+                || !text[text.index(before: range.lowerBound)].isLetter
+            let afterOK = range.upperBound == text.endIndex
+                || !text[range.upperBound].isLetter
+            if beforeOK && afterOK {
+                return true
+            }
+            start = range.upperBound
+        }
+        return false
+    }
 
     private static func tokens(_ text: String) -> [String] {
         text.split { character in

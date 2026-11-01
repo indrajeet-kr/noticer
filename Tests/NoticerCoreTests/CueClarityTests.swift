@@ -48,6 +48,63 @@ final class SpokenCueFormTests: XCTestCase {
         )
     }
 
+    func testRealListSpeaksAShortAction() {
+        let rows: [(author: String, cue: String, spoken: String)] = [
+            ("eating one-handed, take the baby", "Her plate's getting cold, maybe take the baby?", "Take the baby"),
+            ("nursing, no water", "Her water's empty.", "Refill her water"),
+            ("Keep water bottle on dining table", "Water on the table helps.", "Set water on the table"),
+            ("Pick the kid he is roaming around", "Maybe pick up the little roamer?", "Pick up the little roamer"),
+            ("Remove the empty glasses from the dinning table", "", "Remove the empty glasses"),
+            ("Help clean the toys from floor", "", "Help clean the toys"),
+            ("Fold the mat if on the floor", "", "Fold the mat"),
+            // The compiled line has no verb, so her words supply the action.
+            ("Fold the mat if on the floor", "The mat is out.", "Fold the mat"),
+            ("eating one-handed, take the baby", "She could use a hand.", "Take the baby"),
+            ("Pick the kid he is roaming around", "She could use a hand.", "Pick the kid"),
+            ("Help clean the toys from floor", "Toys are everywhere.", "Help clean the toys"),
+            ("Remove the empty glasses from the dinning table", "The table is crowded.", "Remove the empty glasses"),
+        ]
+        for row in rows {
+            let spoken = SpokenCueForm.line(cueWording: row.cue, authorText: row.author)
+            XCTAssertEqual(spoken, row.spoken, "author \(row.author) / cue \(row.cue)")
+            assertDoesNotEndOnAFunctionWord(spoken)
+        }
+    }
+
+    func testRoamingKidMatAndFloorToys() {
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "the kid is roaming"), "Pick up the kid")
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "toddler in the hall"), "Pick up the kid")
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "the baby is fussy"), "Take the baby")
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "infant needs a hold"), "Take the baby")
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "mat on the floor"), "Fold the mat")
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "Toys are on the floor."), "Pick up the toys")
+        XCTAssertNotEqual(SpokenCueForm.line(cueWording: "the little roamer"), "Take the baby")
+        XCTAssertNotEqual(SpokenCueForm.line(cueWording: "the little roamer"), "Pick up the kid")
+    }
+
+    func testClauseCutDropsTheReasonBeforeTheWordLimit() {
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "Fold the mat if on the floor"), "Fold the mat")
+        XCTAssertEqual(SpokenCueForm.line(cueWording: "Pick the kid he is roaming around"), "Pick the kid")
+        XCTAssertEqual(
+            SpokenCueForm.line(cueWording: "Fold the big blue mat if it is on the floor"),
+            "Fold the big blue mat"
+        )
+        assertDoesNotEndOnAFunctionWord(SpokenCueForm.line(cueWording: "Fold the mat if on the floor"))
+        assertDoesNotEndOnAFunctionWord(SpokenCueForm.line(cueWording: "Pick the kid he is roaming around"))
+    }
+
+    private func assertDoesNotEndOnAFunctionWord(_ spoken: String, file: StaticString = #filePath, line: UInt = #line) {
+        let last = spoken.split(whereSeparator: \.isWhitespace).last.map(String.init)?.lowercased() ?? ""
+        XCTAssertFalse(Self.functionWords.contains(last), "\(spoken) ends on a function word", file: file, line: line)
+    }
+
+    private static let functionWords: Set<String> = [
+        "a", "an", "the", "her", "his", "some", "that", "to", "of", "from", "for",
+        "on", "in", "with", "and", "or", "at", "by",
+        "if", "when", "while", "because", "so", "but", "he", "she", "it", "is",
+        "that's", "thats", "who", "which", "since", "until", "before", "after",
+    ]
+
     func testStateLinesBecomeActions() {
         XCTAssertEqual(
             SpokenCueForm.line(cueWording: "Her water's empty.", authorText: "nursing, no water"),
