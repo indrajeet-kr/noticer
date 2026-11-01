@@ -8,31 +8,58 @@ struct LiveSessionView: View {
     var onWins: () -> Void = {}
 
     @State private var path = NavigationPath()
+    @AppStorage("noticer.demo.mode") private var demoSettingOn = false
+
+    /// Demo strip shows while a demo session runs, and after stop while its
+    /// rows remain and the setting is still on. Off means off: nothing extra
+    /// enters the hierarchy.
+    private var showDemoStrip: Bool {
+        model.demoModeActive || (!model.demoStrip.items.isEmpty && demoSettingOn)
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                ScrollView {
-                    VStack(spacing: Theme.Space.sectionGap) {
-                        header
-                        deviceRow
-                        circleSection
-                        if model.runError != nil || !model.notices.isEmpty {
-                            attentionCard
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: Theme.Space.sectionGap) {
+                            header
+                            deviceRow
+                            circleSection
+                            if showDemoStrip {
+                                DemoLiveStrip(
+                                    items: model.demoStrip.visibleItems(),
+                                    chip: model.demoChip,
+                                    relative: { model.demoStrip.relativeTime($0) }
+                                )
+                                // Keeps the newest strip row above the tab bar:
+                                // scrolling this tail to the bottom lands the
+                                // strip exactly clear of it. Off means off.
+                                Color.clear
+                                    .frame(height: 96)
+                                    .id("demoStripTail")
+                            }
+                            if model.runError != nil || !model.notices.isEmpty {
+                                attentionCard
+                            }
+                            TonightTimeline(
+                                moments: model.tonightMoments,
+                                isRunning: model.isRunning,
+                                wordsForMoment: { model.momentWords(for: $0) }
+                            )
+                            quickTiming
+                            auxiliaryActions
                         }
-                        TonightTimeline(
-                            moments: model.tonightMoments,
-                            isRunning: model.isRunning,
-                            wordsForMoment: { model.momentWords(for: $0) }
-                        )
-                        quickTiming
-                        auxiliaryActions
+                        .screenMargins()
+                        .padding(.top, Theme.Space.s16)
+                        .padding(.bottom, Theme.Space.s32)
                     }
-                    .screenMargins()
-                    .padding(.top, Theme.Space.s16)
-                    .padding(.bottom, Theme.Space.s32)
+                    .contentMargins(.bottom, 96, for: .scrollContent)
+                    .onChange(of: model.demoStrip.items.map(\.id)) { _, _ in
+                        guard showDemoStrip else { return }
+                        proxy.scrollTo("demoStripTail", anchor: .bottom)
+                    }
                 }
-                .contentMargins(.bottom, 96, for: .scrollContent)
             }
             .ambientScreen()
             .toolbar {
@@ -115,8 +142,9 @@ struct LiveSessionView: View {
 
     private var circleSection: some View {
         VStack(spacing: Theme.Space.s16) {
-            // About 64% of a phone's content width.
-            SessionCircle(status: model.sessionStatus, size: 240) {
+            // About 64% of a phone's content width; smaller while the demo
+            // strip shows so everything fits without scrolling.
+            SessionCircle(status: model.sessionStatus, size: showDemoStrip ? 180 : 240) {
                 guard !model.isRunning else {
                     return
                 }
