@@ -21,6 +21,9 @@ struct AskSettingsView: View {
     @State private var dictation = DictationService()
     @AppStorage("noticer.onboarding.done") private var onboardingDone = false
     @AppStorage("noticer.demo.mode") private var demoMode = false
+    @AppStorage(AgentSeam.frameCaptureDefaultsKey) private var frameCapture = false
+    @State private var captureUsage = ""
+    @State private var confirmingCaptureDelete = false
 
     var body: some View {
         ScrollView {
@@ -40,6 +43,7 @@ struct AskSettingsView: View {
                 sessionSection
                 keySection
                 logSection
+                developerSection
                 resetSection
                 introSection
             }
@@ -63,6 +67,9 @@ struct AskSettingsView: View {
         }
         .onChange(of: demoMode) { old, new in
             model.sessionLog.appendActivity("SETTINGS", "demo-mode \(old) -> \(new)")
+        }
+        .onChange(of: frameCapture) { old, new in
+            model.sessionLog.appendActivity("SETTINGS", "frame-capture \(old) -> \(new)")
         }
         .onChange(of: showingKey) { _, shown in
             model.sessionLog.appendActivity("UI", shown ? "key-sheet opened" : "key-sheet closed")
@@ -332,6 +339,58 @@ struct AskSettingsView: View {
                 .foregroundStyle(Theme.sageStrong)
             }
         }
+    }
+
+    private var developerSection: some View {
+        GlassCard(padding: Theme.Space.card) {
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                Toggle(isOn: $frameCapture) {
+                    VStack(alignment: .leading, spacing: Theme.Space.s4) {
+                        Text("Save frames sent to Muse")
+                            .font(Theme.Font.headline)
+                        Text("Keeps photos from your sessions on this phone for testing. Off for normal use.")
+                            .font(Theme.Font.caption)
+                            .foregroundStyle(Theme.textSecondary)
+                    }
+                }
+                .tint(Theme.sage)
+                if !captureUsage.isEmpty {
+                    Text(captureUsage)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                }
+                Button("Delete saved frames", role: .destructive) {
+                    confirmingCaptureDelete = true
+                }
+                .font(Theme.Font.headline)
+                .confirmationDialog(
+                    "Delete every saved session?",
+                    isPresented: $confirmingCaptureDelete,
+                    titleVisibility: .visible
+                ) {
+                    Button("Delete everything", role: .destructive) {
+                        FrameCaptureStore.deleteAll()
+                        refreshCaptureUsage()
+                    }
+                    Button("Cancel", role: .cancel) {}
+                }
+            }
+        }
+        .sensoryFeedback(.selection, trigger: frameCapture)
+        .onAppear {
+            refreshCaptureUsage()
+        }
+    }
+
+    private func refreshCaptureUsage() {
+        let usage = FrameCaptureStore.usage()
+        if usage.sessions == 0 {
+            captureUsage = ""
+            return
+        }
+        let sessions = usage.sessions == 1 ? "1 session" : "\(usage.sessions) sessions"
+        let size = ByteCountFormatter.string(fromByteCount: Int64(usage.bytes), countStyle: .file)
+        captureUsage = "\(sessions) · \(size)"
     }
 
     private var logSection: some View {
