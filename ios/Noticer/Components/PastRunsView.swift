@@ -6,7 +6,8 @@ import UIKit
 struct PastRunsView: View {
     @Bindable var log: SessionLog
     @State private var runs: [SavedRun] = []
-    @State private var shareAllURLs: [URL] = []
+    @State private var sharePayload: LogSharePayload?
+    @State private var isWritingShareAll = false
 
     var body: some View {
         ScrollView {
@@ -42,31 +43,43 @@ struct PastRunsView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                if !shareAllURLs.isEmpty {
-                    ShareLink(items: shareAllURLs, preview: { _ in SharePreview("All runs") }) {
-                        Image(systemName: "square.and.arrow.up.on.square")
-                    }
-                    .accessibilityLabel("Share all runs")
-                    .simultaneousGesture(TapGesture().onEnded { _ in
-                        log.appendActivity("UI", "all runs shared count=\(shareAllURLs.count)")
-                    })
+                Button {
+                    writeAndShareAll()
+                } label: {
+                    Image(systemName: "square.and.arrow.up.on.square")
                 }
+                .accessibilityLabel("Share all runs")
+                .disabled((runs.isEmpty && log.isEmpty) || isWritingShareAll)
             }
+        }
+        .sheet(item: $sharePayload) { payload in
+            ShareSheet(urls: payload.urls)
         }
         .onAppear {
             runs = SessionLogStore.runs()
-            refreshShareAll()
         }
     }
 
-    /// The current log plus every saved run, written once on appear.
-    private func refreshShareAll() {
-        var urls: [URL] = []
-        if !log.isEmpty, let current = SessionLogExport.writeFile(text: log.text) {
-            urls.append(current)
+    /// Writes the current-log file and gathers every saved run when Share
+    /// all runs is tapped. Nothing is written when the screen opens.
+    @MainActor
+    private func writeAndShareAll() {
+        isWritingShareAll = true
+        let text = log.text
+        let includeCurrent = !log.isEmpty
+        let runURLs = runs.map(\.url)
+        Task {
+            var urls: [URL] = []
+            if includeCurrent,
+               let current = await Task.detached { SessionLogExport.writeFile(text: text) }.value {
+                urls.append(current)
+            }
+            urls += runURLs
+            isWritingShareAll = false
+            guard !urls.isEmpty else { return }
+            log.appendActivity("UI", "all runs shared count=\(urls.count)")
+            sharePayload = LogSharePayload(urls: urls)
         }
-        urls += runs.map(\.url)
-        shareAllURLs = urls
     }
 }
 
@@ -102,19 +115,36 @@ private struct PastRunRow: View {
     }
 }
 
-/// One saved run, read-only, with Share (as file) and Copy.
+/// One saved run, read-only, with Share (as file) and Copy. The file
+/// loads off the main thread; the screen shows the newest lines while
+/// Share and Copy use the full file.
 struct PastRunDetailView: View {
     var run: SavedRun
-    @State private var text: String = ""
+    @State private var loaded: PastRunContent?
 
     var body: some View {
         ScrollView {
-            Text(text.isEmpty ? "Loading…" : text)
-                .font(Theme.Font.monoCaption)
-                .foregroundStyle(Theme.textSecondary)
-                .textSelection(.enabled)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(Theme.Space.card)
+            if let loaded {
+                if let note = loaded.slice.note {
+                    Text(note)
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding([.horizontal, .top], Theme.Space.card)
+                }
+                Text(loaded.slice.text)
+                    .font(Theme.Font.monoCaption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Theme.Space.card)
+            } else {
+                Text("Loading run…")
+                    .font(Theme.Font.body)
+                    .foregroundStyle(Theme.textSecondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Theme.Space.card)
+            }
         }
         .background(Theme.bgBase)
         .navigationTitle(run.url.lastPathComponent)
@@ -122,12 +152,12 @@ struct PastRunDetailView: View {
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button {
-                    UIPasteboard.general.string = text
+                    UIPasteboard.general.string = loaded?.full ?? ""
                 } label: {
                     Image(systemName: "doc.on.doc")
                 }
                 .accessibilityLabel("Copy run")
-                .disabled(text.isEmpty)
+                .disabled(loaded?.full.isEmpty ?? true)
                 ShareLink(item: run.url, preview: SharePreview("Past run")) {
                     Image(systemName: "square.and.arrow.up")
                 }
@@ -135,7 +165,19 @@ struct PastRunDetailView: View {
             }
         }
         .onAppear {
-            text = (try? String(contentsOf: run.url, encoding: .utf8)) ?? "Could not read this run."
+            loadRun()
+        }
+    }
+
+    @MainActor
+    private func loadRun() {
+        let url = run.url
+        Task {
+            let content = await Task.detached { PastRunLoader.load(url: url) }.value
+            loaded = content ?? PastRunContent(
+                full: "",
+                slice: LogDisplaySlice(text: "Could not read this run.", totalLines: 1, note: nil)
+            )
         }
     }
 }
