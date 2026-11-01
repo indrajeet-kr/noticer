@@ -17,7 +17,7 @@ enum AgentSeam {
         // One-line rollback if latch quality drops: delete this override.
         var configuration = MuseSparkConfiguration()
         configuration.reasoningEffort = "minimal"
-        let inner = MuseSparkModelClient.live(apiKey: key, configuration: configuration)
+        let inner = MuseSparkModelClient.live(apiKey: key, configuration: configuration, log: log)
         return LoggingModelClient(inner: inner, log: log)
     }
 }

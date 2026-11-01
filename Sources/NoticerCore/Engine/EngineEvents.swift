@@ -93,6 +93,9 @@ public struct CueTimingSnapshot: Equatable, Sendable {
 
 public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case needLatched
+    /// An urgent need latched on one fresh cited frame. `needLatched`
+    /// still follows; this line carries the evidence id and confidence.
+    case latchAccepted
     case latchRejected
     case cueFired
     case cueDeferredHandsBusy
@@ -123,6 +126,15 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case skip
     /// A brief high-confidence sighting earned one focused second look.
     case confirmScheduled
+    /// A confirm reply cited only the old source frames. Inconclusive.
+    case confirmSelfOnly
+    /// The confirm's new frame shows the anchor handled. Sighting over.
+    case confirmCleared
+    /// An inconclusive confirm gets another attempt with a new frame.
+    case confirmRetry
+    /// A sighting ended: latched, cleared, exhausted, expired, stopped,
+    /// or removed. The only confirm-state clearing, always logged.
+    case confirmEnded
     /// Two hypotheses inside 10 s latched without either being sustained.
     case sustainedByRepeat
     /// He did a listed need's action with nothing open. Credit, no cue.

@@ -114,6 +114,10 @@ final class NeedsIntentService {
 
     private var lastAction: LastAction?
     private var removed: (need: Need, index: Int)?
+    /// A recompile offer awaiting her answer: question entry plus need id.
+    private(set) var pendingRecompile: (entryID: UUID, needID: String)?
+    /// Offers she declined with "Keep as is". Not re-offered this launch.
+    private var declinedRecompiles: Set<String> = []
     /// Her new-need text while the app-owned swap question is open.
     private(set) var pendingSwapText: String?
     /// Swap picks: the only ids a merge may drop without her naming them.
@@ -141,6 +145,7 @@ final class NeedsIntentService {
             accepted: true,
             superseded: false
         )]
+        offerRecompiles(from: model)
     }
 
     /// Rebuilds the seeded "current list" entry from the screen's list, so a
@@ -166,6 +171,28 @@ final class NeedsIntentService {
             accepted: true,
             superseded: false
         )
+        offerRecompiles(from: model)
+    }
+
+    /// One recompile offer at a time: the first saved compound request
+    /// still on single-part conditions gets an "Update it?" question.
+    /// Answering runs a normal model turn; only Looks right saves it.
+    func offerRecompiles(from model: PhoneSessionModel) {
+        if let pending = pendingRecompile,
+           model.needs.first(where: { $0.id == pending.needID })
+               .flatMap(CompoundParts.recompileOffer) == nil {
+            entries.removeAll { $0.id == pending.entryID }
+            pendingRecompile = nil
+        }
+        guard pendingRecompile == nil else { return }
+        for need in model.needs {
+            if declinedRecompiles.contains(need.id) { continue }
+            guard let text = CompoundParts.recompileOffer(for: need) else { continue }
+            let id = UUID()
+            pendingRecompile = (id, need.id)
+            entries.append(.question(id: id, text: text, suggestions: ["Update it", "Keep as is"]))
+            return
+        }
     }
 
     /// Marks every pending (unaccepted) read-back as superseded: the list
@@ -232,6 +259,9 @@ final class NeedsIntentService {
         offline = false
         needsKey = false
         failureDetail = nil
+        if pendingRecompile != nil, handleRecompileAnswer(message, model: model) {
+            return
+        }
         switch route {
         case .swapAnswer:
             lastAction = nil
@@ -246,6 +276,31 @@ final class NeedsIntentService {
                 await interpret(message: message, model: model)
             }
         }
+    }
+
+    /// Answers the open recompile offer. "Update it" runs a normal model
+    /// turn asking for per-part conditions; "Keep as is" declines and logs
+    /// it. Anything else falls through to the normal route untouched.
+    private func handleRecompileAnswer(_ message: String, model: PhoneSessionModel) -> Bool {
+        guard let pending = pendingRecompile else { return false }
+        let folded = message.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard folded == "update it" || folded == "keep as is" else { return false }
+        entries.removeAll { $0.id == pending.entryID }
+        pendingRecompile = nil
+        guard let need = model.needs.first(where: { $0.id == pending.needID }),
+              CompoundParts.recompileOffer(for: need) != nil else { return true }
+        if folded == "keep as is" {
+            declinedRecompiles.insert(need.id)
+            model.sessionLog.appendActivity("LIST", "recompile id=\(need.id) declined")
+            return true
+        }
+        let ask = "Watch each part of '\(need.authorText)' separately."
+        lastAction = .modelTurn(ask)
+        thinking = true
+        Task {
+            await interpret(message: ask, model: model)
+        }
+        return true
     }
 
     /// An unanswered model question with chips: her next text answers it,
@@ -522,6 +577,15 @@ final class NeedsIntentService {
         let before = model.needs
         let converted = NeedsIntentConversion.toNeeds(drafts, current: model.needs)
         logDiff(old: before, new: converted, cause: "looks-right", source: lastSource, model: model)
+        for need in converted {
+            let old = before.first { $0.id == need.id }?.unknownCondition
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            let now = need.unknownCondition
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) } ?? ""
+            if old.isEmpty, !now.isEmpty {
+                model.sessionLog.appendActivity("LIST", "recompile id=\(need.id) accepted")
+            }
+        }
         model.sessionLog.appendActivity(
             "CONV",
             "looks-right accepted source=\(lastSource.rawValue) n=\(converted.count)"

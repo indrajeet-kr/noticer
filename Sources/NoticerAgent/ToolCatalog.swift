@@ -88,7 +88,7 @@ public enum ToolCatalog {
 
     private static let latchNeedHypothesis = ToolDefinition(
         name: .latchNeedHypothesis,
-        description: "Open a need when its unmet visual condition is clearly visible across the keyframes, including when that condition was already true in the older keyframe. The phone still checks that the need is on mom's list and that a latch is allowed.",
+        description: "Open an unmet need, including when already true in the older keyframe.",
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: [
@@ -103,7 +103,7 @@ public enum ToolCatalog {
 
     private static let deferCueWearerBusy = ToolDefinition(
         name: .deferCueWearerBusy,
-        description: "Ask to hold the whisper because the wearer's hands are occupied. The phone re-checks on each heartbeat and may still cue at the hard cap.",
+        description: "Hold the whisper.",
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: [
@@ -115,7 +115,7 @@ public enum ToolCatalog {
 
     private static let logWearerIntervention = ToolDefinition(
         name: .logWearerIntervention,
-        description: "Record a first-person wearer action fulfilling an open need. Use the need's self_notice_signal when applicable; unrelated hand chores belong in wearer_hands_occupied.",
+        description: "Record a wearer action.",
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: [
@@ -127,7 +127,7 @@ public enum ToolCatalog {
 
     private static let requestHeadStartExtension = ToolDefinition(
         name: .requestHeadStartExtension,
-        description: "Ask for more time before a cue because the wearer is mid-task, such as a knife, a hot pan, or the dishwasher. The phone grants fixed steps and will not pass the head-start cap.",
+        description: "Ask for more time before a cue.",
         parameters: objectSchema(
             properties: assessmentProperties().merging([
                 extensionReasonField: jsonString(),
@@ -141,7 +141,7 @@ public enum ToolCatalog {
 
     private static let reportNoTransition = ToolDefinition(
         name: .reportNoTransition,
-        description: "No listed need is visibly unmet, and no open need changed. A problem that is already visible is not this tool. Use this instead of inventing a need, a resolution, or a cue.",
+        description: "No need is visibly unmet and no open need changed. A problem already visible is not this tool.",
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: []
@@ -150,7 +150,7 @@ public enum ToolCatalog {
 
     private static let reportNeedResolved = ToolDefinition(
         name: .reportNeedResolved,
-        description: "An open need is handled. Say who handled it: the wearer's own hands, another adult, or unclear.",
+        description: "An open need is handled. Say who.",
         parameters: objectSchema(
             properties: assessmentProperties().merging([
                 resolvedByField: jsonStringEnum(resolvedByValues),
@@ -210,5 +210,7 @@ private func assessmentProperties() -> [String: JSONValue] {
         AssessmentField.actionCode: jsonString(),
         AssessmentField.confidence: jsonNumber(),
         AssessmentField.partnerAsleep: jsonBool(),
+        AssessmentField.evidenceKeyframeIDs: jsonStringArray(),
+        AssessmentField.newestAnchorState: jsonStringEnum(AnchorState.recognized.map(\.rawValue)),
     ]
 }

@@ -1,9 +1,9 @@
 import XCTest
 @testable import NoticerCore
 
-/// Brief sightings get a second look: one focused confirm call within
-/// 1.5 s for a high-confidence not-sustained hypothesis, and two
-/// hypotheses inside 10 s count as sustained.
+/// Brief sightings get a second look: a focused confirm call once one is
+/// due and a new frame exists, and two latch hypotheses inside 10 s count
+/// as sustained. Confirm replies need new evidence; they never repeat-latch.
 final class ConfirmPathTests: EngineTestCase {
     func testNotSustainedHighConfidenceSchedulesExactlyOneConfirm() throws {
         glancePair()
@@ -18,7 +18,8 @@ final class ConfirmPathTests: EngineTestCase {
         engine.tick()
         XCTAssertNil(engine.pendingModelCall)
 
-        advance(EngineTuning.confirmDelaySeconds)
+        // Due, with a fresh glance: the source frame plus one new frame.
+        advance(EngineTuning.confirmDelaySeconds + 1)
         see([mom()], jpeg: 2)
         let confirm = try XCTUnwrap(engine.pendingModelCall)
         XCTAssertEqual(confirm.purpose, .confirm)
@@ -45,26 +46,25 @@ final class ConfirmPathTests: EngineTestCase {
         XCTAssertNil(engine.pendingModelCall)
     }
 
-    func testTwoHypothesesWithinTenSecondsLatchAndCue() throws {
-        var urgent = Self.takeBaby()
-        urgent.isUrgent = true
-        try engine.setNeeds([urgent, Self.refillWater()])
-
+    func testTwoLatchHypothesesWithinTenSecondsLatchViaRepeat() throws {
+        // Non-urgent: confirm replies take the evidence path now, so the
+        // repeat rule fires across two latch calls (quick timing fits two
+        // inside the 10 s window). Low confidence keeps confirms out of it.
+        engine = try NeedEngine(clock: clock, needs: [Self.takeBaby(), Self.refillWater()], timing: .quick)
         glancePair()
         let latch = try XCTUnwrap(engine.pendingModelCall)
-        engine.handle(callID: latch.id, verdict: latchVerdict("take-baby", sustained: false, confidence: 0.75))
+        engine.handle(callID: latch.id, verdict: latchVerdict("take-baby", sustained: false, confidence: 0.5))
+        XCTAssertTrue(events(.confirmScheduled).isEmpty)
 
-        advance(EngineTuning.confirmDelaySeconds)
-        see([mom()], jpeg: 2)
-        let confirm = try XCTUnwrap(engine.pendingModelCall)
-        XCTAssertEqual(confirm.purpose, .confirm)
-
-        engine.handle(callID: confirm.id, verdict: latchVerdict("take-baby", sustained: false, confidence: 0.8))
+        advance(4.5)
+        see([mom()], jpeg: 2, handsEdge: true)
+        let second = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(second.purpose, .latch)
+        engine.handle(callID: second.id, verdict: latchVerdict("take-baby", sustained: false, confidence: 0.5))
 
         XCTAssertEqual(events(.sustainedByRepeat).map(\.needID), ["take-baby"])
         XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
-        // Urgent keeps no head start: the cue fires on the latch.
-        XCTAssertEqual(events(.cueFired).map(\.needID), ["take-baby"])
+        XCTAssertTrue(engine.cues.isEmpty, "a non-urgent repeat latch keeps its head start")
     }
 
     func testHypothesesFifteenSecondsApartDoNotLatch() throws {
@@ -72,8 +72,8 @@ final class ConfirmPathTests: EngineTestCase {
         let latch = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: latch.id, verdict: latchVerdict("take-baby", sustained: false, confidence: 0.75))
 
-        advance(EngineTuning.confirmDelaySeconds)
-        engine.tick()
+        advance(EngineTuning.confirmDelaySeconds + 1)
+        see([mom()], jpeg: 2)
         let confirm = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: confirm.id, verdict: noTransition())
 

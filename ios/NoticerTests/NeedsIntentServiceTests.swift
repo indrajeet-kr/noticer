@@ -446,4 +446,126 @@ final class NeedsIntentServiceTests: XCTestCase {
             "the read-back renders a Removing: line for the applied removal"
         )
     }
+
+    // MARK: - Recompile offer
+
+    @MainActor
+    private func staleTrashNeed() -> Need {
+        Need(
+            id: "trash-can-lid",
+            authorText: "Close the lid of trash can and move it to the corner",
+            cueWording: "Lid's open?",
+            visualCondition: "trash can lid visibly open",
+            handledCondition: "lid closed",
+            priority: 0
+        )
+    }
+
+    @MainActor
+    func testRecompileOfferAppearsForStaleCompoundNeed() {
+        let model = PhoneSessionModel()
+        model.needs = [staleTrashNeed()]
+        let service = model.intentService
+        service.seedIfNeeded(from: model)
+
+        guard case .question(_, let text, let suggestions) = service.entries.last else {
+            return XCTFail("expected a recompile question, got \(String(describing: service.entries.last))")
+        }
+        XCTAssertTrue(text.contains("I can watch both parts of this"))
+        XCTAssertTrue(text.hasSuffix("Update it?"))
+        XCTAssertEqual(suggestions, ["Update it", "Keep as is"])
+        XCTAssertNil(
+            model.needs.first?.unknownCondition,
+            "the offer changes nothing by itself"
+        )
+    }
+
+    @MainActor
+    func testNoOfferForSingleOrCompoundNeeds() {
+        let model = PhoneSessionModel()
+        var compound = staleTrashNeed()
+        compound.unknownCondition = "placement cannot be judged when the corner is out of view"
+        model.needs = [stubNeeds()[0], compound]
+        model.intentService.seedIfNeeded(from: model)
+
+        XCTAssertFalse(
+            model.intentService.entries.contains {
+                if case .question = $0 { return true }
+                return false
+            },
+            "single and already-compound needs get no offer"
+        )
+    }
+
+    @MainActor
+    func testKeepAsIsDeclinesAndLogs() {
+        let model = PhoneSessionModel()
+        model.needs = [staleTrashNeed()]
+        let service = model.intentService
+        service.seedIfNeeded(from: model)
+
+        service.send("Keep as is", model: model)
+
+        XCTAssertTrue(
+            model.sessionLog.activity.contains {
+                $0.tag == "LIST" && $0.message == "recompile id=trash-can-lid declined"
+            }
+        )
+        XCTAssertNil(model.needs.first?.unknownCondition)
+        service.refreshSheetList(from: model)
+        XCTAssertNil(service.pendingRecompile, "a declined offer is not re-offered")
+    }
+
+    @MainActor
+    func testUpdateItRecompilesOnlyOnLooksRight() async throws {
+        let model = PhoneSessionModel()
+        model.needs = [staleTrashNeed()]
+        let service = model.intentService
+        service.interpretHook = { _, _ in
+            .needs(
+                [
+                    NeedsIntentDraft(
+                        id: "trash-can-lid",
+                        authorText: "Close the lid of trash can and move it to the corner",
+                        whisper: "Lid's open?",
+                        priority: .normal,
+                        allowsCheckIn: false,
+                        visualCue: "lid visibly open, OR can visibly outside the designated corner",
+                        handledVisual: "lid closed AND can in the designated corner",
+                        unknownVisual: "placement cannot be judged when the corner is out of view",
+                        wearerSignal: "wearer_closing_trash_lid"
+                    ),
+                ],
+                readBack: "Watching both parts now."
+            )
+        }
+        service.seedIfNeeded(from: model)
+
+        service.send("Update it", model: model)
+        var spins = 0
+        while service.thinking, spins < 500 {
+            try? await Task.sleep(nanoseconds: 5_000_000)
+            spins += 1
+        }
+        XCTAssertFalse(service.thinking)
+
+        guard case .readBack(let id, _, _, _, false, false) = service.entries.last else {
+            return XCTFail("expected an unaccepted read-back, got \(String(describing: service.entries.last))")
+        }
+        XCTAssertNil(
+            model.needs.first?.unknownCondition,
+            "nothing changes until Looks right"
+        )
+
+        service.accept(entryID: id, model: model)
+        XCTAssertEqual(
+            model.needs.first?.unknownCondition,
+            "placement cannot be judged when the corner is out of view"
+        )
+        XCTAssertTrue(
+            model.sessionLog.activity.contains {
+                $0.tag == "LIST" && $0.message == "recompile id=trash-can-lid accepted"
+            }
+        )
+    }
 }
