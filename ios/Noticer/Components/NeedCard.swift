@@ -25,6 +25,11 @@ struct NeedCard: View {
                 Text("Her words")
                     .font(Theme.Font.footnote)
                     .foregroundStyle(Theme.textSecondary)
+                if need.isUrgent {
+                    Text("Urgent")
+                        .font(Theme.Font.caption)
+                        .foregroundStyle(Theme.terracottaText)
+                }
                 if isPaused {
                     Text("Paused tonight")
                         .font(Theme.Font.caption)
@@ -47,16 +52,27 @@ struct NeedCard: View {
     }
 
     private var accessibilityText: String {
-        isPaused ? "\(displayWords). Paused tonight." : displayWords
+        var text = displayWords
+        if need.isUrgent {
+            text += ". Urgent."
+        }
+        if isPaused {
+            text += ". Paused tonight."
+        }
+        return text
     }
 
-    /// Important needs get the terracotta tile; everything else gets sage.
+    /// Important or urgent needs get the terracotta tile; the rest get sage.
     private var tileColor: Color {
-        need.priority <= 0 ? Theme.terracottaTile : Theme.sageTile
+        needsAttention ? Theme.terracottaTile : Theme.sageTile
     }
 
     private var glyphColor: Color {
-        need.priority <= 0 ? Theme.terracotta : Theme.sage
+        needsAttention ? Theme.terracotta : Theme.sage
+    }
+
+    private var needsAttention: Bool {
+        need.isUrgent || need.priority <= 0
     }
 }
 

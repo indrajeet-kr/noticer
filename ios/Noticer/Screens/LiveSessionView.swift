@@ -21,7 +21,7 @@ struct LiveSessionView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
+            TimelineView(.periodic(from: .now, by: 1)) { context in
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(spacing: Theme.Space.sectionGap) {

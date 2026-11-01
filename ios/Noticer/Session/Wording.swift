@@ -8,6 +8,9 @@ enum TimingWords {
     /// seconds (under a minute), so the sheet never shows "20 seconds" twice.
     static func headStartSentence(seconds: TimeInterval) -> (main: String, detail: String?) {
         let total = max(0, Int(seconds.rounded()))
+        if total == 0 {
+            return ("He'll hear it right away", nil)
+        }
         let detail: String? = total < 60 ? nil : "\(total) seconds"
         return ("He gets \(amount(total)) to notice first", detail)
     }
