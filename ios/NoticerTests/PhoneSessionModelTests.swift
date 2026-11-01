@@ -346,6 +346,50 @@ final class PhoneSessionModelTests: XCTestCase {
     }
 
     @MainActor
+    func testUnpromptedSelfNoticeAddsTonightEntry() {
+        let model = PhoneSessionModel()
+        model.needs = stubNeeds()
+        model.moments = []
+        model.cueHistory = [:]
+        let event = EngineEvent(kind: .selfNoticedUnprompted, needID: "take-baby", at: Date())
+
+        model.applyLiveState(SessionView(
+            now: Date(),
+            needs: [],
+            openNeeds: [],
+            cues: [],
+            log: [event],
+            modelCalls: 0
+        ))
+
+        XCTAssertEqual(model.moments.map(\.needID), ["take-baby"])
+        XCTAssertEqual(model.moments.map(\.kind), [.noticed])
+        XCTAssertTrue(model.moments.allSatisfy(\.kind.isUnprompted))
+        XCTAssertTrue(
+            model.sessionLog.activity.contains {
+                $0.tag == "TONIGHT" && $0.message.contains("kind=noticed") && $0.message.contains("why=unprompted")
+            }
+        )
+        XCTAssertEqual(model.tonightCueCount, 0, "an unprompted notice is not a cue")
+    }
+
+    @MainActor
+    func testFrameDarkRendersAsFrameTag() {
+        let model = PhoneSessionModel()
+        model.applyLiveState(SessionView(
+            now: Date(),
+            needs: [],
+            openNeeds: [],
+            cues: [],
+            log: [EngineEvent(kind: .frameDark, needID: nil, at: Date())],
+            modelCalls: 0
+        ))
+
+        XCTAssertTrue(model.sessionLog.text.contains("[FRAME] dark"))
+        XCTAssertFalse(model.sessionLog.text.contains("frameDark"))
+    }
+
+    @MainActor
     func testStartResetsTonightToTheCurrentEvening() {
         let model = PhoneSessionModel()
         model.mode = .replay

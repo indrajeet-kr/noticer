@@ -22,6 +22,11 @@ public struct NeedEngine<TimeSource: Clock> {
         var at: Date
     }
 
+    private struct PendingConfirm: Equatable {
+        var dueAt: Date
+        var hypothesisFrame: Keyframe?
+    }
+
     private struct TrackedNeed {
         var needID: String
         var visibleAt: Date
@@ -151,6 +156,22 @@ public struct NeedEngine<TimeSource: Clock> {
     private var recheckSameStripBypassAvailable = true
     private var latchConfirmPending = false
     private var lastLoggedSkip: String?
+    /// One focused second look per brief sighting, due 1.5 s after the verdict.
+    private var pendingConfirms: [String: PendingConfirm] = [:]
+    /// Last latch hypothesis per need, for the sustained-by-repeat rule.
+    private var recentHypothesisAt: [String: Date] = [:]
+    /// Last unprompted credit per need. Debounced to one per 10 minutes.
+    private var unpromptedCreditedAt: [String: Date] = [:]
+    /// Latest `partner_asleep` from a completed assessment. Nil until the
+    /// model says. Check-in needs hold their whisper while this is true.
+    private var latestPartnerAsleep: Bool?
+    /// Needs already logged quiet for the current sleep episode. Cleared
+    /// when a verdict stops saying asleep.
+    private var quietAsleepLoggedNeedIDs: Set<String> = []
+    /// Consecutive ingested frames reading dark. Calls hold at three until
+    /// a readable frame clears the streak.
+    private var darkStreak = 0
+    private var darkStreakLogged = false
 
     public private(set) var pendingModelCalls: [PendingModelCall] = []
     public var pendingModelCall: PendingModelCall? { pendingModelCalls.first }
@@ -312,6 +333,7 @@ public struct NeedEngine<TimeSource: Clock> {
         if buffer.revision != prevRevision {
             lastLoggedSkip = nil
         }
+        trackDarkness(sharpness: sharpness ?? gate.sharpness)
         let edgeNow = gate.handGateRisingEdge || gate.activityEdge
         if edgeNow {
             handEdgePending = true
@@ -372,6 +394,12 @@ public struct NeedEngine<TimeSource: Clock> {
         if let partner = assessment.partnerInView {
             latestPartnerInView = partner
         }
+        if let asleep = assessment.partnerAsleep {
+            latestPartnerAsleep = asleep
+            if !asleep {
+                quietAsleepLoggedNeedIDs.removeAll()
+            }
+        }
         notePartner(assessment, tool: verdict.tool, now: now)
 
         // An omitted need id can apply to the only open need. An unknown id
@@ -403,6 +431,8 @@ public struct NeedEngine<TimeSource: Clock> {
             tryLatch(assessment, callKeyframes: completedCall.request.keyframes, now: now)
         }
 
+        maybeCreditUnprompted(verdict: verdict, now: now)
+
         if let needID = assessment.needID, indexOfOpen(needID) != nil {
             applyDeferAndExtension(needID, verdict: verdict)
         }
@@ -412,6 +442,43 @@ public struct NeedEngine<TimeSource: Clock> {
         }
 
         evaluate()
+    }
+
+    /// Credit for help he gives on his own: a wearer action (or a handled
+    /// state right after one) for a listed need that is not open. Applies
+    /// the self-notice mastery step and records the Tonight entry through
+    /// the event. Speaks nothing. Open needs keep the existing credit paths.
+    private mutating func maybeCreditUnprompted(verdict: ModelVerdict, now: Date) {
+        guard verdict.tool == .logWearerIntervention || verdict.tool == .reportNeedResolved else {
+            return
+        }
+        let assessment = verdict.assessment
+        guard let needID = assessment.needID,
+              var need = catalog.need(id: needID),
+              indexOfOpen(needID) == nil
+        else {
+            return
+        }
+        guard let confidence = assessment.confidence,
+              confidence >= EngineTuning.unpromptedMinConfidence
+        else {
+            return
+        }
+        guard MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) else {
+            return
+        }
+        if let last = unpromptedCreditedAt[needID],
+           now.timeIntervalSince(last) < EngineTuning.unpromptedDebounceSeconds {
+            return
+        }
+        unpromptedCreditedAt[needID] = now
+        let before = need.mastery
+        need.mastery = MasteryMath.applySelfNotice(need.mastery)
+        catalog.update(need)
+        record(.selfNoticedUnprompted, needID: needID, detail: nil)
+        if before.phase != .retired && need.mastery.phase == .retired {
+            record(.masteryRetired, needID: needID, detail: nil)
+        }
     }
 
     // MARK: - Time
@@ -507,6 +574,15 @@ public struct NeedEngine<TimeSource: Clock> {
         // One call saw his hands move. The next call has to say the need is
         // gone before we whisper over him.
         if tracked[index].pendingWearerAction != nil { return }
+        // She is asleep: "ask her" needs stay quiet, chores still cue.
+        // Logged once per need per sleep episode.
+        if need.allowsCheckIn, latestPartnerAsleep == true {
+            if !quietAsleepLoggedNeedIDs.contains(needID) {
+                quietAsleepLoggedNeedIDs.insert(needID)
+                record(.quietPartnerAsleep, needID: needID, detail: nil)
+            }
+            return
+        }
 
         let skipRecheckForUrgent = latency.urgentNeedsEnabled && need.isUrgent
         if tracked[index].pendingCueKind == nil {
@@ -784,8 +860,36 @@ public struct NeedEngine<TimeSource: Clock> {
 
     // MARK: - Model calls
 
+    /// Three dark frames in a row log once and hold calls until a
+    /// readable frame clears the streak. Unknown sharpness fails open.
+    private mutating func trackDarkness(sharpness: Double?) {
+        guard let sharpness else {
+            darkStreak = 0
+            darkStreakLogged = false
+            return
+        }
+        if sharpness < EngineTuning.darkSharpness {
+            darkStreak += 1
+            if darkStreak >= EngineTuning.darkStreakFrames, !darkStreakLogged {
+                darkStreakLogged = true
+                record(.frameDark, needID: nil, detail: nil)
+            }
+        } else {
+            darkStreak = 0
+            darkStreakLogged = false
+        }
+    }
+
+    private var darkActive: Bool {
+        darkStreak >= EngineTuning.darkStreakFrames
+    }
+
     private mutating func scheduleModelCall(now: Date) {
         retireStaleInFlight(now: now)
+        // Dark: the lens is covered or the lights are out. No call could
+        // see anything, so none goes out until it clears. No skip is
+        // logged; the single dark line already says why.
+        guard !darkActive else { return }
         let maxInFlight = latency.concurrentInFlight ? latency.maxInFlight : 1
         guard pendingModelCalls.count < maxInFlight else { return }
         if !pendingModelCalls.isEmpty {
@@ -801,6 +905,15 @@ public struct NeedEngine<TimeSource: Clock> {
                 didLogBudget = true
                 record(.callBudgetExhausted, needID: nil, detail: nil)
             }
+            return
+        }
+
+        // A due confirm jumps the queue: it bypasses the idle-bucket and
+        // min-gap skips (but still spends budget) so the second look lands
+        // while the sighting is fresh.
+        if let due = pendingConfirms.min(by: { $0.value.dueAt < $1.value.dueAt }),
+           now >= due.value.dueAt {
+            issueConfirm(needID: due.key, pending: due.value, now: now)
             return
         }
 
@@ -971,7 +1084,32 @@ public struct NeedEngine<TimeSource: Clock> {
         return callsIssued < SessionLimits.maxModelCallsPerSession
     }
 
-    private mutating func issue(_ purpose: ModelCallPurpose, now: Date) {
+    /// The confirm strip is the frame the hypothesis came from plus the
+    /// freshest admitted frame. An empty strip stays pending: the call goes
+    /// out on a later tick instead of burning budget on nothing.
+    private mutating func issueConfirm(needID: String, pending: PendingConfirm, now: Date) {
+        var strip: [Keyframe] = []
+        if let hypothesis = pending.hypothesisFrame {
+            strip.append(hypothesis)
+        }
+        let fresh = buffer.modelStrip(now: now, purpose: .latch, confirm: true, latency: latency)
+            .max(by: { $0.capturedAt < $1.capturedAt })
+        if let fresh, !strip.contains(where: { $0.id == fresh.id }) {
+            strip.append(fresh)
+        }
+        guard !strip.isEmpty else {
+            return
+        }
+        pendingConfirms.removeValue(forKey: needID)
+        issue(.confirm, now: now, focusNeedID: needID, keyframes: strip)
+    }
+
+    private mutating func issue(
+        _ purpose: ModelCallPurpose,
+        now: Date,
+        focusNeedID: String? = nil,
+        keyframes: [Keyframe]? = nil
+    ) {
         callSerial += 1
         callsIssued += 1
         callIssuedTimestamps.append(now)
@@ -992,7 +1130,7 @@ public struct NeedEngine<TimeSource: Clock> {
             handEdgePending = false
         }
         let confirm = purpose == .latch && latchConfirmPending
-        let strip = buffer.modelStrip(now: now, purpose: purpose, confirm: confirm, latency: latency)
+        let strip = keyframes ?? buffer.modelStrip(now: now, purpose: purpose, confirm: confirm, latency: latency)
         stripSignatureAtLastCall = buffer.stripIdentity(now: now, latency: latency)
         newestSlotAtLastIssuedCall = buffer.newestSlotStartedAt(now: now)
         lastLoggedSkip = nil
@@ -1017,7 +1155,8 @@ public struct NeedEngine<TimeSource: Clock> {
                     keyframes: strip,
                     needs: catalog.needs,
                     openNeeds: open,
-                    purpose: purpose
+                    purpose: purpose,
+                    focusNeedID: focusNeedID
                 ),
                 issuedAt: now
             )
@@ -1459,9 +1598,23 @@ public struct NeedEngine<TimeSource: Clock> {
             return
         }
         if assessment.sustainedAcrossStrip != true {
-            latchConfirmPending = true
-            record(.latchRejected, needID: needID, detail: "not-sustained")
-            return
+            if let last = recentHypothesisAt[needID],
+               now.timeIntervalSince(last) < EngineTuning.hypothesisRepeatWindowSeconds {
+                record(.sustainedByRepeat, needID: needID, detail: nil)
+            } else {
+                recentHypothesisAt[needID] = now
+                latchConfirmPending = true
+                record(.latchRejected, needID: needID, detail: "not-sustained")
+                scheduleConfirm(
+                    needID: needID,
+                    confidence: assessment.confidence,
+                    callKeyframes: callKeyframes,
+                    now: now
+                )
+                return
+            }
+        } else {
+            recentHypothesisAt[needID] = now
         }
         if indexOfOpen(needID) != nil {
             record(.latchRejected, needID: needID, detail: "already-open")
@@ -1498,6 +1651,7 @@ public struct NeedEngine<TimeSource: Clock> {
             }
         }
         latchConfirmPending = false
+        pendingConfirms.removeValue(forKey: needID)
         let visibleAt = (callKeyframes.first ?? liveStrip.first)?.capturedAt ?? now
         open(
             needID,
@@ -1506,6 +1660,34 @@ public struct NeedEngine<TimeSource: Clock> {
             absent: assessment.partnerInView == false,
             handsBusy: assessment.wearerHandsOccupied == true
         )
+    }
+
+    /// One confirm call for a high-confidence brief sighting. Skipped
+    /// while one is already pending or in flight for the need, and when
+    /// the verdict carried no usable confidence.
+    private mutating func scheduleConfirm(
+        needID: String,
+        confidence: Double?,
+        callKeyframes: [Keyframe],
+        now: Date
+    ) {
+        guard let confidence, confidence >= EngineTuning.confirmMinConfidence else {
+            return
+        }
+        guard pendingConfirms[needID] == nil else {
+            return
+        }
+        let inFlight = pendingModelCalls.contains {
+            $0.purpose == .confirm && $0.request.focusNeedID == needID
+        }
+        guard !inFlight else {
+            return
+        }
+        pendingConfirms[needID] = PendingConfirm(
+            dueAt: now.addingTimeInterval(EngineTuning.confirmDelaySeconds),
+            hypothesisFrame: callKeyframes.max(by: { $0.capturedAt < $1.capturedAt })
+        )
+        record(.confirmScheduled, needID: needID, detail: nil)
     }
 
     private mutating func open(

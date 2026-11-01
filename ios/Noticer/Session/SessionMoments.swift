@@ -9,6 +9,13 @@ struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
         case cued
         /// He handled it after a whisper. Reads as nudged, like a cue.
         case nudge
+        /// He did it with nothing open: no latch, no cue. Reads as his own.
+        case noticed
+
+        /// Self-notices and unprompted notices: help with no cue behind it.
+        var isUnprompted: Bool {
+            self == .selfNotice || self == .noticed
+        }
     }
 
     var id: UUID

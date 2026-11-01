@@ -106,7 +106,7 @@ extension PhoneSessionModel {
     /// with Wins. The two sources increment together going forward.
     var tonightCueCount: Int {
         let dayCount = CueHistoryStore.count(on: tonightSessionDay, in: cueHistory)
-        let momentCount = tonightMoments.filter { $0.kind != .selfNotice }.count
+        let momentCount = tonightMoments.filter { !$0.kind.isUnprompted }.count
         return max(dayCount, momentCount)
     }
 

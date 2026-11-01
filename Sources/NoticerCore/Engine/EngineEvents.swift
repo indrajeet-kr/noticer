@@ -7,6 +7,8 @@ public enum ModelCallPurpose: String, Equatable, Sendable, Codable {
     case heartbeat
     /// Head start ended on evidence older than 30 s. One call before any cue.
     case recheck
+    /// A brief sighting gets one focused second look within 1.5 s.
+    case confirm
 }
 
 public struct PendingModelCall: Equatable, Sendable {
@@ -119,6 +121,16 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case callIssued
     case stillOpen
     case skip
+    /// A brief high-confidence sighting earned one focused second look.
+    case confirmScheduled
+    /// Two hypotheses inside 10 s latched without either being sustained.
+    case sustainedByRepeat
+    /// He did a listed need's action with nothing open. Credit, no cue.
+    case selfNoticedUnprompted
+    /// A check-in need held its whisper because she is asleep.
+    case quietPartnerAsleep
+    /// Three dark frames in a row. The phone renders this as [FRAME] dark.
+    case frameDark
 }
 
 public struct EngineEvent: Equatable, Sendable {

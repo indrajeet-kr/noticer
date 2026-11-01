@@ -1020,6 +1020,10 @@ final class PhoneSessionModel {
             if event.kind == .skip, shouldThrottleSkip(event.detail, now: view.now) {
                 continue
             }
+            if event.kind == .frameDark {
+                sessionLog.append("FRAME", "dark")
+                continue
+            }
             sessionLog.append("ENGINE", Self.describeLogEvent(event))
             switch event.kind {
             case .caughtHimself:
@@ -1074,6 +1078,21 @@ final class PhoneSessionModel {
                 if let needID = event.needID {
                     liveLastLatchedNeedID = needID
                     liveLastLatchedAt = event.at
+                }
+            case .selfNoticedUnprompted:
+                if let needID = event.needID {
+                    moments.append(SessionMoment(
+                        at: Date(),
+                        needID: needID,
+                        kind: .noticed,
+                        text: Self.words(for: needID, in: view),
+                        sessionID: currentSessionID
+                    ))
+                    sessionLog.appendActivity(
+                        "TONIGHT",
+                        ActivityTonight.addLine(kind: SessionMoment.Kind.noticed.rawValue, needID: needID, why: "unprompted")
+                    )
+                    snapshotTonightForLog()
                 }
             default:
                 break

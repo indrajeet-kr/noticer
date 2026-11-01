@@ -300,6 +300,16 @@ final class NeedsIntentService {
                     "CONV",
                     ActivityConversation.replyNeedsLine(count: drafts.count, readBack: readBack)
                 )
+                let currentIDs = model.needs.map(\.id)
+                let modelIDs = Set(drafts.map { NeedsIntentSlug.repair($0.id, against: currentIDs) })
+                for blocked in NeedListEdit.blockedRemovals(
+                    current: model.needs,
+                    modelIDs: modelIDs,
+                    message: message,
+                    explicitRemovals: pendingExplicitRemovals
+                ) {
+                    model.sessionLog.appendActivity("CONV", "removal-blocked id=\(blocked.id) reason=no-edit-intent")
+                }
                 switch Self.needsEntryAction(
                     drafts: drafts,
                     message: message,

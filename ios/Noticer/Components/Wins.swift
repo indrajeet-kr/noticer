@@ -20,7 +20,7 @@ struct WinRow: View {
                 Text("You finished it")
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.gotIt)
-            } else if moment.kind == .selfNotice {
+            } else if moment.kind.isUnprompted {
                 Text("On his own")
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.gotIt)

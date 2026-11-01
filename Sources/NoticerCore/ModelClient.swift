@@ -7,19 +7,23 @@ public struct ModelRequest: Equatable, Sendable {
     public var needs: [Need]
     /// Needs the engine currently holds open. Empty for callers that predate it.
     public var openNeeds: [OpenNeedContext]
-    /// Engine call purpose (`latch`, `heartbeat`, `recheck`) for logging and telemetry.
+    /// Engine call purpose (`latch`, `heartbeat`, `recheck`, `confirm`) for logging and telemetry.
     public var purpose: ModelCallPurpose?
+    /// Confirm calls check only this need. Nil for every other purpose.
+    public var focusNeedID: String?
 
     public init(
         keyframes: [Keyframe],
         needs: [Need],
         openNeeds: [OpenNeedContext] = [],
-        purpose: ModelCallPurpose? = nil
+        purpose: ModelCallPurpose? = nil,
+        focusNeedID: String? = nil
     ) {
         self.keyframes = keyframes
         self.needs = needs
         self.openNeeds = openNeeds
         self.purpose = purpose
+        self.focusNeedID = focusNeedID
     }
 }
 

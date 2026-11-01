@@ -147,9 +147,43 @@ public enum NeedListEdit {
 
     // MARK: - Merge guard
 
+    /// True when her words clearly edit the list: "remove/delete/drop X
+    /// from my list", "I don't need X anymore", "stop reminding me about
+    /// X". An imperative chore ("Remove the table from the hall") never
+    /// matches, so it adds a need instead of deleting one.
+    public static func hasExplicitEditIntent(message: String) -> Bool {
+        let lowered = message.lowercased()
+        let listPhrases = [
+            "from my list", "from the list", "from her list",
+            "off my list", "off the list", "off her list",
+        ]
+        if listPhrases.contains(where: lowered.contains) {
+            let verbs: Set<String> = ["remove", "delete", "drop", "cut", "take", "clear"]
+            if !Set(wordTokens(message)).isDisjoint(with: verbs) {
+                return true
+            }
+        }
+        let dontNeed = [
+            "don't need", "dont need", "do not need",
+            "doesn't need", "doesnt need", "does not need",
+            "no longer need",
+        ]
+        if dontNeed.contains(where: lowered.contains) {
+            return true
+        }
+        let stopReminding = [
+            "stop reminding", "don't remind", "dont remind",
+            "do not remind", "stop telling me",
+        ]
+        return stopReminding.contains(where: lowered.contains)
+    }
+
     /// Saved ids the model dropped that may actually go: explicitly chosen
-    /// ones, plus ones her message names (so "remove the water one" still
-    /// removes water). Everything else the model dropped is kept.
+    /// ones (swap picks), ones named with an explicit edit phrase, and ones
+    /// named with an edit verb on a turn that adds nothing new (so "remove
+    /// the water one" still removes water). A chore phrasing that shares a
+    /// word with a saved need ("Remove the table...") is blocked whenever
+    /// the turn also adds needs. Everything else the model drops is kept.
     public static func removalsAllowed(
         current: [Need],
         modelIDs: Set<String>,
@@ -157,12 +191,40 @@ public enum NeedListEdit {
         explicitRemovals: Set<String>
     ) -> Set<String> {
         var allowed = explicitRemovals
+        let currentIDs = Set(current.map(\.id))
+        let addsNew = !modelIDs.subtracting(currentIDs).isEmpty
+        let explicit = hasExplicitEditIntent(message: message)
+        let editVerb = isEditMessage(message)
         for need in current where !modelIDs.contains(need.id) {
-            if namesNeed(message: message, need: need) {
+            guard namesNeed(message: message, need: need) else { continue }
+            if explicit || (editVerb && !addsNew) {
                 allowed.insert(need.id)
             }
         }
         return allowed
+    }
+
+    /// Saved needs the model dropped that the guard keeps: the turn is
+    /// logged, not applied.
+    public static func blockedRemovals(
+        current: [Need],
+        modelIDs: Set<String>,
+        message: String,
+        explicitRemovals: Set<String> = []
+    ) -> [Need] {
+        let allowed = removalsAllowed(
+            current: current,
+            modelIDs: modelIDs,
+            message: message,
+            explicitRemovals: explicitRemovals
+        )
+        return current.filter { !modelIDs.contains($0.id) && !allowed.contains($0.id) }
+    }
+
+    /// Saved needs the merged result actually drops. The read-back card
+    /// lists these so Looks right only applies what she saw.
+    public static func removedNeeds(current: [Need], mergedIDs: Set<String>) -> [Need] {
+        current.filter { !mergedIDs.contains($0.id) }
     }
 
     /// Merges model drafts onto the saved list. Drafts upsert by id (typo
