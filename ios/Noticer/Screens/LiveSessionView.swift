@@ -8,6 +8,14 @@ struct LiveSessionView: View {
     var onWins: () -> Void = {}
 
     @State private var path = NavigationPath()
+    @AppStorage("noticer.demo.mode") private var demoSettingOn = false
+
+    /// Demo strip shows while a demo session runs, and after stop while its
+    /// rows remain and the setting is still on. Off means off: nothing extra
+    /// enters the hierarchy.
+    private var showDemoStrip: Bool {
+        model.demoModeActive || (!model.demoStrip.items.isEmpty && demoSettingOn)
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -17,6 +25,13 @@ struct LiveSessionView: View {
                         header
                         deviceRow
                         circleSection
+                        if showDemoStrip {
+                            DemoLiveStrip(
+                                items: model.demoStrip.visibleItems(),
+                                chip: model.demoChip,
+                                relative: { model.demoStrip.relativeTime($0) }
+                            )
+                        }
                         if model.runError != nil || !model.notices.isEmpty {
                             attentionCard
                         }
@@ -115,8 +130,9 @@ struct LiveSessionView: View {
 
     private var circleSection: some View {
         VStack(spacing: Theme.Space.s16) {
-            // About 64% of a phone's content width.
-            SessionCircle(status: model.sessionStatus, size: 240) {
+            // About 64% of a phone's content width; smaller while the demo
+            // strip shows so everything fits without scrolling.
+            SessionCircle(status: model.sessionStatus, size: showDemoStrip ? 180 : 240) {
                 guard !model.isRunning else {
                     return
                 }

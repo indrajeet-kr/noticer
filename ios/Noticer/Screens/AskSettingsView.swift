@@ -20,6 +20,7 @@ struct AskSettingsView: View {
     @State private var resetToastID = UUID()
     @State private var dictation = DictationService()
     @AppStorage("noticer.onboarding.done") private var onboardingDone = false
+    @AppStorage("noticer.demo.mode") private var demoMode = false
 
     var body: some View {
         ScrollView {
@@ -118,6 +119,12 @@ struct AskSettingsView: View {
                 .font(Theme.Font.headline)
                 .disabled(model.isRunning)
                 Text("Sets every need back to Learning. Tonight's wins stay.")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                Toggle("Demo mode", isOn: $demoMode)
+                    .font(Theme.Font.headline)
+                    .disabled(model.isRunning)
+                Text("Shows each step on screen in big type, for screen recordings.")
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.textSecondary)
             }

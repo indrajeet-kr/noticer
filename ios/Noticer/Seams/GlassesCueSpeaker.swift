@@ -14,7 +14,11 @@ final class GlassesCueSpeaker: NSObject, CueSpeaker, AVSpeechSynthesizerDelegate
     private var preparedUtterances: [String: AVSpeechUtterance] = [:]
     private var cachedVoice: AVSpeechSynthesisVoice?
     private var currentCueFiredAt: Date?
+    private var currentCueKind: CueKind?
     var log: (@Sendable (String, String) -> Void)?
+    /// Demo mode sets this to caption speech as it starts. Called with the
+    /// exact spoken string; never called for chimes.
+    var onSpeechStart: (@Sendable (String) -> Void)?
 
     nonisolated func prepare(needs: [Need]) async {
         await MainActor.run {
@@ -56,6 +60,7 @@ final class GlassesCueSpeaker: NSObject, CueSpeaker, AVSpeechSynthesizerDelegate
             waiter.arm(continuation)
             Task { @MainActor in
                 self.currentCueFiredAt = cueCreatedAt
+                self.currentCueKind = cue.kind
                 self.deliver(text, quietChime: quietChime)
             }
             Task {
@@ -77,11 +82,17 @@ final class GlassesCueSpeaker: NSObject, CueSpeaker, AVSpeechSynthesizerDelegate
         didStart utterance: AVSpeechUtterance
     ) {
         let startedAt = Date()
+        let spoken = utterance.speechString
         Task { @MainActor in
             if let firedAt = self.currentCueFiredAt {
                 let ms = max(0, Int((startedAt.timeIntervalSince(firedAt) * 1_000).rounded()))
                 self.log?("SPEAK", "speakLatency=\(ms)ms")
                 self.currentCueFiredAt = nil
+            }
+            let kind = self.currentCueKind
+            self.currentCueKind = nil
+            if kind != .chime {
+                self.onSpeechStart?(spoken)
             }
         }
     }

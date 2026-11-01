@@ -2,12 +2,23 @@ import Foundation
 import MWDATCore
 import NoticerCore
 import NoticerPipeline
+import UIKit
 
 enum CaptureMode: String, CaseIterable, Identifiable, Hashable {
     case live = "Live"
     case replay = "Replay"
 
     var id: String { rawValue }
+}
+
+/// Demo mode's idle-timer switch. The default implementation drives the real
+/// setting; tests replace it because unit tests run hostless and the real
+/// property does not round-trip there.
+@MainActor
+enum DemoIdleTimer {
+    static var setDisabled: (Bool) -> Void = { disabled in
+        UIApplication.shared.isIdleTimerDisabled = disabled
+    }
 }
 
 struct ReplayOption: Identifiable, Hashable {
@@ -87,6 +98,14 @@ final class PhoneSessionModel {
     var liveLastLatchedAt: Date?
     /// Engine event timeline for the dev panel, oldest first, capped.
     var liveEventTimeline: [String] = []
+    /// Demo mode's live strip and last-call chip. Written only while
+    /// `demoModeActive`; contents survive stop so the final outcome stays
+    /// on screen for the recording.
+    private(set) var demoStrip = DemoStripBuffer()
+    private(set) var demoChip: String?
+    private(set) var demoModeActive = false
+    /// True when this session disabled the idle timer for Demo mode.
+    private var demoOwnsIdleTimer = false
     /// Last log time per skip detail. Skip lines are chatty by design; the
     /// transcript keeps one per detail per 5 s.
     private var lastSkipLogAt: [String: Date] = [:]
@@ -114,7 +133,8 @@ final class PhoneSessionModel {
     private var liveSource: DATFrameSource?
     private var pipeline: SessionPipeline?
     private var replaceTask: Task<Void, Never>?
-    private let speaker = GlassesCueSpeaker()
+    /// Internal so tests can drive the speech-start callback directly.
+    let speaker = GlassesCueSpeaker()
     private let gate = SignalFrameGate()
     private var watching = false
     private var activeTiming = TimingProfile.standard
@@ -395,6 +415,21 @@ final class PhoneSessionModel {
         speaker.log = { [log = sessionLog] tag, message in
             Task { @MainActor in log.append(tag, message) }
         }
+        demoModeActive = UserDefaults.standard.bool(forKey: "noticer.demo.mode")
+        if demoModeActive {
+            demoStrip.reset(sessionStart: Date())
+            demoChip = nil
+            demoOwnsIdleTimer = true
+            DemoIdleTimer.setDisabled(true)
+        }
+        // Replay pipelines speak through this same speaker, so the speech
+        // callback is live-only: replays caption whispers from cueFired
+        // instead. Each mode gets exactly one whisper source.
+        if demoModeActive && mode == .live {
+            speaker.onSpeechStart = demoSpeechCallback()
+        } else {
+            speaker.onSpeechStart = nil
+        }
         let activeNeeds = needsForSession()
         sessionLog.append("SESSION", "start mode=\(mode == .replay ? "replay" : "live") timing=\(quickTiming ? "quick" : "standard") needs=\(activeNeeds.count) key=\(ModelKeyStore.currentKey() == nil ? "missing" : "saved")")
         for need in activeNeeds {
@@ -418,6 +453,7 @@ final class PhoneSessionModel {
         loop?.cancel()
         loop = nil
         keepsScreenOn = false
+        endDemoSession()
         phase = "Idle"
         sessionLog.append("SESSION", "stop frames=\(framesSeen)/\(framesPassed) calls=\(modelCalls)")
         SessionLogStore.save(sessionLog.text)
@@ -437,6 +473,27 @@ final class PhoneSessionModel {
             return
         }
         SessionMomentsStore.saveSessionInfo(.init(id: id, startedAt: startedAt, endedAt: sessionEndedAt))
+    }
+
+    /// The speech-start caption wiring. Factored so tests can drive the real
+    /// callback headlessly; live sessions cannot start in tests.
+    func demoSpeechCallback() -> (@Sendable (String) -> Void) {
+        { [weak self] text in
+            Task { @MainActor in
+                self?.demoStrip.append(DemoStripMapper.whisperCaption(text), style: .whisper, at: Date())
+            }
+        }
+    }
+
+    /// Demo teardown: idle timer back (only if this session set it), speech
+    /// callback off. The strip contents stay for the recording.
+    private func endDemoSession() {
+        if demoOwnsIdleTimer {
+            demoOwnsIdleTimer = false
+            DemoIdleTimer.setDisabled(false)
+        }
+        speaker.onSpeechStart = nil
+        demoModeActive = false
     }
 
     /// Records one fired cue into the observable history. Internal so
@@ -497,6 +554,7 @@ final class PhoneSessionModel {
         liveSource = nil
         await source?.stop()
         keepsScreenOn = false
+        endDemoSession()
         if outcome == "Finished", framesSeen > 0, framesPassed == 0 {
             outcome = "Finished. The gate held every frame, so nothing was sent on."
         }
@@ -530,6 +588,7 @@ final class PhoneSessionModel {
             _ = try await playback.run(pace: .milliseconds(40)) { step, view in
                 self.framesSeen += 1
                 self.framesPassed += 1
+                self.noteFirstFrameForDemo()
                 self.apply(step, view)
             }
         case .clip:
@@ -664,6 +723,7 @@ final class PhoneSessionModel {
         let needOpen = await session.view().openNeeds.isEmpty == false
         let decision = await gate.evaluate(frame, needOpen: needOpen, timing: activeTiming)
         framesSeen += 1
+        noteFirstFrameForDemo()
         gateLine = Self.describe(decision)
         if decision.passes {
             framesPassed += 1
@@ -711,6 +771,13 @@ final class PhoneSessionModel {
         headStartLine = view.headStartSummary
         for line in step.timingLines {
             sessionLog.append("TIMING", line)
+        }
+        if demoModeActive {
+            for line in step.timingLines {
+                if let chip = DemoStripMapper.latencyChip(fromTimingLine: line) {
+                    demoChip = chip
+                }
+            }
         }
         if let cue = step.spoken.last {
             let text = cue.kind == .chime ? "Chime" : cue.text
@@ -821,6 +888,9 @@ final class PhoneSessionModel {
             default:
                 break
             }
+            if demoModeActive {
+                demoStripIngest(event, in: view)
+            }
         }
         liveEventTimeline.append(contentsOf: SessionTelemetry.eventTimeline(from: fresh, cap: fresh.count))
         liveEventTimeline = Array(liveEventTimeline.suffix(12))
@@ -847,6 +917,38 @@ final class PhoneSessionModel {
                 samples.append(need.mastery.score)
                 masterySamples[need.id] = Array(samples.suffix(30))
             }
+        }
+    }
+
+    /// Demo strip ingest for one drained event. Pure observer: reads the
+    /// view, appends rows, changes nothing else.
+    private func demoStripIngest(_ event: EngineEvent, in view: SessionView) {
+        if mode == .replay, event.kind == .cueFired {
+            if let cue = view.cues.last(where: { $0.needID == event.needID }) ?? view.cues.last,
+               cue.kind != .chime {
+                demoStrip.append(DemoStripMapper.whisperCaption(cue.text), style: .whisper, at: Date())
+            }
+            return
+        }
+        let headStartSeconds: (String) -> TimeInterval? = { needID in
+            view.openNeeds.first(where: { $0.needID == needID }).map {
+                $0.cueDeadline.timeIntervalSince($0.latchedAt)
+            }
+        }
+        guard let row = DemoStripMapper.item(for: event, needs: view.needs, headStartSeconds: headStartSeconds) else {
+            return
+        }
+        demoStrip.append(row.0, style: row.1, at: Date(), countdownEndsAt: row.2)
+        if event.kind == .needLatched,
+           let followUp = DemoStripMapper.headStartFollowUp(for: event, headStartSeconds: headStartSeconds) {
+            demoStrip.append(followUp.0, style: followUp.1, at: Date(), countdownEndsAt: followUp.2)
+        }
+    }
+
+    /// Demo strip's first row, once per session, on the first frame through.
+    private func noteFirstFrameForDemo() {
+        if demoModeActive, framesSeen == 1 {
+            demoStrip.append(DemoStripMapper.firstFrame, style: .neutral, at: Date())
         }
     }
 
