@@ -288,4 +288,73 @@ final class PhoneSessionModelTests: XCTestCase {
         XCTAssertEqual(lines.filter { $0.contains("skip idle-bucket") }.count, 1)
         XCTAssertEqual(lines.filter { $0.contains("skip min-gap purpose=latch") }.count, 1)
     }
+
+    // MARK: - Activity wiring
+
+    @MainActor
+    func testAddNeedLogsListAddLine() {
+        let model = PhoneSessionModel()
+        model.needs = stubNeeds()
+
+        model.addNeed()
+
+        let lines = model.sessionLog.activity.map { "[\($0.tag)] \($0.message)" }
+        XCTAssertTrue(
+            lines.contains { $0.hasPrefix("[LIST] add id=") && $0.hasSuffix("cause=add-blank") },
+            "addNeed must log its diff, got: \(lines)"
+        )
+    }
+
+    @MainActor
+    func testDeleteNeedLogsListRemoveLineWithCause() {
+        let model = PhoneSessionModel()
+        model.needs = stubNeeds()
+
+        model.deleteNeed(uiID: model.needs[0].uiID)
+
+        let lines = model.sessionLog.activity.map { "[\($0.tag)] \($0.message)" }
+        XCTAssertTrue(
+            lines.contains { $0.contains("[LIST] remove id=take-baby") && $0.hasSuffix("cause=delete") },
+            "deleteNeed must log which need went and why, got: \(lines)"
+        )
+    }
+
+    @MainActor
+    func testSetAllCheckInsLogsOneLinePerNeed() {
+        let model = PhoneSessionModel()
+        model.needs = stubNeeds()
+
+        model.setAllCheckIns(true)
+
+        let lines = model.sessionLog.activity.map { "[\($0.tag)] \($0.message)" }
+        XCTAssertEqual(lines.filter { $0.contains("checkin: false -> true") && $0.hasSuffix("cause=ask-checkins") }.count, 2)
+    }
+
+    @MainActor
+    func testSetSceneActiveLogsTransitionsOnce() {
+        let model = PhoneSessionModel()
+
+        model.setSceneActive(false)
+        model.setSceneActive(false)
+        model.setSceneActive(true)
+
+        XCTAssertEqual(
+            model.sessionLog.activity.map(\.message),
+            ["background", "foreground"],
+            "only real transitions log"
+        )
+    }
+
+    @MainActor
+    func testResetLearningProgressLogsSettingsLine() {
+        let model = PhoneSessionModel()
+        model.needs = stubNeeds()
+
+        let stash = model.resetLearningProgress()
+        XCTAssertNotNil(stash)
+        XCTAssertTrue(model.sessionLog.activity.map(\.message).contains("learning reset (2 needs)"))
+
+        model.restoreMastery(stash ?? [:])
+        XCTAssertTrue(model.sessionLog.activity.map(\.message).contains("learning reset undone (2 needs)"))
+    }
 }

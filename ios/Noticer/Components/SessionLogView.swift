@@ -35,6 +35,7 @@ struct SessionLogView: View {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
                         UIPasteboard.general.string = log.text
+                        log.appendActivity("UI", "log copied")
                     } label: {
                         Image(systemName: "doc.on.doc")
                     }
@@ -45,6 +46,9 @@ struct SessionLogView: View {
                     }
                     .accessibilityLabel("Share log")
                     .disabled(log.isEmpty)
+                    .simultaneousGesture(TapGesture().onEnded { _ in
+                        log.appendActivity("UI", "share tapped")
+                    })
                 }
             }
         }

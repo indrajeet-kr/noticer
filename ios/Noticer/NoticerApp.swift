@@ -8,6 +8,9 @@ struct NoticerApp: App {
         WindowGroup {
             RootView(model: model)
                 .task {
+                    await model.sessionLog.loadActivity()
+                    model.sessionLog.logLaunch()
+                    model.watchAudioRoutes()
                     model.configureWearables()
                 }
                 .onOpenURL { url in

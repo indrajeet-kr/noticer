@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 import MWDATCore
 import NoticerCore
@@ -181,12 +182,40 @@ final class PhoneSessionModel {
     }
 
     func setQuickTiming(_ enabled: Bool) {
+        let old = quickTiming
         quickTiming = enabled
         UserDefaults.standard.set(enabled, forKey: Self.quickTimingKey)
+        if old != enabled {
+            sessionLog.appendActivity("SETTINGS", "quick-timing \(old) -> \(enabled)")
+        }
     }
 
     private var selectedOption: ReplayOption? {
         replayOptions.first { $0.id == selectedReplayID }
+    }
+
+    private var audioRouteObserver: NSObjectProtocol?
+
+    /// Logs output-route changes (glasses vs speaker vs earpiece) for
+    /// cue-audibility debugging. Called once at launch.
+    func watchAudioRoutes() {
+        guard audioRouteObserver == nil else {
+            return
+        }
+        audioRouteObserver = NotificationCenter.default.addObserver(
+            forName: AVAudioSession.routeChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] note in
+            guard let self else {
+                return
+            }
+            let reason = (note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt)
+                .flatMap(AVAudioSession.RouteChangeReason.init(rawValue:))
+                .map { String(describing: $0) } ?? "?"
+            let output = AVAudioSession.sharedInstance().currentRoute.outputs.first?.portName ?? "?"
+            self.sessionLog.appendActivity("GLASSES", "audio-route \(reason) (\(output))")
+        }
     }
 
     func configureWearables() {
@@ -197,13 +226,13 @@ final class PhoneSessionModel {
             try Wearables.configure()
             configured = true
             registration = Self.registrationLabel(Wearables.shared.registrationState)
-            sessionLog.append("WEAR", "configured (\(registration))")
+            sessionLog.appendActivity("GLASSES", "configured (\(registration))")
             watchWearables()
         } catch {
             if case .alreadyConfigured = error {
                 configured = true
                 registration = Self.registrationLabel(Wearables.shared.registrationState)
-                sessionLog.append("WEAR", "already configured (\(registration))")
+                sessionLog.appendActivity("GLASSES", "already configured (\(registration))")
                 watchWearables()
                 return
             }
@@ -234,7 +263,7 @@ final class PhoneSessionModel {
         else {
             return
         }
-        sessionLog.append("WEAR", "openURL metaWearablesAction")
+        sessionLog.appendActivity("GLASSES", "openURL metaWearablesAction")
         Task {
             do {
                 _ = try await Wearables.shared.handleUrl(url)
@@ -267,9 +296,29 @@ final class PhoneSessionModel {
     /// running session kept the list it started with. Swaps serialize: each
     /// commit waits for the previous swap to land, so accept-then-undo can't
     /// apply out of order.
+    /// State snapshots for the activity log: full list plus Tonight
+    /// contents. Called at session start/stop and whenever either changes.
+    func snapshotStateForLog() {
+        for line in NeedListDiff.snapshotLines(rows: needs.map {
+            NeedListDiff.Row(need: $0, paused: isPaused($0.id))
+        }) {
+            sessionLog.appendActivity("LIST", line)
+        }
+        snapshotTonightForLog()
+    }
+
+    func snapshotTonightForLog() {
+        for line in ActivityTonight.snapshotLines(tonightMoments.map {
+            ActivityTonight.Entry(at: $0.at, kind: $0.kind.rawValue, needID: $0.needID, text: $0.text)
+        }) {
+            sessionLog.appendActivity("TONIGHT", line)
+        }
+    }
+
     func commitNeeds() {
         let snapshot = needsForSession()
         saveNeeds()
+        snapshotStateForLog()
         Task {
             await self.speaker.prepare(needs: snapshot)
         }
@@ -319,6 +368,7 @@ final class PhoneSessionModel {
     }
 
     func setPaused(_ needID: String, paused: Bool) {
+        let changed = pausedNeedIDs.contains(needID) != paused
         if paused {
             pausedNeedIDs.insert(needID)
         } else {
@@ -326,6 +376,9 @@ final class PhoneSessionModel {
         }
         PausedNeedsStore.save(pausedNeedIDs)
         intentService.markPendingSuperseded()
+        if changed {
+            sessionLog.appendActivity("LIST", "pause id=\(needID) \(paused ? "on" : "off") cause=pause-toggle")
+        }
     }
 
     /// Toggles the safety flag the engine reads (`isUrgent`: zero head
@@ -337,7 +390,9 @@ final class PhoneSessionModel {
         else {
             return
         }
+        let before = needs
         needs[index].isUrgent = urgent
+        logListDiff(old: before, cause: "priority-toggle")
         commitNeeds()
     }
 
@@ -355,6 +410,7 @@ final class PhoneSessionModel {
             needs[index].mastery = .initial
         }
         saveNeeds()
+        sessionLog.appendActivity("SETTINGS", "learning reset (\(stash.count) needs)")
         return stash
     }
 
@@ -366,6 +422,7 @@ final class PhoneSessionModel {
             }
         }
         saveNeeds()
+        sessionLog.appendActivity("SETTINGS", "learning reset undone (\(stash.count) needs)")
     }
 
     /// Blank whisper uses her words. The list on screen can leave that line empty.
@@ -386,15 +443,38 @@ final class PhoneSessionModel {
         guard needs.count < SessionLimits.maxAuthoredNeeds else {
             return
         }
+        let before = needs
         needs.append(NeedListStore.blankNeed(priority: needs.count))
+        logListDiff(old: before, cause: "add-blank")
         saveNeeds()
     }
 
     func deleteNeed(uiID: UUID) {
+        let before = needs
         guard NeedListEditing.delete(&needs, uiID: uiID) else {
             return
         }
+        logListDiff(old: before, cause: "delete")
         saveNeeds()
+    }
+
+    /// Ask flow: check-ins on/off for every need, logged as one diff.
+    func setAllCheckIns(_ allowed: Bool) {
+        let before = needs
+        for index in needs.indices {
+            needs[index].allowsCheckIn = allowed
+        }
+        logListDiff(old: before, cause: "ask-checkins")
+        saveNeeds()
+    }
+
+    private func logListDiff(old: [Need], cause: String) {
+        let rows = { (needs: [Need]) in
+            needs.map { NeedListDiff.Row(need: $0, paused: self.isPaused($0.id)) }
+        }
+        for line in NeedListDiff.lines(old: rows(old), new: rows(needs), cause: cause) {
+            sessionLog.appendActivity("LIST", line)
+        }
     }
 
     func refreshKeyStatus() {
@@ -405,6 +485,9 @@ final class PhoneSessionModel {
     @discardableResult
     func setSceneActive(_ active: Bool) -> Int {
         foregroundTicket += 1
+        if sceneActive != active {
+            sessionLog.appendActivity("APP", active ? "foreground" : "background")
+        }
         sceneActive = active
         if !active, keepsScreenOn {
             phase = "Paused — bring the app to the front"
@@ -485,6 +568,8 @@ final class PhoneSessionModel {
         }
         let activeNeeds = needsForSession()
         sessionLog.append("SESSION", "start mode=\(mode == .replay ? "replay" : "live") timing=\(quickTiming ? "quick" : "standard") needs=\(activeNeeds.count) key=\(ModelKeyStore.currentKey() == nil ? "missing" : "saved")")
+        sessionLog.noteSessionStart()
+        snapshotStateForLog()
         for need in activeNeeds {
             let dwell = need.dwellSeconds.map { String(Int($0)) } ?? "—"
             let signal = need.selfNoticeSignal ?? "—"
@@ -511,6 +596,7 @@ final class PhoneSessionModel {
         applyIdleTimer()
         phase = "Idle"
         sessionLog.append("SESSION", "stop frames=\(framesSeen)/\(framesPassed) calls=\(modelCalls)")
+        snapshotStateForLog()
         SessionLogStore.save(sessionLog.text)
         resetLiveState(clearLastCue: false)
         saveNeeds()
@@ -570,7 +656,7 @@ final class PhoneSessionModel {
 
     func resumeGlasses() {
         let source = liveSource
-        sessionLog.append("WEAR", "resume requested")
+        sessionLog.appendActivity("GLASSES", "resume requested")
         Task {
             do {
                 try await source?.resume()
@@ -924,14 +1010,20 @@ final class PhoneSessionModel {
                 if let needID = event.needID {
                     let cueFired = event.detail == "after-cue"
                         || moments.contains { $0.needID == needID && $0.kind == .cued }
+                    let kind: SessionMoment.Kind = cueFired ? .nudge : .selfNotice
                     moments.append(SessionMoment(
                         at: Date(),
                         needID: needID,
-                        kind: cueFired ? .nudge : .selfNotice,
+                        kind: kind,
                         text: Self.words(for: needID, in: view),
                         sessionID: currentSessionID,
                         sharedWithPartner: event.isSharedFinish
                     ))
+                    sessionLog.appendActivity(
+                        "TONIGHT",
+                        ActivityTonight.addLine(kind: kind.rawValue, needID: needID, why: "caught-himself")
+                    )
+                    snapshotTonightForLog()
                 }
             case .cueFired:
                 let isRepeat = event.detail == CueSpeechTuning.repeatEventDetail
@@ -945,6 +1037,11 @@ final class PhoneSessionModel {
                             text: Self.words(for: needID, in: view),
                             sessionID: currentSessionID
                         ))
+                        sessionLog.appendActivity(
+                            "TONIGHT",
+                            ActivityTonight.addLine(kind: SessionMoment.Kind.cued.rawValue, needID: needID, why: "cue-fired")
+                        )
+                        snapshotTonightForLog()
                     }
                 }
             case .needLatched:
@@ -974,7 +1071,9 @@ final class PhoneSessionModel {
         }
         seenLogCount = view.log.count
         if moments.count > 200 {
+            let dropped = moments.count - 200
             moments = Array(moments.suffix(200))
+            sessionLog.appendActivity("TONIGHT", ActivityTonight.trimLine(dropped: dropped, cap: 200))
         }
         for need in view.needs {
             guard let index = needs.firstIndex(where: { $0.id == need.id }) else {
@@ -1057,7 +1156,13 @@ final class PhoneSessionModel {
 
     private func apply(_ status: DATLiveStatus) {
         if status.stream != dat.stream {
-            sessionLog.append("WEAR", "stream: \(dat.stream) → \(status.stream)")
+            sessionLog.appendActivity("GLASSES", "stream: \(dat.stream) → \(status.stream)")
+        }
+        if status.deviceType != dat.deviceType {
+            sessionLog.appendActivity("GLASSES", "link \(dat.deviceType) → \(status.deviceType)")
+        }
+        if status.battery != dat.battery, dat.battery == "—" || status.battery == "—" {
+            sessionLog.appendActivity("GLASSES", "battery \(dat.battery) → \(status.battery)")
         }
         dat = status
         for notice in status.notices {
@@ -1082,7 +1187,7 @@ final class PhoneSessionModel {
             for await state in Wearables.shared.registrationStateStream() {
                 let label = Self.registrationLabel(state)
                 if label != self.registration {
-                    self.sessionLog.append("WEAR", "registration: \(label)")
+                    self.sessionLog.appendActivity("GLASSES", "registration: \(label)")
                 }
                 self.registration = label
             }

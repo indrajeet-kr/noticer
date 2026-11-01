@@ -29,6 +29,7 @@ struct MomsListView: View {
                         VStack(spacing: Theme.Space.cardGap) {
                             ForEach(model.needs, id: \.uiID) { need in
                                 Button {
+                                    model.sessionLog.appendActivity("UI", "detail opened id=\(need.id)")
                                     selected = SheetNeed(need: need)
                                 } label: {
                                     NeedCard(need: need, isPaused: model.isPaused(need.id))
@@ -37,6 +38,7 @@ struct MomsListView: View {
                                 .contextMenu {
                                     pauseButton(for: need)
                                     Button("Change in words") {
+                                        model.sessionLog.appendActivity("UI", "change-in-words tapped id=\(need.id)")
                                         openAdd(prefill: changePrefill(for: need))
                                     }
                                     Button("Remove", role: .destructive) {
@@ -47,6 +49,7 @@ struct MomsListView: View {
                         }
                     }
                     Button("+ Add a need") {
+                        model.sessionLog.appendActivity("UI", "add-need tapped")
                         openAdd(prefill: "")
                     }
                     .buttonStyle(.primaryCapsule)
@@ -105,7 +108,9 @@ struct MomsListView: View {
 
     private func pauseButton(for need: Need) -> some View {
         Button(model.isPaused(need.id) ? "Resume" : "Pause tonight") {
-            model.setPaused(need.id, paused: !model.isPaused(need.id))
+            let paused = !model.isPaused(need.id)
+            model.sessionLog.appendActivity("UI", "\(paused ? "pause" : "resume") tapped id=\(need.id)")
+            model.setPaused(need.id, paused: paused)
         }
     }
 
@@ -130,6 +135,7 @@ struct MomsListView: View {
                     .lineLimit(2)
                 if service.noticeHasUndo {
                     Button("Undo") {
+                        model.sessionLog.appendActivity("UI", "undo tapped")
                         service.undoRemove(model: model)
                     }
                     .font(Theme.Font.headline)

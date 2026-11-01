@@ -225,6 +225,10 @@ final class NeedsIntentService {
             lastEntryIsOpenQuestion: isOpenQuestion(entries.last)
         )
         entries.append(.her(id: UUID(), text: message))
+        model.sessionLog.appendActivity(
+            "CONV",
+            ActivityConversation.herLine(text: message, source: lastSource.rawValue)
+        )
         offline = false
         needsKey = false
         failureDetail = nil
@@ -292,6 +296,10 @@ final class NeedsIntentService {
             lastAction = nil
             switch result {
             case .needs(let drafts, let readBack):
+                model.sessionLog.appendActivity(
+                    "CONV",
+                    ActivityConversation.replyNeedsLine(count: drafts.count, readBack: readBack)
+                )
                 switch Self.needsEntryAction(
                     drafts: drafts,
                     message: message,
@@ -313,15 +321,19 @@ final class NeedsIntentService {
                 }
                 pendingExplicitRemovals = []
             case .question(let question, let suggestions):
+                model.sessionLog.appendActivity(
+                    "CONV",
+                    ActivityConversation.replyQuestionLine(question: question, chips: suggestions)
+                )
                 pendingExplicitRemovals = []
                 entries.append(.question(id: UUID(), text: question, suggestions: suggestions))
             }
         } catch {
-            failInterpret(error)
+            failInterpret(error, model: model)
         }
     }
 
-    private func failInterpret(_ error: Error) {
+    private func failInterpret(_ error: Error, model: PhoneSessionModel) {
         thinking = false
         if let error = error as? NeedsIntentError {
             if case .missingAPIKey = error {
@@ -329,11 +341,13 @@ final class NeedsIntentService {
             }
             failureDetail = error.description
             offline = true
+            model.sessionLog.appendActivity("CONV", "turn failed: \(error.description)")
         } else if error is CancellationError {
             return
         } else {
             failureDetail = nil
             offline = true
+            model.sessionLog.appendActivity("CONV", "turn failed: request failed (\(error.localizedDescription))")
         }
     }
 
@@ -342,6 +356,7 @@ final class NeedsIntentService {
     /// App-owned full-list question. Nothing is added until she picks.
     func showSwapQuestion(newText: String, model: PhoneSessionModel) {
         pendingSwapText = newText
+        model.sessionLog.appendActivity("CONV", "limit hit, swap offered for \"\(newText)\"")
         entries.append(.swapQuestion(
             id: UUID(),
             text: NeedListEdit.swapQuestion(newText: newText),
@@ -358,7 +373,7 @@ final class NeedsIntentService {
             return
         }
         if NeedListEdit.isKeepAllAnswer(message) {
-            appendKeepAllConfirmation()
+            appendKeepAllConfirmation(model: model)
             return
         }
         if let pick = NeedListEdit.resolveNamedNeed(message: message, in: model.needs) {
@@ -397,6 +412,7 @@ final class NeedsIntentService {
         guard let newText = pendingSwapText else {
             return
         }
+        model.sessionLog.appendActivity("CONV", "swap chosen pick=\(pickID)")
         pendingExplicitRemovals = [pickID]
         lastAction = .structureSwap(newText: newText, pickID: pickID)
         thinking = true
@@ -418,14 +434,19 @@ final class NeedsIntentService {
             lastAction = nil
             switch result {
             case .needs(let drafts, _):
+                model.sessionLog.appendActivity("CONV", "structured \(drafts.count) draft(s) for swap")
                 applyStructuredSwap(drafts: drafts, pickID: pickID, model: model)
             case .question(let question, let suggestions):
+                model.sessionLog.appendActivity(
+                    "CONV",
+                    ActivityConversation.replyQuestionLine(question: question, chips: suggestions)
+                )
                 pendingSwapText = nil
                 pendingExplicitRemovals = []
                 entries.append(.question(id: UUID(), text: question, suggestions: suggestions))
             }
         } catch {
-            failInterpret(error)
+            failInterpret(error, model: model)
         }
     }
 
@@ -469,10 +490,11 @@ final class NeedsIntentService {
             return
         }
         entries.append(.her(id: UUID(), text: NeedListEdit.keepAllChip()))
-        appendKeepAllConfirmation()
+        appendKeepAllConfirmation(model: model)
     }
 
-    private func appendKeepAllConfirmation() {
+    private func appendKeepAllConfirmation(model: PhoneSessionModel) {
+        model.sessionLog.appendActivity("CONV", "swap declined (keep all)")
         entries.append(.question(id: UUID(), text: NeedListEdit.keepAllConfirmation(), suggestions: []))
         pendingSwapText = nil
         pendingExplicitRemovals = []
@@ -487,7 +509,14 @@ final class NeedsIntentService {
         guard case .readBack(_, let drafts, _, let changed, false, false) = entries[index] else {
             return
         }
-        model.needs = NeedsIntentConversion.toNeeds(drafts, current: model.needs)
+        let before = model.needs
+        let converted = NeedsIntentConversion.toNeeds(drafts, current: model.needs)
+        logDiff(old: before, new: converted, cause: "looks-right", source: lastSource, model: model)
+        model.sessionLog.appendActivity(
+            "CONV",
+            "looks-right accepted source=\(lastSource.rawValue) n=\(converted.count)"
+        )
+        model.needs = converted
         model.commitNeeds()
         entries[index] = .readBack(
             id: entryID,
@@ -530,11 +559,14 @@ final class NeedsIntentService {
             superseded: superseded
         )
         if accepted, let savedIndex = model.needs.firstIndex(where: { $0.id == draftID }) {
+            let before = model.needs
             removed = (model.needs.remove(at: savedIndex), savedIndex)
+            logDiff(old: before, new: model.needs, cause: "remove-card", model: model)
             model.commitNeeds()
             markPendingSuperseded()
         } else {
             removed = nil
+            model.sessionLog.appendActivity("CONV", ActivityConversation.draftDiscardedLine(id: draftID))
         }
         // Pending read-backs re-derive from her words; nothing to undo.
         postNotice("Removed “\(draft.authorText)”.", undo: accepted)
@@ -565,7 +597,9 @@ final class NeedsIntentService {
         guard let savedIndex = model.needs.firstIndex(where: { $0.id == id }) else {
             return
         }
+        let before = model.needs
         let need = model.needs.remove(at: savedIndex)
+        logDiff(old: before, new: model.needs, cause: "remove", model: model)
         model.commitNeeds()
         markPendingSuperseded()
         removed = (need, savedIndex)
@@ -580,7 +614,9 @@ final class NeedsIntentService {
             return
         }
         let index = min(removed.index, model.needs.count)
+        let before = model.needs
         model.needs.insert(removed.need, at: index)
+        logDiff(old: before, new: model.needs, cause: "undo", model: model)
         model.commitNeeds()
         markPendingSuperseded()
         self.removed = nil
@@ -591,6 +627,31 @@ final class NeedsIntentService {
     func dismissNotice() {
         notice = nil
         noticeHasUndo = false
+    }
+
+    // MARK: - Activity source and list diffs
+
+    /// Where the latest turn came from. The sheet notes it at send time so
+    /// Looks-right lines can say typed, voice, or chip tap.
+    private(set) var lastSource: ListEditSource = .typed
+
+    func noteSendSource(_ source: ListEditSource) {
+        lastSource = source
+    }
+
+    private func logDiff(
+        old: [Need],
+        new: [Need],
+        cause: String,
+        source: ListEditSource? = nil,
+        model: PhoneSessionModel
+    ) {
+        let rows = { (needs: [Need]) in
+            needs.map { NeedListDiff.Row(need: $0, paused: model.isPaused($0.id)) }
+        }
+        for line in NeedListDiff.lines(old: rows(old), new: rows(new), cause: cause, source: source?.rawValue) {
+            model.sessionLog.appendActivity("LIST", line)
+        }
     }
 }
 

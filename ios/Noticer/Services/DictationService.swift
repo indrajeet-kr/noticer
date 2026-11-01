@@ -27,6 +27,8 @@ final class DictationService {
     var notice: String?
     /// Set by the host from `model.isRunning`.
     var sessionRunning = false
+    /// Set by the host to log speech notices (failures, fallbacks).
+    var noteHandler: ((String) -> Void)?
 
     static let silenceTimeout: Duration = .seconds(2)
     static let noticeDuration: Duration = .seconds(4)
@@ -101,6 +103,7 @@ final class DictationService {
 
     private func postNotice(_ text: String) {
         notice = text
+        noteHandler?(text)
         noticeTask?.cancel()
         noticeTask = Task { [weak self] in
             try? await Task.sleep(for: Self.noticeDuration)

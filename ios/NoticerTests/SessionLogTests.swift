@@ -12,57 +12,89 @@ final class SessionLogTests: XCTestCase {
         let log = SessionLog()
         log.append("SESSION", "start mode=live", at: Date(timeIntervalSince1970: 1_700_000_000))
         log.append("MODEL", "call keyframes=2", at: Date(timeIntervalSince1970: 1_700_000_001))
+        log.appendActivity("UI", "stop tapped", at: Date(timeIntervalSince1970: 1_700_000_002))
         XCTAssertEqual(log.entries.count, 2)
         XCTAssertEqual(log.entries.map(\.tag), ["SESSION", "MODEL"])
         let lines = log.text.components(separatedBy: "\n")
-        XCTAssertEqual(lines.count, 3)
-        XCTAssertTrue(lines[0].contains("2 entries"))
-        XCTAssertTrue(lines[1].hasSuffix("[SESSION] start mode=live"))
-        XCTAssertTrue(lines[2].hasSuffix("[MODEL] call keyframes=2"))
-        XCTAssertEqual(lines[1].prefix(12).filter { $0 == ":" }.count, 2, "HH:mm:ss.SSS stamp")
+        XCTAssertEqual(lines.count, 5)
+        XCTAssertTrue(lines[0].contains("3 entries"), lines[0])
+        XCTAssertTrue(lines[1].contains("sessions 0"), lines[1])
+        XCTAssertTrue(lines[2].hasSuffix("[SESSION] start mode=live"))
+        XCTAssertTrue(lines[3].hasSuffix("[MODEL] call keyframes=2"))
+        XCTAssertTrue(lines[4].hasSuffix("[UI] stop tapped"))
+        XCTAssertEqual(lines[2].prefix(12).filter { $0 == ":" }.count, 2, "HH:mm:ss.SSS stamp")
     }
 
     func testCapDropsOldest() {
         let log = SessionLog()
-        for index in 1...SessionLog.cap + 5 {
+        for index in 1...SessionLog.maxEntries + 5 {
             log.append("T", "m\(index)")
         }
-        XCTAssertEqual(log.entries.count, SessionLog.cap)
+        XCTAssertEqual(log.entries.count, SessionLog.maxEntries)
         XCTAssertEqual(log.droppedCount, 5)
         XCTAssertEqual(log.entries.first?.message, "m6")
         XCTAssertTrue(log.text.contains("5 oldest dropped"))
     }
 
-    func testClear() {
+    func testClearKeepsActivity() {
         let log = SessionLog()
         log.append("T", "x")
+        log.appendActivity("UI", "y")
         log.clear()
-        XCTAssertTrue(log.isEmpty)
+        XCTAssertFalse(log.isEmpty)
+        XCTAssertTrue(log.entries.isEmpty)
         XCTAssertEqual(log.droppedCount, 0)
+        XCTAssertEqual(log.activity.count, 1)
     }
 
-    func testStoreSavesLatestAndPrunesRuns() throws {
+    func testStoreSavesAndPrunesToCap() throws {
         let base = FileManager.default.temporaryDirectory
             .appendingPathComponent("logstore-\(UUID().uuidString)", isDirectory: true)
         defer { try? FileManager.default.removeItem(at: base) }
         let start = Date(timeIntervalSince1970: 1_700_000_000)
-        for index in 0..<(SessionLogStore.keepRuns + 2) {
-            let url = SessionLogStore.save(
+        for index in 0..<(SessionLogStore.maxFiles + 2) {
+            SessionLogStore.save(
                 "run \(index)",
                 at: start.addingTimeInterval(TimeInterval(index * 60)),
                 baseURL: base
             )
-            XCTAssertNotNil(url)
         }
-        let folder = base.appendingPathComponent(SessionLogStore.folderName, isDirectory: true)
-        let files = try FileManager.default.contentsOfDirectory(atPath: folder.path)
-        XCTAssertEqual(files.filter { $0.hasPrefix("noticer-") }.count, SessionLogStore.keepRuns)
-        XCTAssertTrue(files.contains(SessionLogStore.latestName))
-        let latest = try String(
-            contentsOf: folder.appendingPathComponent(SessionLogStore.latestName),
-            encoding: .utf8
+        let files = try FileManager.default.contentsOfDirectory(atPath: base.path)
+        XCTAssertEqual(files.filter { $0.hasPrefix("noticer-") }.count, SessionLogStore.maxFiles)
+    }
+
+    func testActivityFileRoundTrips() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("activity-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let persisted = ActivityPersisted(
+            sessionCount: 4,
+            entries: [ActivityEvent(tag: "APP", message: "launch")],
+            droppedCount: 1
         )
-        XCTAssertEqual(latest, "run \(SessionLogStore.keepRuns + 1)")
+        ActivityFileStore.save(persisted, baseURL: base)
+        let loaded = try XCTUnwrap(ActivityFileStore.load(baseURL: base))
+        XCTAssertEqual(loaded, persisted)
+        XCTAssertNil(ActivityFileStore.load(baseURL: base.appendingPathComponent("missing")))
+    }
+
+    func testLoadActivityMergesUnderNewLines() async {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("activity-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        ActivityFileStore.save(
+            ActivityPersisted(
+                sessionCount: 4,
+                entries: [ActivityEvent(at: Date(timeIntervalSince1970: 100), tag: "APP", message: "old")],
+                droppedCount: 2
+            ),
+            baseURL: base
+        )
+        let log = SessionLog()
+        log.activityBaseURL = base
+        log.appendActivity("UI", "new", at: Date(timeIntervalSince1970: 200))
+        await log.loadActivity()
+        XCTAssertEqual(log.activity.map(\.message), ["old", "new"])
     }
 
     func testLoggingClientPassesThroughAndLogs() async throws {
