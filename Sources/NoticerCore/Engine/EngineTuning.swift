@@ -52,4 +52,10 @@ public enum EngineTuning {
     /// still credit it. Past this the need closes as unknown with the normal
     /// cooldown. Long enough for "he did it right after the whisper".
     public static let postCueResolveSeconds: TimeInterval = 120
+
+    /// Head start has ended, a check that includes this need is still in
+    /// flight, and the latest assessment saw the partner. Wait this long for
+    /// that reply before whispering. A hung call still cues once the cap
+    /// passes. No extra model call is issued.
+    public static let partnerInFlightCueHoldSeconds: TimeInterval = 3
 }

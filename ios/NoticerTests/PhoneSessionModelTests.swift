@@ -3,8 +3,8 @@ import NoticerCore
 import NoticerPipeline
 import XCTest
 
-/// Model wiring: observable cue history, session boundaries, latest-session
-/// tonight, and learning reset. MainActor-serialized, so `start()` is still
+/// Model wiring: observable cue history, session boundaries, today's Tonight
+/// list, and learning reset. MainActor-serialized, so `start()` is still
 /// running synchronously after it returns — no suspension, no flakiness.
 final class PhoneSessionModelTests: XCTestCase {
     private let keys = [
@@ -80,17 +80,32 @@ final class PhoneSessionModelTests: XCTestCase {
     }
 
     @MainActor
-    func testTonightMomentsShowsLatestSessionOnly() {
+    func testTonightMomentsAreTodayAndStillOnHerList() {
         let model = PhoneSessionModel()
-        let old = UUID()
-        let new = UUID()
-        let base = Date()
+        model.needs = stubNeeds()
+        let calendar = Calendar.current
+        let now = Date()
+        let start = calendar.startOfDay(for: now)
+        let morning = start.addingTimeInterval(10 * 3600 + 15 * 60)
+        let yesterday = calendar.date(byAdding: .day, value: -1, to: now)!
+        let morningSession = UUID()
+        let eveningSession = UUID()
         model.moments = [
-            SessionMoment(at: base.addingTimeInterval(-7200), needID: "take-baby", kind: .cued, text: "old", sessionID: old),
-            SessionMoment(at: base.addingTimeInterval(-100), needID: "refill-water", kind: .selfNotice, text: "new", sessionID: new),
+            SessionMoment(at: morning, needID: "clean-floor-toys", kind: .cued, text: "Clean the floor toys are everywhere", sessionID: morningSession),
+            SessionMoment(at: morning.addingTimeInterval(60), needID: "take-baby", kind: .selfNotice, text: "old wording", sessionID: morningSession),
+            SessionMoment(at: now, needID: "refill-water", kind: .cued, text: "water", sessionID: eveningSession),
+            SessionMoment(at: yesterday, needID: "refill-water", kind: .cued, text: "yesterday", sessionID: UUID()),
         ]
 
-        XCTAssertEqual(model.tonightMoments.map(\.needID), ["refill-water"])
+        let active = Set(model.needs.map(\.id))
+        let expected = TonightList.select(model.moments, at: \.at, needID: \.needID, activeNeedIDs: active, now: now)
+        XCTAssertEqual(model.tonightMoments.map(\.id), expected.map(\.id))
+        let shown = model.tonightMoments.map(\.needID)
+        XCTAssertEqual(Set(shown), ["take-baby", "refill-water"])
+        XCTAssertFalse(shown.contains("clean-floor-toys"))
+        // One selection for the timeline. It does not branch on isRunning,
+        // so the rows match after Stop.
+        XCTAssertFalse(model.isRunning)
     }
 
     @MainActor

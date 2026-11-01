@@ -1562,4 +1562,181 @@ final class FastCuesCoreTests: EngineTestCase {
         XCTAssertEqual(engine.openNeedIDs, ["clean-floor-toys"])
         XCTAssertEqual(events(.stillOpen).last?.detail, "resolved-but-still-visible")
     }
+
+    // MARK: - Static need, idle budget, partner-in-flight cue
+
+    private func emptyGlassesNeed() -> Need {
+        Need(
+            id: "remove-empty-glasses",
+            authorText: "Remove the empty glasses from the dining table",
+            cueWording: "Clear the table a bit?",
+            visualCondition: "dining table surface visible with empty glasses sitting on it",
+            handledCondition: "dining table surface clear with no empty glasses on it",
+            selfNoticeSignal: "wearer_clearing_empty_glasses_from_table",
+            priority: 0
+        )
+    }
+
+    func testLatchAdmittedWhenNeedPresentSinceSessionStart() throws {
+        let glasses = emptyGlassesNeed()
+        engine = try NeedEngine(clock: clock, needs: [glasses], timing: .quick)
+        // Both keyframes already show the unmet state. No motion edge.
+        see([], jpeg: 1, sceneActive: true, motion: 0.02)
+        advance(2)
+        see([], jpeg: 2, sceneActive: true, motion: 0.02)
+        let call = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(call.purpose, .latch)
+        XCTAssertEqual(call.request.needs.map(\.id), ["remove-empty-glasses"])
+        XCTAssertEqual(call.request.needs.first?.visualCondition, glasses.visualCondition)
+        engine.handle(callID: call.id, verdict: latchVerdict("remove-empty-glasses"))
+        XCTAssertEqual(engine.openNeedIDs, ["remove-empty-glasses"])
+        XCTAssertTrue(events(.latchRejected).isEmpty)
+    }
+
+    func testSustainedMotionWithPartnerInViewStaysAtSixLatchCallsPerMinute() throws {
+        engine = try NeedEngine(clock: clock, needs: [emptyGlassesNeed()], timing: .quick)
+        var issued: [Date] = []
+        for second in 0...90 {
+            if second > 0 { advance(1) }
+            see([], jpeg: UInt8(second % 250), sceneActive: true, motion: 0.35)
+            if let call = engine.pendingModelCall {
+                issued.append(clock.now())
+                var verdict = noTransition(nil, sustained: false)
+                verdict.assessment.partnerInView = true
+                engine.handle(callID: call.id, verdict: verdict)
+            }
+        }
+        let perMinute = engine.callsInLastMinute()
+        XCTAssertLessThanOrEqual(perMinute, 6, "sustained motion idle \(perMinute)/min")
+        XCTAssertGreaterThanOrEqual(perMinute, 4, "idle watch went quiet (\(perMinute)/min)")
+        var worst = 0
+        for start in issued {
+            let count = issued.filter { $0 >= start && $0 < start.addingTimeInterval(60) }.count
+            worst = max(worst, count)
+        }
+        XCTAssertLessThanOrEqual(worst, 6, "a 60s window reached \(worst) latch calls")
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+    }
+
+    func testSceneChangeStillChecksEarlyWhenATokenIsWaiting() throws {
+        engine = try NeedEngine(clock: clock, needs: [emptyGlassesNeed()], timing: .quick)
+        advance(7)
+        see([], jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], jpeg: 2, sceneActive: true)
+        let first = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: first.id, verdict: noTransition(nil, sustained: false))
+        let issuedAt = clock.now()
+        advance(2)
+        see([], jpeg: 3, sceneActive: true)
+        advance(2)
+        see([], jpeg: 4, sceneActive: true, motion: 0.375)
+        let early = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(early.purpose, .latch)
+        XCTAssertLessThanOrEqual(clock.now().timeIntervalSince(issuedAt), 6)
+        XCTAssertGreaterThanOrEqual(clock.now().timeIntervalSince(issuedAt), 4)
+    }
+
+    private func roamingKid() -> Need {
+        Need(
+            id: "pick-roaming-kid",
+            authorText: "Pick the kid he is roaming around",
+            cueWording: "Maybe pick up the little roamer?",
+            visualCondition: "kid roaming around on the floor unattended",
+            handledCondition: "kid held in arms",
+            selfNoticeSignal: "wearer_picking_up_child",
+            priority: 0
+        )
+    }
+
+    /// Latch, then leave the 8 s heartbeat in flight across the 10 s head start.
+    private func latchKidWithHeartbeatInFlight(partner: Bool) throws -> PendingModelCall {
+        engine = try NeedEngine(clock: clock, needs: [roamingKid()], timing: .quick)
+        see([], jpeg: 1, sceneActive: true)
+        advance(2)
+        see([], jpeg: 2, sceneActive: true)
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        var verdict = latchVerdict("pick-roaming-kid")
+        verdict.assessment.partnerInView = partner
+        engine.handle(callID: latch.id, verdict: verdict)
+        XCTAssertEqual(engine.openNeedIDs, ["pick-roaming-kid"])
+        advance(SessionLimits.heartbeatSeconds)
+        see([], jpeg: 3, sceneActive: true)
+        let heartbeat = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(heartbeat.purpose, .heartbeat)
+        XCTAssertEqual(heartbeat.request.openNeeds.map(\.needID), ["pick-roaming-kid"])
+        return heartbeat
+    }
+
+    private func partnerResolvedKid() -> ModelVerdict {
+        ModelVerdict(
+            finishReason: .toolCalls,
+            tool: .reportNeedResolved,
+            assessment: SceneAssessment(
+                needID: "pick-roaming-kid",
+                sustainedAcrossStrip: false,
+                wearerHandsOccupied: false,
+                partnerInView: true,
+                resolution: .resolvedByPartner,
+                confidence: 0.75
+            )
+        )
+    }
+
+    func testInFlightPartnerCheckHoldsWhisperUntilSheResolvesIt() throws {
+        let heartbeat = try latchKidWithHeartbeatInFlight(partner: true)
+        let deadline = try XCTUnwrap(engine.openNeeds.first).cueDeadline
+        advance(to: deadline)
+        engine.tick()
+        XCTAssertTrue(engine.cues.isEmpty, "whisper waits while her check is in flight")
+        XCTAssertEqual(events(.cueDeferredPartnerCheck).count, 1)
+        XCTAssertEqual(engine.pendingModelCalls.map(\.id), [heartbeat.id])
+
+        let issuedWhileHolding = events(.callIssued).count
+        advance(0.4)
+        engine.tick()
+        XCTAssertTrue(engine.cues.isEmpty)
+        XCTAssertEqual(events(.callIssued).count, issuedWhileHolding, "the hold does not start another call")
+
+        engine.handle(callID: heartbeat.id, verdict: partnerResolvedKid())
+        XCTAssertTrue(engine.cues.isEmpty, "resolved reply must not speak")
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+    }
+
+    func testNoPartnerInViewDoesNotDelayTheCue() throws {
+        let heartbeat = try latchKidWithHeartbeatInFlight(partner: false)
+        let deadline = try XCTUnwrap(engine.openNeeds.first).cueDeadline
+        advance(to: deadline)
+        engine.tick()
+        XCTAssertEqual(engine.cues.map(\.needID), ["pick-roaming-kid"])
+        XCTAssertTrue(events(.cueDeferredPartnerCheck).isEmpty)
+        XCTAssertEqual(engine.pendingModelCalls.map(\.id), [heartbeat.id])
+    }
+
+    func testPartnerHoldCapStillCuesWhenTheCheckHangs() throws {
+        let heartbeat = try latchKidWithHeartbeatInFlight(partner: true)
+        let deadline = try XCTUnwrap(engine.openNeeds.first).cueDeadline
+        advance(to: deadline)
+        engine.tick()
+        XCTAssertTrue(engine.cues.isEmpty)
+        advance(EngineTuning.partnerInFlightCueHoldSeconds)
+        engine.tick()
+        XCTAssertEqual(engine.cues.map(\.needID), ["pick-roaming-kid"])
+        XCTAssertTrue(engine.pendingModelCalls.contains { $0.id == heartbeat.id }, "the hung call is left in flight")
+    }
+
+    func testPartnerHoldSpeaksOnceTheCheckSaysStillOpen() throws {
+        let heartbeat = try latchKidWithHeartbeatInFlight(partner: true)
+        let deadline = try XCTUnwrap(engine.openNeeds.first).cueDeadline
+        advance(to: deadline.addingTimeInterval(0.4))
+        engine.tick()
+        XCTAssertTrue(engine.cues.isEmpty)
+        var still = noTransition("pick-roaming-kid", sustained: true)
+        still.assessment.partnerInView = true
+        let callsBefore = events(.callIssued).count
+        engine.handle(callID: heartbeat.id, verdict: still)
+        XCTAssertEqual(engine.cues.map(\.needID), ["pick-roaming-kid"])
+        XCTAssertEqual(events(.callIssued).count, callsBefore, "waiting does not start another call")
+    }
 }

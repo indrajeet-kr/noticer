@@ -30,7 +30,7 @@ final class DemoStripTests: XCTestCase {
     /// Every `EngineEventKind` today. `EngineEventKind` is not `CaseIterable`
     /// and the demo change must not touch it, so the sweep lists kinds here.
     private static let allKinds: [EngineEventKind] = [
-        .needLatched, .latchRejected, .cueFired, .cueDeferredHandsBusy, .cueDeferredRateLimit,
+        .needLatched, .latchRejected, .cueFired, .cueDeferredHandsBusy, .cueDeferredPartnerCheck, .cueDeferredRateLimit,
         .caughtHimself, .resolvedByPartner, .closedUnknown, .falseCueDismissed,
         .masteryRetired, .masteryUnretired, .needReset, .visitorPaused, .visitorResumed,
         .headStartExtended, .headStartExtensionDenied, .recheckRequested, .actionRejected,
@@ -74,6 +74,10 @@ final class DemoStripTests: XCTestCase {
         let busy = try XCTUnwrap(mapped(event(.cueDeferredHandsBusy, needID: "couch-water")))
         XCTAssertEqual(busy.0, "Holding the whisper · hands busy")
         XCTAssertEqual(busy.1, .neutral)
+
+        let partnerHold = try XCTUnwrap(mapped(event(.cueDeferredPartnerCheck, needID: "couch-water")))
+        XCTAssertEqual(partnerHold.0, "Holding the whisper · she may have it")
+        XCTAssertEqual(partnerHold.1, .neutral)
 
         let extended = try XCTUnwrap(mapped(event(.headStartExtended, needID: "couch-water")))
         XCTAssertEqual(extended.0, "More time for you")

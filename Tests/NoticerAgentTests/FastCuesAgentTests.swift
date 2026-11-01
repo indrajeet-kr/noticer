@@ -109,6 +109,11 @@ final class FastCuesAgentTests: XCTestCase {
         XCTAssertTrue(prompt.contains("sustained_across_strip null"))
         XCTAssertFalse(prompt.contains("ride on any tool"))
         XCTAssertTrue(prompt.contains("Safety needs (marked urgent) latch on one clear keyframe."))
+        XCTAssertTrue(prompt.contains("already true in the older keyframe"))
+        XCTAssertTrue(prompt.contains("Do not wait for the problem to appear or for the scene to change."))
+        XCTAssertTrue(prompt.contains("something that should not be there"))
+        XCTAssertTrue(prompt.contains("Do not use this just because the two keyframes look the same"))
+        XCTAssertFalse(prompt.contains("report_no_transition: nothing changed."))
 
         // Only one place specifies `report_no_transition` rules (no conflicting second paragraph).
         let occurrences = prompt.components(separatedBy: "report_no_transition:").count - 1
@@ -239,6 +244,31 @@ final class FastCuesAgentTests: XCTestCase {
         XCTAssertEqual(parsedTrue.assessment.sustainedAcrossStrip, true)
         XCTAssertNil(parsedTrue.assessment.resolution)
         XCTAssertNil(parsedTrue.assessment.actionCode)
+    }
+
+    func testLatchToolAdmitsANeedAlreadyTrueInTheOlderKeyframe() throws {
+        let latch = try XCTUnwrap(ToolCatalog.definition(named: .latchNeedHypothesis))
+        let noChange = try XCTUnwrap(ToolCatalog.definition(named: .reportNoTransition))
+        XCTAssertTrue(latch.description.contains("already true in the older keyframe"))
+        XCTAssertTrue(noChange.description.contains("already visible is not this tool"))
+        XCTAssertFalse(noChange.description.contains("Nothing changed this turn"))
+
+        let glasses = Need(
+            id: "remove-empty-glasses",
+            authorText: "Remove the empty glasses from the dining table",
+            cueWording: "Clear the table a bit?",
+            visualCondition: "dining table surface visible with empty glasses sitting on it",
+            handledCondition: "dining table surface clear with no empty glasses on it",
+            selfNoticeSignal: "wearer_clearing_empty_glasses_from_table",
+            priority: 0
+        )
+        let text = ChatCompletionRequest.sceneText(ModelRequest(keyframes: [], needs: [glasses], openNeeds: [], purpose: .latch))
+        XCTAssertTrue(text.contains("visual_condition=\(glasses.visualCondition!)"))
+        XCTAssertTrue(text.contains("need_id=remove-empty-glasses"))
+        // Scene checks stay on minimal reasoning in the phone seam. The
+        // configuration still accepts that value and does not raise it.
+        XCTAssertTrue(MuseSparkConfiguration.allowedReasoningEfforts.contains("minimal"))
+        XCTAssertEqual(MuseSparkConfiguration(reasoningEffort: "minimal").reasoningEffort, "minimal")
     }
 
     func testDeveloperPromptWearerRuleMatchesPlan() {
