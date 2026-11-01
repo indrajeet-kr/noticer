@@ -11,9 +11,27 @@ import Speech
 /// session runs, the mic falls back to focusing the keyboard.
 @MainActor
 protocol SpeechTranscribing: AnyObject {
-    func requestPermissions() async -> Bool
+    func requestPermissions() async -> DictationPermissions
     func start(onPartial: @escaping @Sendable (String, Bool) -> Void) throws
     func stop()
+}
+
+/// Microphone / speech-recognition authorization, as words for the log.
+enum DictationPermission: String, Sendable {
+    case authorized
+    case denied
+    case restricted
+    case undetermined
+}
+
+struct DictationPermissions: Sendable, Equatable {
+    var mic: DictationPermission
+    var speech: DictationPermission
+
+    /// The audio engine and the recognizer start only when both are granted.
+    var allAuthorized: Bool {
+        mic == .authorized && speech == .authorized
+    }
 }
 
 @MainActor
@@ -29,6 +47,9 @@ final class DictationService {
     var sessionRunning = false
     /// Set by the host to log speech notices (failures, fallbacks).
     var noteHandler: ((String) -> Void)?
+    /// Set by the host to log voice-input taps, permission answers, and
+    /// failures as tagged activity lines.
+    var logHandler: ((String, String) -> Void)?
 
     static let silenceTimeout: Duration = .seconds(2)
     static let noticeDuration: Duration = .seconds(4)
@@ -50,12 +71,19 @@ final class DictationService {
             stop()
             return true
         }
+        log("UI", "voice-input tapped")
         guard !sessionRunning else {
             postNotice("Voice typing is off during a session")
             return false
         }
-        guard await transcriber.requestPermissions() else {
-            postNotice("Voice typing needs microphone and speech recognition access. You can turn them on in Settings.")
+        let permissions = await transcriber.requestPermissions()
+        log("APP", "permission mic=\(permissions.mic.rawValue) speech=\(permissions.speech.rawValue)")
+        guard permissions.allAuthorized else {
+            postNotice("Mic is off. You can type instead.")
+            log(
+                "ERROR",
+                "voice-input permission mic=\(permissions.mic.rawValue) speech=\(permissions.speech.rawValue)"
+            )
             return false
         }
         do {
@@ -70,6 +98,7 @@ final class DictationService {
             return true
         } catch {
             postNotice("Voice typing isn't available right now.")
+            log("ERROR", "voice-input unavailable")
             return false
         }
     }
@@ -101,6 +130,10 @@ final class DictationService {
         }
     }
 
+    private func log(_ tag: String, _ message: String) {
+        logHandler?(tag, message)
+    }
+
     private func postNotice(_ text: String) {
         notice = text
         noteHandler?(text)
@@ -128,11 +161,58 @@ final class LiveSpeechTranscriber: SpeechTranscribing {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
 
-    func requestPermissions() async -> Bool {
-        guard await Self.microphoneAuthorization(), await Self.speechAuthorization() else {
-            return false
+    func requestPermissions() async -> DictationPermissions {
+        DictationPermissions(mic: await Self.microphonePermission(), speech: await Self.speechPermission())
+    }
+
+    /// Current answer without prompting when decided; prompts once when
+    /// undetermined. Never prompts twice for the same tap.
+    nonisolated static func microphonePermission(
+        current: () -> AVAudioSession.RecordPermission = { AVAudioSession.sharedInstance().recordPermission },
+        request: (@escaping (Bool) -> Void) -> Void = AVAudioApplication.requestRecordPermission
+    ) async -> DictationPermission {
+        switch current() {
+        case .granted:
+            return .authorized
+        case .denied:
+            return .denied
+        case .undetermined:
+            return await microphoneAuthorization(request: request) ? .authorized : .denied
+        @unknown default:
+            return .denied
         }
-        return recognizer?.isAvailable ?? false
+    }
+
+    nonisolated static func speechPermission(
+        current: () -> SFSpeechRecognizerAuthorizationStatus = { SFSpeechRecognizer.authorizationStatus() },
+        request: (@escaping (SFSpeechRecognizerAuthorizationStatus) -> Void) -> Void = SFSpeechRecognizer.requestAuthorization
+    ) async -> DictationPermission {
+        switch current() {
+        case .authorized:
+            return .authorized
+        case .denied:
+            return .denied
+        case .restricted:
+            return .restricted
+        case .notDetermined:
+            let status: SFSpeechRecognizerAuthorizationStatus = await withCheckedContinuation { continuation in
+                request { status in
+                    continuation.resume(returning: status)
+                }
+            }
+            switch status {
+            case .authorized:
+                return .authorized
+            case .restricted:
+                return .restricted
+            case .denied, .notDetermined:
+                return .denied
+            @unknown default:
+                return .denied
+            }
+        @unknown default:
+            return .denied
+        }
     }
 
     /// The authorization callbacks arrive on background queues (TCC reply),
@@ -163,6 +243,13 @@ final class LiveSpeechTranscriber: SpeechTranscribing {
         guard let recognizer, recognizer.isAvailable else {
             throw DictationError.unavailable
         }
+        // Second gate behind toggle(): the engine and the recognizer never
+        // start without authorization. Reads only; never prompts here.
+        guard AVAudioSession.sharedInstance().recordPermission == .granted,
+              SFSpeechRecognizer.authorizationStatus() == .authorized
+        else {
+            throw DictationError.unavailable
+        }
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement)
         try session.setActive(true)
@@ -173,7 +260,15 @@ final class LiveSpeechTranscriber: SpeechTranscribing {
 
         let engine = AVAudioEngine()
         let input = engine.inputNode
-        input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in
+        input.removeTap(onBus: 0)
+        let format = input.outputFormat(forBus: 0)
+        // A tap on a zero-rate format traps (the input route is not up yet
+        // on first activation). Refuse instead of crashing.
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            try? session.setActive(false, options: .notifyOthersOnDeactivation)
+            throw DictationError.unavailable
+        }
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
             request.append(buffer)
         }
         self.request = request

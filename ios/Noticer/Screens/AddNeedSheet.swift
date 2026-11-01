@@ -88,6 +88,9 @@ struct AddNeedSheet: View {
             dictation.noteHandler = { [model] notice in
                 model.sessionLog.appendActivity("ERROR", "speech \(notice)")
             }
+            dictation.logHandler = { [model] tag, message in
+                model.sessionLog.appendActivity(tag, message)
+            }
             model.sessionLog.appendActivity("UI", "add-sheet opened")
         }
         .onDisappear {

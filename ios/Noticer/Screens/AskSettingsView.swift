@@ -53,6 +53,9 @@ struct AskSettingsView: View {
             dictation.noteHandler = { [model] notice in
                 model.sessionLog.appendActivity("ERROR", "speech \(notice)")
             }
+            dictation.logHandler = { [model] tag, message in
+                model.sessionLog.appendActivity(tag, message)
+            }
         }
         .onDisappear { dictation.stop() }
         .onChange(of: night) { old, new in

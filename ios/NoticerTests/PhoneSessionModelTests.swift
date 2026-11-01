@@ -346,6 +346,47 @@ final class PhoneSessionModelTests: XCTestCase {
     }
 
     @MainActor
+    func testStartResetsTonightToTheCurrentEvening() {
+        let model = PhoneSessionModel()
+        model.mode = .replay
+        model.selectedReplayID = "missing"
+        let now = Date()
+        let old = Calendar.current.date(byAdding: .day, value: -3, to: now)!
+        model.moments = [
+            SessionMoment(at: old, needID: "take-baby", kind: .cued, text: "old"),
+            SessionMoment(at: now, needID: "take-baby", kind: .cued, text: "now"),
+        ]
+
+        model.start()
+
+        XCTAssertEqual(model.moments.map(\.text), ["now"])
+        XCTAssertTrue(
+            model.sessionLog.activity.contains {
+                $0.tag == "TONIGHT" && $0.message.hasPrefix("reset dropped=1 before=")
+            },
+            "start must log the reset"
+        )
+        model.stop()
+    }
+
+    @MainActor
+    func testStopDoesNotChangeTonight() {
+        let model = PhoneSessionModel()
+        model.mode = .replay
+        model.selectedReplayID = "missing"
+        model.start()
+        let old = Calendar.current.date(byAdding: .day, value: -3, to: Date())!
+        model.moments = [
+            SessionMoment(at: old, needID: "take-baby", kind: .cued, text: "old"),
+        ]
+        let before = model.moments
+
+        model.stop()
+
+        XCTAssertEqual(model.moments, before, "Stop must leave Tonight identical")
+    }
+
+    @MainActor
     func testResetLearningProgressLogsSettingsLine() {
         let model = PhoneSessionModel()
         model.needs = stubNeeds()

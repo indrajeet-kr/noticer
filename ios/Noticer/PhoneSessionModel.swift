@@ -526,10 +526,34 @@ final class PhoneSessionModel {
         DemoIdleTimer.setDisabled(disabled)
     }
 
+    /// Drops Tonight entries from before the current evening (noon to
+    /// noon). Runs on launch and on start; never on stop, so Tonight stays
+    /// identical across Stop.
+    func resetTonightIfNeeded(now: Date = Date()) {
+        let reset = TonightReset.reset(moments, at: \.at, now: now)
+        guard reset.dropped > 0 else {
+            return
+        }
+        moments = reset.kept
+        SessionMomentsStore.save(moments)
+        sessionLog.appendActivity(
+            "TONIGHT",
+            "reset dropped=\(reset.dropped) before=\(Self.shortTime(TonightReset.eveningStart(now: now)))"
+        )
+    }
+
+    private static func shortTime(_ date: Date) -> String {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
+    }
+
     func start() {
         guard loop == nil else {
             return
         }
+        resetTonightIfNeeded()
         runError = nil
         framesSeen = 0
         framesPassed = 0

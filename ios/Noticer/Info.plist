@@ -57,9 +57,9 @@
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Noticer can use the local network when the glasses stream video over Wi-Fi.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Noticer uses the iPhone microphone only while you hold the mic button to type her needs by voice.</string>
+	<string>Noticer listens when you tap the mic so she can say a need instead of typing it.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
-	<string>Your words are turned into text on this iPhone when possible.</string>
+	<string>Noticer turns what she says into her list of needs.</string>
 	<key>NSBonjourServices</key>
 	<array>
 		<string>_bonjour._tcp</string>
@@ -80,7 +80,7 @@
 		local network, and Bonjour. The GitHub getting-started skill also lists
 		bluetooth-peripheral and external-accessory / com.meta.ar.wearable.
 		Hotspot Configuration is documented for Wi-Fi streaming and is omitted so a
-		free Personal Team can sign. There is no microphone usage string.
+		free Personal Team can sign.
 		`audio` lets a whisper finish if the phone locks. It does not open the mic.
 		TODO(verify): ClientToken 0. The iOS skill says Developer Mode may use MetaAppID 0.
 		Android says both ids may be 0. Confirm ClientToken 0 on iOS 1.0.1.
