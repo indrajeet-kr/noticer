@@ -3,8 +3,6 @@ import NoticerCore
 import NoticerPipeline
 import XCTest
 
-@testable import Noticer
-
 /// Latest-session "tonight": only the most recent session shows, legacy
 /// moments without an id use the day/window fallback, and rows render one
 /// current wording per need.
