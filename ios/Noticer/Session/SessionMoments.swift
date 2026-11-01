@@ -5,6 +5,21 @@ import NoticerCore
 /// or a cue helped. Stored on the phone only.
 struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
+        /// Legacy "noticed" rows migrate to selfNotice. Unknown values
+        /// throw so the row-level catch skips just that row.
+        init(from decoder: Decoder) throws {
+            let container = try decoder.singleValueContainer()
+            let raw = try container.decode(String.self)
+            if raw == "noticed" {
+                self = .selfNotice
+                return
+            }
+            guard let known = Self(rawValue: raw) else {
+                throw DecodingError.dataCorruptedError(in: container, debugDescription: "unknown moment kind")
+            }
+            self = known
+        }
+
         /// Completed before any cue in its episode, or completed outside
         /// any episode. The only unprompted kind.
         case selfNotice
@@ -56,9 +71,35 @@ struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
     }
 }
 
+/// One stored row, good or bad. Decoding never throws: a bad row
+/// keeps its short reason so the load can log and skip it.
+private struct FailableMoment: Decodable {
+    var moment: SessionMoment?
+    var reason: String
+
+    init(from decoder: Decoder) throws {
+        do {
+            moment = try SessionMoment(from: decoder)
+            reason = "decode"
+        } catch let error as DecodingError {
+            moment = nil
+            switch error {
+            case .dataCorrupted: reason = "corrupt"
+            case .keyNotFound: reason = "key"
+            case .typeMismatch: reason = "type"
+            case .valueNotFound: reason = "value"
+            @unknown default: reason = "decode"
+            }
+        } catch {
+            moment = nil
+            reason = "decode"
+        }
+    }
+}
+
 /// Tonight's wins, kept on the phone. Old days are dropped on load.
 enum SessionMomentsStore {
-    private static let key = "noticer.moments.v1"
+    static let key = "noticer.moments.v1"
     private static let sessionKey = "noticer.session.v1"
     private static let cap = 200
     /// Legacy moments join the latest session when they fall on its day
@@ -93,10 +134,24 @@ enum SessionMomentsStore {
 
     /// Recent moments across days, newest last, capped. Views pick the
     /// latest session out of these; see `latestSessionMoments(from:)`.
-    static func loadRecent(defaults: UserDefaults = .standard) -> [SessionMoment] {
+    /// Loads row by row: one bad row logs `decode-skip` and the rest
+    /// still load. `log` takes the line without its TONIGHT tag.
+    static func loadRecent(
+        defaults: UserDefaults = .standard,
+        log: ((String) -> Void)? = nil
+    ) -> [SessionMoment] {
         guard let data = defaults.data(forKey: key),
-              let moments = try? JSONDecoder().decode([SessionMoment].self, from: data) else {
+              let rows = try? JSONDecoder().decode([FailableMoment].self, from: data) else {
             return []
+        }
+        var moments: [SessionMoment] = []
+        moments.reserveCapacity(rows.count)
+        for (index, row) in rows.enumerated() {
+            if let moment = row.moment {
+                moments.append(moment)
+            } else {
+                log?("decode-skip index=\(index) reason=\(row.reason)")
+            }
         }
         return Array(moments.suffix(cap))
     }

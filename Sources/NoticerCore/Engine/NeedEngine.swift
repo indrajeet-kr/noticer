@@ -42,6 +42,7 @@ public struct NeedEngine<TimeSource: Clock> {
         case expired
         case stopped
         case removed
+        case gated
     }
 
     private struct TrackedNeed {
@@ -193,10 +194,10 @@ public struct NeedEngine<TimeSource: Clock> {
     /// a readable frame clears the streak.
     private var darkStreak = 0
     private var darkStreakLogged = false
-    /// Episode counter. `e1`, `e2`, … in latch order.
-    private var nextEpisodeNumber = 1
-    /// Last closed episode per need, so the closing event still carries it.
-    private var lastClosedEpisodeID: [String: String] = [:]
+    /// Episodes are UUIDs, unique across engines and sessions.
+    /// The episode of the close in progress, alive only for the close's
+    /// own record call. No-episode paths never see a stale id.
+    private var closingEpisode: (needID: String, episodeID: String)?
     /// Wearer actions started outside any episode, awaiting their handled
     /// state. Arming is not credit; only completion credits.
     private var unpromptedPending: [String: UnpromptedStart] = [:]
@@ -572,7 +573,13 @@ public struct NeedEngine<TimeSource: Clock> {
         // Completion counts only with every part handled. The start stays
         // armed; a later verdict can still complete it.
         if CompoundParts.isCompound(need),
-           !CompoundParts.allHandled(need: need, tokens: assessment.partnerStateEvidence) {
+           !CompoundParts.allHandled(
+               need: need,
+               tokens: assessment.partnerStateEvidence,
+               onUnknownToken: { token in
+                   record(.partTokenUnknown, needID: needID, detail: "token=\(token)")
+               }
+           ) {
             record(.stillOpen, needID: needID, detail: "partial")
             return
         }
@@ -1463,6 +1470,19 @@ public struct NeedEngine<TimeSource: Clock> {
         text.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 }
     }
 
+    /// The one compound gate every wearer or partner close goes through.
+    /// A partial compound need stays open (`stillOpen partial`) with any
+    /// pending action still armed: no close, no credit, no mastery change.
+    private mutating func compoundCloseBlocked(need: Need, tokens: [String]?) -> Bool {
+        guard CompoundParts.isCompound(need),
+              !CompoundParts.allHandled(need: need, tokens: tokens, onUnknownToken: { [needID = need.id] token in
+                  record(.partTokenUnknown, needID: needID, detail: "token=\(token)")
+              })
+        else { return false }
+        record(.stillOpen, needID: need.id, detail: "partial")
+        return true
+    }
+
     /// The one place a wearer credit lands. Help after a cue earns zero
     /// self-notice increment (the cue already penalized); only help
     /// before any cue steps mastery up. Either way the episode closes
@@ -1495,13 +1515,7 @@ public struct NeedEngine<TimeSource: Clock> {
         guard let need = catalog.need(id: needID) else { return }
         guard let index = indexOfOpen(needID) else { return }
         let assessment = verdict.assessment
-        // A compound need resolves only with every part handled. One part
-        // fixed is still open, not complete, whoever fixed it.
-        if CompoundParts.isCompound(need),
-           !CompoundParts.allHandled(need: need, tokens: assessment.partnerStateEvidence) {
-            record(.stillOpen, needID: needID, detail: "partial")
-            return
-        }
+        if compoundCloseBlocked(need: need, tokens: assessment.partnerStateEvidence) { return }
         // A resolved verdict that still sees her keeps the handoff on record
         // even when she closes it.
         if assessment.resolution == .resolvedByPartner, assessment.partnerInView == true {
@@ -1645,11 +1659,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
         if !latency.strictCredit && assessment.resolution == .resolvedByPartner {
             guard indexOfOpen(needID) != nil else { return }
-            if CompoundParts.isCompound(need),
-               !CompoundParts.allHandled(need: need, tokens: assessment.partnerStateEvidence) {
-                record(.stillOpen, needID: needID, detail: "partial")
-                return
-            }
+            if compoundCloseBlocked(need: need, tokens: assessment.partnerStateEvidence) { return }
             close(needID, now: now, cooldown: true)
             record(.resolvedByOther, needID: needID, detail: verdict.tool.rawValue)
             return
@@ -1685,6 +1695,7 @@ public struct NeedEngine<TimeSource: Clock> {
                 && assessment.sustainedAcrossStrip == false
 
             if hadPending && clearedByIntervention {
+                if compoundCloseBlocked(need: need, tokens: assessment.partnerStateEvidence) { return }
                 creditWearer(at: index, detail: pendingAction, now: now)
                 return
             }
@@ -1728,6 +1739,7 @@ public struct NeedEngine<TimeSource: Clock> {
         let wearerAction = MasteryMath.isWearerAction(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal)
 
         if hadPending && cleared {
+            if compoundCloseBlocked(need: need, tokens: assessment.partnerStateEvidence) { return }
             creditWearer(at: index, detail: pendingAction, now: now)
             return
         }
@@ -1925,12 +1937,16 @@ public struct NeedEngine<TimeSource: Clock> {
 
     /// The one place confirm state clears. A late reply for an in-flight
     /// attempt drops once its sighting is gone.
-    private mutating func finishConfirm(needID: String, outcome: ConfirmOutcome) {
+    private mutating func finishConfirm(needID: String, outcome: ConfirmOutcome, reason: String? = nil) {
         guard pendingConfirms.removeValue(forKey: needID) != nil else { return }
         for call in pendingModelCalls where call.purpose == .confirm && call.request.focusNeedID == needID {
             abandonInFlightCall(id: call.id)
         }
-        record(.confirmEnded, needID: needID, detail: "outcome=\(outcome.rawValue)")
+        var detail = "outcome=\(outcome.rawValue)"
+        if let reason {
+            detail += " reason=\(reason)"
+        }
+        record(.confirmEnded, needID: needID, detail: detail)
     }
 
     /// An inconclusive attempt schedules the next one inside the caps, or
@@ -1980,7 +1996,15 @@ public struct NeedEngine<TimeSource: Clock> {
             if finishLatch(needID: needID, assessment: assessment, callKeyframes: strip, now: now) {
                 return
             }
-            finishConfirm(needID: needID, outcome: .exhausted)
+            // The evidence confirmed but a latch gate refused: the last
+            // latchRejected line names it. No recorded gate keeps the old
+            // outcome.
+            let gate = events.last { $0.kind == .latchRejected && $0.needID == needID }?.detail
+            if let gate {
+                finishConfirm(needID: needID, outcome: .gated, reason: gate)
+            } else {
+                finishConfirm(needID: needID, outcome: .exhausted)
+            }
             return
         }
         // Cites only the old sources with an unmet anchor: looks
@@ -2010,8 +2034,7 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         let headStart = MasteryMath.headStartSeconds(for: need, timing: timing, latency: latency)
         let choreID = freshChoreID(now: now)
-        let episodeID = "e\(nextEpisodeNumber)"
-        nextEpisodeNumber += 1
+        let episodeID = UUID().uuidString
         unpromptedPending.removeValue(forKey: needID)
         tracked.append(
             TrackedNeed(
@@ -2108,7 +2131,7 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private mutating func close(_ id: String, now: Date, cooldown: Bool) {
         if let episodeID = tracked.first(where: { $0.needID == id })?.episodeID {
-            lastClosedEpisodeID[id] = episodeID
+            closingEpisode = (needID: id, episodeID: episodeID)
         }
         tracked.removeAll { $0.needID == id }
         if cooldown {
@@ -2124,16 +2147,23 @@ public struct NeedEngine<TimeSource: Clock> {
             detail: detail,
             episodeID: episodeID(for: kind, needID: needID)
         ))
+        closingEpisode = nil
     }
 
     /// The five latch-scoped kinds carry the open episode, or the
-    /// just-closed one: every `close` stashes its id first, and these
-    /// events only fire while open or at the close.
+    /// closing one for the close's own record call. Anything later,
+    /// including no-episode paths, carries nil.
     private func episodeID(for kind: EngineEventKind, needID: String?) -> String? {
         switch kind {
         case .cueFired, .caughtHimself, .resolvedByOther, .closedUnknown, .stillOpen:
             guard let needID else { return nil }
-            return tracked.first { $0.needID == needID }?.episodeID ?? lastClosedEpisodeID[needID]
+            if let open = tracked.first(where: { $0.needID == needID })?.episodeID {
+                return open
+            }
+            if closingEpisode?.needID == needID {
+                return closingEpisode?.episodeID
+            }
+            return nil
         default:
             return nil
         }

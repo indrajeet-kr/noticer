@@ -31,6 +31,9 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
     /// Safety needs cue immediately with zero head start and latch on one clear keyframe.
     public var isUrgent: Bool
     public var mastery: MasteryState
+    /// Stable part ids for a compound need. Nil on old saved rows, which
+    /// derive them from the AND/OR split when they load.
+    public var parts: [NeedPart]?
 
     public init(
         id: String,
@@ -45,7 +48,8 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         allowsCheckIn: Bool = false,
         isUrgent: Bool = false,
         mastery: MasteryState = .initial,
-        uiID: UUID = UUID()
+        uiID: UUID = UUID(),
+        parts: [NeedPart]? = nil
     ) {
         self.id = id
         self.uiID = uiID
@@ -60,10 +64,18 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         self.allowsCheckIn = allowsCheckIn
         self.isUrgent = isUrgent
         self.mastery = mastery
+        self.parts = parts
+    }
+
+    /// Stored part ids, or derived from the AND/OR split for old rows.
+    /// Non-compound needs have no parts.
+    public var resolvedParts: [NeedPart] {
+        parts ?? CompoundParts.derivedParts(for: self)
     }
 
     /// Equality is the need the engine stores. `uiID` is only how the editor
-    /// tells rows apart while a UUID slug is being renamed.
+    /// tells rows apart while a UUID slug is being renamed. `parts` is
+    /// excluded: it derives from the conditions, which are compared.
     public static func == (lhs: Need, rhs: Need) -> Bool {
         lhs.id == rhs.id
             && lhs.authorText == rhs.authorText
@@ -93,6 +105,7 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         case allowsCheckIn = "allows_check_in"
         case isUrgent = "is_urgent"
         case mastery
+        case parts
     }
 
     public init(from decoder: Decoder) throws {
@@ -110,6 +123,14 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
         allowsCheckIn = try container.decodeIfPresent(Bool.self, forKey: .allowsCheckIn) ?? false
         isUrgent = try container.decodeIfPresent(Bool.self, forKey: .isUrgent) ?? false
         mastery = try container.decodeIfPresent(MasteryState.self, forKey: .mastery) ?? .initial
+        parts = try container.decodeIfPresent([NeedPart].self, forKey: .parts)
+        if parts == nil, CompoundParts.isCompoundConditions(unknownCondition: unknownCondition) {
+            parts = CompoundParts.derivedParts(
+                handledCondition: handledCondition,
+                visualCondition: visualCondition,
+                unknownCondition: unknownCondition
+            )
+        }
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -129,6 +150,22 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
             try container.encode(isUrgent, forKey: .isUrgent)
         }
         try container.encode(mastery, forKey: .mastery)
+        try container.encodeIfPresent(parts, forKey: .parts)
+    }
+}
+
+/// One watchable part of a compound need: a stable short id plus the
+/// part's handled and unmet condition texts, paired by position from
+/// the AND/OR split.
+public struct NeedPart: Equatable, Sendable, Codable {
+    public var id: String
+    public var handled: String
+    public var unmet: String
+
+    public init(id: String, handled: String, unmet: String) {
+        self.id = id
+        self.handled = handled
+        self.unmet = unmet
     }
 }
 
@@ -140,22 +177,140 @@ public struct Need: Equatable, Sendable, Codable, Identifiable {
 /// the distinguishing word (open vs closed, outside vs in) decides.
 public enum CompoundParts {
     public static func isCompound(_ need: Need) -> Bool {
-        need.unknownCondition?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+        isCompoundConditions(unknownCondition: need.unknownCondition)
     }
 
-    /// Every handled part matched, no part unknown, no part still unmet.
-    /// Non-compound needs always pass; callers gate on `isCompound`.
-    public static func allHandled(need: Need, tokens: [String]?) -> Bool {
+    public static func isCompoundConditions(unknownCondition: String?) -> Bool {
+        unknownCondition?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
+    }
+
+    /// Part ids for a need saved without them: the first significant word
+    /// of each handled part, except the part the unknown condition talks
+    /// about, which takes the unknown condition's first word. Short,
+    /// snake_case, and stable for the saved conditions.
+    public static func derivedParts(for need: Need) -> [NeedPart] {
+        derivedParts(
+            handledCondition: need.handledCondition,
+            visualCondition: need.visualCondition,
+            unknownCondition: need.unknownCondition
+        )
+    }
+
+    public static func derivedParts(
+        handledCondition: String?,
+        visualCondition: String?,
+        unknownCondition: String?
+    ) -> [NeedPart] {
+        let handled = handledParts(handledCondition ?? "")
+        guard !handled.isEmpty else { return [] }
+        let unmet = unmetParts(visualCondition ?? "")
+        let unknownWords = contentWords(unknownCondition ?? "")
+        let unknownID = firstSignificantWord(unknownCondition ?? "")
+        var used: Set<String> = []
+        var claimedUnknown = false
+        return handled.enumerated().map { index, handledText in
+            let unmetText = index < unmet.count ? unmet[index] : ""
+            var id = firstSignificantWord(handledText) ?? "part\(index + 1)"
+            if !claimedUnknown,
+               let unknownID,
+               !used.contains(unknownID),
+               !contentWords(handledText).union(contentWords(unmetText)).isDisjoint(with: unknownWords) {
+                id = unknownID
+                claimedUnknown = true
+            }
+            if used.contains(id) {
+                var counter = 2
+                while used.contains("\(id)_\(counter)") { counter += 1 }
+                id = "\(id)_\(counter)"
+            }
+            used.insert(id)
+            return NeedPart(id: id, handled: handledText, unmet: unmetText)
+        }
+    }
+
+    /// Every part handled. Part-id tokens (`<id>_handled`, `<id>_unmet`,
+    /// `<id>_unknown`) decide when any is present: complete only when
+    /// every part is `_handled` and none is `_unmet` or `_unknown`.
+    /// Otherwise today's word matching applies. Any token that is neither
+    /// a part-id token nor matched by the word fallback is reported via
+    /// `onUnknownToken`. Non-compound needs always pass.
+    public static func allHandled(
+        need: Need,
+        tokens: [String]?,
+        onUnknownToken: (String) -> Void = { _ in }
+    ) -> Bool {
         guard isCompound(need) else { return true }
         guard let tokens else { return false }
+        let handled = handledParts(need.handledCondition ?? "").map(words)
+        let unmet = unmetParts(need.visualCondition ?? "").map(words)
+        func fallbackMatched(_ token: String) -> Bool {
+            let tokenSet = words(token)
+            guard !tokenSet.isEmpty else { return false }
+            return handled.contains { tokenSet.isSubset(of: $0) }
+                || unmet.contains { tokenSet.isSubset(of: $0) }
+        }
+        let ids = Set(need.resolvedParts.map(\.id))
+        func partState(of token: String) -> (id: String, state: String)? {
+            for id in ids where token.hasPrefix(id + "_") {
+                let state = String(token.dropFirst(id.count + 1))
+                if state == "handled" || state == "unmet" || state == "unknown" {
+                    return (id, state)
+                }
+            }
+            return nil
+        }
+        if tokens.contains(where: { partState(of: $0) != nil }) {
+            var statesByID: [String: Set<String>] = [:]
+            for token in tokens {
+                if let (id, state) = partState(of: token) {
+                    statesByID[id, default: []].insert(state)
+                } else if !fallbackMatched(token) {
+                    onUnknownToken(token)
+                }
+            }
+            return ids.allSatisfy { statesByID[$0] == ["handled"] }
+        }
+        for token in tokens where !fallbackMatched(token) {
+            onUnknownToken(token)
+        }
         let tokenWords = tokens.map(words).filter { !$0.isEmpty }
         guard !tokenWords.isEmpty else { return false }
         if tokenWords.contains(where: { $0.contains("unknown") }) { return false }
-        let unmet = unmetParts(need.visualCondition ?? "").map(words)
         if tokenWords.contains(where: { token in unmet.contains { token.isSubset(of: $0) } }) { return false }
-        let handled = handledParts(need.handledCondition ?? "").map(words)
         return handled.allSatisfy { part in tokenWords.contains { $0.isSubset(of: part) } }
     }
+
+    /// `lid:handled|unmet,placement:handled|unmet|unknown`: the reportable
+    /// states per part. Parts the unknown condition touches may also be
+    /// unknown.
+    public static func partsSpec(parts: [NeedPart], unknownCondition: String) -> String {
+        let unknownWords = contentWords(unknownCondition)
+        return parts.map { part in
+            var states = ["handled", "unmet"]
+            let partWords = contentWords(part.handled).union(contentWords(part.unmet))
+            if !partWords.isDisjoint(with: unknownWords) {
+                states.append("unknown")
+            }
+            return "\(part.id):\(states.joined(separator: "|"))"
+        }.joined(separator: ",")
+    }
+
+    /// Words carrying meaning: lowercased alphanumerics without fillers.
+    public static func contentWords(_ text: String) -> Set<String> {
+        words(text).subtracting(stopwords)
+    }
+
+    public static func firstSignificantWord(_ text: String) -> String? {
+        let ordered = text.lowercased().split { !$0.isLetter && !$0.isNumber }.map(String.init)
+        return ordered.first { !stopwords.contains($0) } ?? ordered.first
+    }
+
+    private static let stopwords: Set<String> = [
+        "a", "an", "the", "is", "are", "was", "were", "be", "been", "being",
+        "cannot", "can", "could", "in", "on", "of", "to", "and", "or", "out",
+        "when", "it", "its", "as", "for", "with", "by", "from", "that", "this",
+        "not", "no", "any",
+    ]
 
     /// A saved compound request with an old single-part condition gets an
     /// offer, not a silent rewrite. Nil for single needs, already-compound

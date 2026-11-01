@@ -171,12 +171,14 @@ final class EvidenceFieldsTests: XCTestCase {
         let singleText = ChatCompletionRequest.sceneText(ModelRequest(keyframes: [], needs: [single]))
         XCTAssertFalse(singleText.contains("handled_when="))
         XCTAssertFalse(singleText.contains("unknown_when="))
+        XCTAssertFalse(singleText.contains("parts="))
 
         let compoundText = ChatCompletionRequest.sceneText(ModelRequest(keyframes: [], needs: [compound]))
         XCTAssertTrue(compoundText.contains("handled_when=lid closed AND can in the designated corner"))
         XCTAssertTrue(compoundText.contains(
             "unknown_when=placement cannot be judged when the corner is out of view"
         ))
+        XCTAssertTrue(compoundText.contains("parts=lid:handled|unmet,placement:handled|unmet|unknown"))
     }
 
     // MARK: - Prompt
@@ -194,6 +196,9 @@ final class EvidenceFieldsTests: XCTestCase {
         XCTAssertTrue(prompt.contains(
             "Urgent: latch from one frame when it is at most 2.5 s old, newest_anchor_state is unmet, confidence at least 0.75."
         ))
-        XCTAssertTrue(prompt.contains("report each part in partner_state_evidence"))
+        XCTAssertTrue(prompt.contains(
+            "report each part as `<part_id>_handled`, `<part_id>_unmet` or `<part_id>_unknown`"
+        ))
+        XCTAssertTrue(prompt.contains("Use only the listed part ids."))
     }
 }

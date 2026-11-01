@@ -94,6 +94,10 @@ enum ChatCompletionRequest {
                         lines.append("handled_when=\(handled)")
                     }
                     lines.append("unknown_when=\(unknown)")
+                    let parts = need.resolvedParts
+                    if !parts.isEmpty {
+                        lines.append("parts=" + CompoundParts.partsSpec(parts: parts, unknownCondition: unknown))
+                    }
                 }
                 if let signal = need.selfNoticeSignal {
                     lines.append("self_notice_signal=\(signal)")

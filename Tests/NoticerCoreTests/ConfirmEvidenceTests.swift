@@ -227,6 +227,42 @@ final class ConfirmEvidenceTests: EngineTestCase {
 
     // MARK: - Clearing
 
+    func testConfirmedReplyInsideCooldownEndsGated() throws {
+        // Latch and close an episode so the relatch cooldown is running.
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+
+        advance(SessionLimits.heartbeatSeconds + 1)
+        see([mom()])
+        let close = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(
+            callID: close.id,
+            verdict: ModelVerdict(
+                finishReason: .toolCalls,
+                tool: .reportNeedResolved,
+                assessment: SceneAssessment(
+                    needID: "take-baby",
+                    sustainedAcrossStrip: false,
+                    resolution: .caughtHimself,
+                    confidence: 0.9
+                )
+            )
+        )
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+
+        // Past the repeat window but inside the 5-minute cooldown.
+        advance(EngineTuning.hypothesisRepeatWindowSeconds + 1)
+        try startSighting()
+        let confirm = try issueNextConfirm()
+        let newID = stripNewestID(confirm)
+        engine.handle(callID: confirm.id, verdict: confirmReply(evidence: [newID], anchor: .unmet))
+
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+        XCTAssertEqual(events(.confirmEnded).map(\.detail), ["outcome=gated reason=cooldown"])
+    }
+
     func testStopEndsTheSighting() throws {
         try startSighting()
         _ = try issueNextConfirm()

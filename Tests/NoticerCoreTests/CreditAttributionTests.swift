@@ -232,6 +232,46 @@ final class CreditAttributionTests: EngineTestCase {
         XCTAssertEqual(mastery(of: "take-baby"), MasteryMath.applySelfNotice(afterEpisode))
     }
 
+    func testNoEpisodeEventsCarryNilEpisodeIDsAfterClose() throws {
+        try engine.setNeeds([Self.takeBaby(selfNotice: signal), Self.refillWater()])
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
+        let close = try heartbeat()
+        engine.handle(callID: close.id, verdict: resolved(.caughtHimself, action: signal))
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+        XCTAssertNotNil(events(.caughtHimself).first?.episodeID, "the close keeps its episode")
+
+        // A completion with nothing open carries no episode.
+        let start = try nextIdleCall()
+        engine.handle(callID: start.id, verdict: intervention())
+        let finish = try nextIdleCall()
+        engine.handle(callID: finish.id, verdict: resolved(.caughtHimself, action: signal, confidence: 0.8))
+        let credits = events(.selfNoticedUnprompted)
+        XCTAssertEqual(credits.count, 1)
+        XCTAssertNil(credits.first?.episodeID)
+
+        // A start that never completes expires without an episode.
+        let restart = try nextIdleCall()
+        engine.handle(callID: restart.id, verdict: intervention())
+        advance(EngineTuning.unpromptedCompleteWindowSeconds + 1)
+        engine.tick()
+        let expiries = events(.unpromptedExpired)
+        XCTAssertEqual(expiries.map(\.detail), ["reason=not-completed"])
+        XCTAssertNil(expiries.first?.episodeID)
+
+        // Her close with nothing open carries no episode. The long idle
+        // expired the strip, so a glance pair rebuilds it first.
+        glancePair()
+        let herStart = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: herStart.id, verdict: intervention())
+        let herFinish = try nextIdleCall()
+        engine.handle(callID: herFinish.id, verdict: resolved(.resolvedByPartner))
+        let hers = events(.resolvedByOther)
+        XCTAssertEqual(hers.map(\.detail), ["no-episode"])
+        XCTAssertNil(hers.first?.episodeID)
+    }
+
     func testPartialResultUntilWindowEndExpiresWithoutCredit() throws {
         try engine.setNeeds([Self.takeBaby(selfNotice: signal), Self.refillWater()])
         glancePair()
