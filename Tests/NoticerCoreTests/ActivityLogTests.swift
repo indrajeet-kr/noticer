@@ -113,15 +113,16 @@ final class ActivityLogTests: XCTestCase {
 
     // MARK: - Buffer and persistence
 
-    func testBufferCapsAt2000AndCountsDrops() {
+    func testBufferCapsAt20000AndCountsDrops() {
+        XCTAssertEqual(ActivityBuffer.maxEntries, 20_000)
         var buffer = ActivityBuffer()
-        for index in 0..<2010 {
+        for index in 0..<20_010 {
             buffer.append(ActivityEvent(tag: "UI", message: "line \(index)"))
         }
-        XCTAssertEqual(buffer.entries.count, 2000)
+        XCTAssertEqual(buffer.entries.count, 20_000)
         XCTAssertEqual(buffer.droppedCount, 10)
         XCTAssertEqual(buffer.entries.first?.message, "line 10")
-        XCTAssertEqual(buffer.entries.last?.message, "line 2009")
+        XCTAssertEqual(buffer.entries.last?.message, "line 20009")
     }
 
     func testBufferMergesSavedEntriesAcrossRelaunch() throws {
@@ -142,6 +143,19 @@ final class ActivityLogTests: XCTestCase {
         XCTAssertEqual(buffer.entries.map(\.message), ["launch", "tab Tonight", "launch again"])
         XCTAssertEqual(buffer.droppedCount, 3)
         XCTAssertEqual(decoded.sessionCount, 7)
+    }
+
+    func testBufferTrimsToEightMBByDefault() throws {
+        XCTAssertEqual(ActivityBuffer.maxBytes, 8_000_000)
+        var buffer = ActivityBuffer()
+        for index in 0..<20_000 {
+            buffer.append(ActivityEvent(tag: "UI", message: String(repeating: "y", count: 500) + " \(index)"))
+        }
+        let trimmed = buffer.trimmed()
+        let bytes = try JSONEncoder().encode(trimmed).count
+        XCTAssertLessThanOrEqual(bytes, 8_000_000)
+        XCTAssertGreaterThan(trimmed.droppedCount, 0)
+        XCTAssertTrue(trimmed.entries.last?.message.hasSuffix(" 19999") == true)
     }
 
     func testBufferTrimsToByteCap() throws {

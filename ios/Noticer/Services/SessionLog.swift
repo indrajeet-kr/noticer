@@ -9,13 +9,16 @@ import UIKit
 /// macro's backing storage otherwise.
 @Observable
 final class SessionLog: @unchecked Sendable {
-    static let maxEntries = 600
+    static let maxEntries = 10_000
+    /// On-screen transcript lines. The full text still feeds Copy, Share,
+    /// and the saved file.
+    static let displayLineLimit = 1_500
 
     /// Rolling session transcript: newest `maxEntries` engine lines, oldest first.
     /// A new run starts with a fresh transcript.
     private(set) var entries: [ActivityEvent] = []
     private(set) var droppedCount = 0
-    /// App activity across launches: newest 2000 lines, oldest first.
+    /// App activity across launches: newest 20,000 lines, oldest first.
     /// Persisted on a background actor; never cleared by a new run.
     private(set) var activityBuffer = ActivityBuffer()
     private(set) var sessionCount = 0
@@ -45,6 +48,21 @@ final class SessionLog: @unchecked Sendable {
 
     var isEmpty: Bool {
         entries.isEmpty && activityBuffer.entries.isEmpty
+    }
+
+    /// Newest on-screen lines plus the full count. Over the limit the
+    /// note says so; Copy and Share still use the full `text`.
+    func displaySlice() -> LogDisplaySlice {
+        let full = text
+        let lines = full.components(separatedBy: "\n")
+        guard lines.count > Self.displayLineLimit else {
+            return LogDisplaySlice(text: full, totalLines: lines.count, note: nil)
+        }
+        return LogDisplaySlice(
+            text: lines.suffix(Self.displayLineLimit).joined(separator: "\n"),
+            totalLines: lines.count,
+            note: "Showing the last 1,500 of \(lines.count) lines. Share includes everything."
+        )
     }
 
     /// Header plus activity and session lines interleaved by time, redacted.
@@ -130,12 +148,44 @@ final class SessionLog: @unchecked Sendable {
     }
 }
 
+/// Newest on-screen transcript lines and the full line count.
+struct LogDisplaySlice {
+    var text: String
+    var totalLines: Int
+    var note: String?
+}
+
+/// One shareable run transcript: the same redacted text as a `.txt`
+/// file, so the share sheet attaches it instead of pasting it.
+enum SessionLogExport {
+    static let filePrefix = "noticer-log-"
+    static let fileExtension = "txt"
+
+    static func writeFile(text: String, date: Date = Date(), baseURL: URL? = nil) -> URL? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.dateFormat = "yyyyMMdd-HHmmss"
+        let name = "\(filePrefix)\(formatter.string(from: date)).\(fileExtension)"
+        let url = (baseURL ?? FileManager.default.temporaryDirectory).appendingPathComponent(name)
+        do {
+            try FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try text.write(to: url, atomically: true, encoding: .utf8)
+            return url
+        } catch {
+            return nil
+        }
+    }
+}
+
 /// Session transcripts saved at stop/end, newest first.
 enum SessionLogStore {
     static let folderName = "SessionLogs"
     static let filePrefix = "noticer-"
     static let fileExtension = "log"
-    static let maxFiles = 20
+    static let maxFiles = 50
 
     static func sessionURL(at date: Date = Date(), baseURL: URL? = nil) -> URL? {
         let formatter = DateFormatter()
@@ -151,6 +201,34 @@ enum SessionLogStore {
         return documents.appendingPathComponent(folderName).appendingPathComponent(name)
     }
 
+    /// Saved runs, newest first. Only `noticer-*.log` files; anything
+    /// else in the folder is ignored.
+    static func runs(baseURL: URL? = nil) -> [SavedRun] {
+        guard let folder = folder(baseURL: baseURL),
+              let files = try? FileManager.default.contentsOfDirectory(
+                  at: folder,
+                  includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+                  options: .skipsHiddenFiles
+              )
+        else {
+            return []
+        }
+        return files
+            .filter { $0.lastPathComponent.hasPrefix(filePrefix) && $0.pathExtension == fileExtension }
+            .sorted { $0.lastPathComponent > $1.lastPathComponent }
+            .map(SavedRun.init(url:))
+    }
+
+    private static func folder(baseURL: URL?) -> URL? {
+        if let baseURL {
+            return baseURL
+        }
+        guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
+            return nil
+        }
+        return documents.appendingPathComponent(folderName)
+    }
+
     static func save(_ text: String, at date: Date = Date(), baseURL: URL? = nil) {
         guard let url = sessionURL(at: date, baseURL: baseURL) else {
             return
@@ -164,16 +242,10 @@ enum SessionLogStore {
     }
 
     /// Deletes oldest `noticer-*.log` files past the cap. Test-visible so the
-    /// cap is pinned without waiting for 20 runs.
+    /// cap is pinned without waiting for 50 runs.
     static func prune(baseURL: URL? = nil, cap: Int = maxFiles) {
-        let folder: URL
-        if let baseURL {
-            folder = baseURL
-        } else {
-            guard let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first else {
-                return
-            }
-            folder = documents.appendingPathComponent(folderName)
+        guard let folder = folder(baseURL: baseURL) else {
+            return
         }
         guard let files = try? FileManager.default.contentsOfDirectory(
             at: folder,
@@ -193,6 +265,37 @@ enum SessionLogStore {
         for url in logs.prefix(logs.count - cap) {
             try? FileManager.default.removeItem(at: url)
         }
+    }
+}
+
+/// One saved run transcript: its file, run date, and byte size.
+struct SavedRun: Identifiable {
+    var url: URL
+
+    var id: URL { url }
+
+    /// Parsed from the `noticer-YYYYMMDD-HHmmss.log` name, else the file's
+    /// modification date.
+    var date: Date? {
+        let name = url.deletingPathExtension().lastPathComponent
+        if name.hasPrefix(SessionLogStore.filePrefix) {
+            let stamp = name.dropFirst(SessionLogStore.filePrefix.count)
+            let formatter = DateFormatter()
+            formatter.locale = Locale(identifier: "en_US_POSIX")
+            formatter.dateFormat = "yyyyMMdd-HHmmss"
+            if let parsed = formatter.date(from: String(stamp)) {
+                return parsed
+            }
+        }
+        return url.contentModificationDate
+    }
+
+    var size: Int {
+        (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+    }
+
+    init(url: URL) {
+        self.url = url
     }
 }
 

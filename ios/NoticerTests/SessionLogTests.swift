@@ -26,6 +26,7 @@ final class SessionLogTests: XCTestCase {
     }
 
     func testCapDropsOldest() {
+        XCTAssertEqual(SessionLog.maxEntries, 10_000)
         let log = SessionLog()
         for index in 1...SessionLog.maxEntries + 5 {
             log.append("T", "m\(index)")
@@ -60,7 +61,99 @@ final class SessionLogTests: XCTestCase {
             )
         }
         let files = try FileManager.default.contentsOfDirectory(atPath: base.path)
+        XCTAssertEqual(SessionLogStore.maxFiles, 50)
         XCTAssertEqual(files.filter { $0.hasPrefix("noticer-") }.count, SessionLogStore.maxFiles)
+    }
+
+    func testDisplaySliceShowsNewest1500WithTotal() {
+        let log = SessionLog()
+        for index in 1...2000 {
+            log.append("T", "m\(index)")
+        }
+        let slice = log.displaySlice()
+        XCTAssertEqual(slice.totalLines, log.text.components(separatedBy: "\n").count)
+        XCTAssertEqual(slice.text.components(separatedBy: "\n").count, 1_500)
+        XCTAssertTrue(slice.text.hasSuffix("[T] m2000"))
+        XCTAssertFalse(slice.text.contains("[T] m1\n"))
+        XCTAssertEqual(
+            slice.note,
+            "Showing the last 1,500 of \(slice.totalLines) lines. Share includes everything."
+        )
+    }
+
+    func testExportWritesNamedFileWithFullText() throws {
+        let log = SessionLog()
+        log.append("SESSION", "start mode=live", at: Date(timeIntervalSince1970: 1_700_000_000))
+        log.appendActivity("UI", "stop tapped", at: Date(timeIntervalSince1970: 1_700_000_001))
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("export-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let url = try XCTUnwrap(SessionLogExport.writeFile(text: log.text, date: Date(), baseURL: base))
+        XCTAssertEqual(url.pathExtension, "txt")
+        XCTAssertTrue(
+            url.lastPathComponent.range(of: #"^noticer-log-\d{8}-\d{6}\.txt$"#, options: .regularExpression) != nil,
+            url.lastPathComponent
+        )
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), log.text)
+    }
+
+    func testExportDefaultsToTemporaryDirectory() throws {
+        let url = try XCTUnwrap(SessionLogExport.writeFile(text: "hello", date: Date(), baseURL: nil))
+        defer { try? FileManager.default.removeItem(at: url) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(
+            url.deletingLastPathComponent().resolvingSymlinksInPath().path,
+            FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path
+        )
+    }
+
+    func testExportRedactsSecrets() throws {
+        let log = SessionLog()
+        log.append("MODEL", "api_key=sk-testfakekey1234567890", at: Date(timeIntervalSince1970: 1_700_000_000))
+        log.append("MODEL", "Authorization: Bearer abcdef123456", at: Date(timeIntervalSince1970: 1_700_000_001))
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("export-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        let url = try XCTUnwrap(SessionLogExport.writeFile(text: log.text, date: Date(), baseURL: base))
+        let content = try String(contentsOf: url, encoding: .utf8)
+        XCTAssertFalse(content.contains("sk-testfakekey"), content)
+        XCTAssertFalse(content.contains("abcdef123456"), content)
+        XCTAssertTrue(content.contains("[redacted]"), content)
+    }
+
+    func testDisplaySliceUnderLimitShowsEverything() {
+        let log = SessionLog()
+        log.append("T", "only")
+        let slice = log.displaySlice()
+        XCTAssertEqual(slice.text, log.text)
+        XCTAssertNil(slice.note)
+    }
+
+    func testRunsListsNewestFirstAndIgnoresOtherFiles() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("runs-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+        try FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        for name in ["noticer-20240101-120000.log", "noticer-20240103-120000.log", "noticer-20240102-120000.log"] {
+            try "body \(name)".write(to: base.appendingPathComponent(name), atomically: true, encoding: .utf8)
+        }
+        try "junk".write(to: base.appendingPathComponent("notes.txt"), atomically: true, encoding: .utf8)
+        try "junk".write(to: base.appendingPathComponent("other.log"), atomically: true, encoding: .utf8)
+        try "junk".write(to: base.appendingPathComponent("noticer-draft.txt"), atomically: true, encoding: .utf8)
+
+        let runs = SessionLogStore.runs(baseURL: base)
+        XCTAssertEqual(
+            runs.map(\.url.lastPathComponent),
+            ["noticer-20240103-120000.log", "noticer-20240102-120000.log", "noticer-20240101-120000.log"]
+        )
+        XCTAssertGreaterThan(runs.first?.size ?? 0, 0)
+        XCTAssertNotNil(runs.first?.date)
+    }
+
+    func testRunsOnMissingFolderIsEmpty() {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("runs-missing-\(UUID().uuidString)", isDirectory: true)
+        XCTAssertTrue(SessionLogStore.runs(baseURL: base).isEmpty)
     }
 
     func testActivityFileRoundTrips() throws {
