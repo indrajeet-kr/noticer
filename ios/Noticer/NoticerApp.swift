@@ -10,6 +10,7 @@ struct NoticerApp: App {
                 .task {
                     await model.sessionLog.loadActivity()
                     model.sessionLog.logLaunch()
+                    model.resetTonightIfNeeded()
                     model.watchAudioRoutes()
                     model.configureWearables()
                 }

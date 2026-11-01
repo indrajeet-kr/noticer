@@ -145,6 +145,95 @@ final class SpokenCueFormTests: XCTestCase {
         XCTAssertEqual(SpokenCueForm.repeatLine("Again, Take the baby"), "Again, Take the baby")
     }
 
+    func testHeatPackAndBlanketSpeakActions() {
+        XCTAssertEqual(
+            SpokenCueForm.line(authorText: "Ask me for heat pack while on couch"),
+            "Offer her the heat pack"
+        )
+        XCTAssertEqual(
+            SpokenCueForm.line(
+                cueWording: "Maybe ask if she wants heat pack?",
+                authorText: "Ask me for heat pack while on couch"
+            ),
+            "Offer her the heat pack"
+        )
+        XCTAssertEqual(
+            SpokenCueForm.line(authorText: "Ask me for a blanket"),
+            "Bring her a blanket"
+        )
+    }
+
+    func testNewKeywordActions() {
+        let rows: [(input: String, spoken: String)] = [
+            ("heating pad for her back", "Offer her the heat pack"),
+            ("needs a warm compress", "Offer her the heat pack"),
+            ("she wants a snack", "Bring her a snack"),
+            ("food is getting cold", "Bring her a snack"),
+            ("diaper blowout", "Change the diaper"),
+            ("needs burping", "Burp the baby"),
+            ("Ask me for warm socks", "Offer her warm socks"),
+            ("Maybe ask if she wants tea?", "Offer her tea"),
+        ]
+        for row in rows {
+            XCTAssertEqual(SpokenCueForm.line(authorText: row.input), row.spoken, row.input)
+        }
+    }
+
+    func testRealListStaysInsideTwoToFiveWords() {
+        let rows: [(author: String, cue: String, spoken: String)] = [
+            ("eating one-handed, take the baby", "Her plate's getting cold, maybe take the baby?", "Take the baby"),
+            ("nursing, no water", "Her water's empty.", "Refill her water"),
+            ("Keep water bottle on dining table", "Water on the table helps.", "Set water on the table"),
+            ("Pick the kid he is roaming around", "Maybe pick up the little roamer?", "Pick up the little roamer"),
+            ("Remove the empty glasses from the dinning table", "", "Remove the empty glasses"),
+            ("Help clean the toys from floor", "", "Help clean the toys"),
+            ("Fold the mat if on the floor", "", "Fold the mat"),
+            ("Ask me for heat pack while on couch", "Maybe ask if she wants heat pack?", "Offer her the heat pack"),
+        ]
+        for row in rows {
+            let spoken = SpokenCueForm.line(cueWording: row.cue, authorText: row.author)
+            XCTAssertEqual(spoken, row.spoken, "author \(row.author)")
+            let count = spoken.split(whereSeparator: \.isWhitespace).count
+            XCTAssertGreaterThanOrEqual(count, 2, spoken)
+            XCTAssertLessThanOrEqual(count, CueSpeechTuning.spokenWordLimit, spoken)
+        }
+    }
+
+    func testArbitraryAuthorTextNeverSpeaksZeroOrOneWord() {
+        // Degenerate input falls back to the model whisper, never to a bare word.
+        let whisper = "The room is cold"
+        let authors = [
+            "Ask me", "Help", "Me", "Water?", "",
+            "I", "my", "me", "a", "the", "?", "!", "...", "   ",
+            "Ask", "ask", "ASK ME FOR", "for", "her", "she",
+            "warm", "socks", "please", "now", "heat", "pack",
+            "nursing", "water", "baby", "toddler", "mat", "toys",
+            "Can you", "Could you", "Maybe", "Please help",
+            "the the the the the the", "if if if", "because",
+            "12345", "💧", "Water!!", " E ", "x",
+            "Supercalifragilisticexpialidocious", "a b c d e f g h",
+            "Fold", "Take", "Bring her", "Offer",
+        ]
+        XCTAssertEqual(authors.count, 50)
+        for author in authors {
+            let spoken = SpokenCueForm.line(cueWording: whisper, authorText: author)
+            let count = spoken.split(whereSeparator: \.isWhitespace).count
+            XCTAssertGreaterThanOrEqual(count, 2, "author \(author.debugDescription) -> \(spoken.debugDescription)")
+            XCTAssertLessThanOrEqual(count, CueSpeechTuning.spokenWordLimit, spoken)
+        }
+        XCTAssertEqual(
+            SpokenCueForm.line(cueWording: whisper, authorText: ""),
+            SpokenCueForm.line(cueWording: whisper),
+            "empty input falls back to the whisper"
+        )
+    }
+
+    func testRepeatKeepsTheSameTwoPlusWordLine() {
+        let spoken = SpokenCueForm.line(authorText: "Ask me for heat pack while on couch")
+        XCTAssertEqual(spoken, "Offer her the heat pack")
+        XCTAssertEqual(SpokenCueForm.repeatLine(spoken), "Again, Offer her the heat pack")
+    }
+
     func testSpeechTuningIsSlowerAndCalm() {
         XCTAssertEqual(CueSpeechTuning.speechRateScale, 0.83, accuracy: 0.001)
         XCTAssertGreaterThanOrEqual(CueSpeechTuning.speechRateScale, 0.80)

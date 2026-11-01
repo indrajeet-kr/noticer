@@ -3,13 +3,13 @@ import XCTest
 
 @MainActor
 final class FakeSpeechTranscriber: SpeechTranscribing {
-    var permissionGranted = true
+    var permissions = DictationPermissions(mic: .authorized, speech: .authorized)
     var partials: [String] = []
     var startCount = 0
     var stopCount = 0
 
-    func requestPermissions() async -> Bool {
-        permissionGranted
+    func requestPermissions() async -> DictationPermissions {
+        permissions
     }
 
     func start(onPartial: @escaping @Sendable (String, Bool) -> Void) throws {
@@ -101,19 +101,57 @@ final class DictationServiceTests: XCTestCase {
     func testDeniedPermissionsShowNotice() async {
         let fake = await MainActor.run {
             let fake = FakeSpeechTranscriber()
-            fake.permissionGranted = false
+            fake.permissions = DictationPermissions(mic: .denied, speech: .authorized)
             return fake
         }
         let service = await MainActor.run { DictationService(transcriber: fake) }
 
         let handled = await service.toggle()
 
-        XCTAssertFalse(handled)
+        XCTAssertFalse(handled, "deny falls back to the keyboard; typed input keeps working")
         let starts = await MainActor.run { fake.startCount }
-        XCTAssertEqual(starts, 0)
+        XCTAssertEqual(starts, 0, "no audio starts without authorization")
         let recording = await MainActor.run { service.isRecording }
         XCTAssertFalse(recording)
         let notice = await MainActor.run { service.notice }
-        XCTAssertTrue(notice?.contains("microphone") ?? false)
+        XCTAssertEqual(notice, "Mic is off. You can type instead.")
+    }
+
+    func testVoiceInputTapAndPermissionAnswerAreLogged() async {
+        let fake = await MainActor.run {
+            let fake = FakeSpeechTranscriber()
+            fake.permissions = DictationPermissions(mic: .authorized, speech: .restricted)
+            return fake
+        }
+        let logged = LockedLines()
+        let service = await MainActor.run {
+            let service = DictationService(transcriber: fake)
+            service.logHandler = { tag, message in logged.append("[\(tag)] \(message)") }
+            return service
+        }
+
+        _ = await service.toggle()
+
+        let lines = await MainActor.run { logged.lines }
+        XCTAssertEqual(lines, [
+            "[UI] voice-input tapped",
+            "[APP] permission mic=authorized speech=restricted",
+            "[ERROR] voice-input permission mic=authorized speech=restricted",
+        ])
+        let notice = await MainActor.run { service.notice }
+        XCTAssertEqual(notice, "Mic is off. You can type instead.")
+    }
+}
+
+private final class LockedLines: @unchecked Sendable {
+    private let lock = NSLock()
+    private var _lines: [String] = []
+
+    var lines: [String] {
+        lock.withLock { _lines }
+    }
+
+    func append(_ line: String) {
+        lock.withLock { _lines.append(line) }
     }
 }

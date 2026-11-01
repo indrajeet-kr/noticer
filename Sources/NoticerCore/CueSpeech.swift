@@ -4,19 +4,33 @@ import Foundation
 /// this derives a short action from it (and from her own words when the
 /// compiled line is only a reason). Deterministic: no model call.
 public enum SpokenCueForm {
-    /// Action first, about three to five words. Empty when both inputs are blank.
-    public static func line(cueWording: String, authorText: String = "") -> String {
-        let cue = normalize(cueWording)
-        let author = normalize(authorText)
-        if let spoken = imperative(in: cue) ?? imperative(in: author) {
-            return spoken
-        }
+    /// The smallest speakable line: a verb and an object, two to five words.
+    /// Every candidate below that floor is skipped, so the ear never hears
+    /// a bare "Ask". Empty only when both inputs are blank or single words.
+    public static let spokenWordFloor = 2
+
+    /// Action first, two to five words. First-person author text ("ask me
+    /// for X") is rewritten to her before cutting, so "me" never truncates
+    /// the line. Empty when both inputs are blank.
+    public static func line(cueWording: String = "", authorText: String = "") -> String {
+        let cue = rewritePerson(normalize(cueWording))
+        let author = rewritePerson(normalize(authorText))
         let combined = [cue, author].filter { !$0.isEmpty }.joined(separator: " ")
-        if let state = stateLine(in: combined) {
-            return state
+        let candidates = [
+            imperative(in: cue),
+            imperative(in: author),
+            stateLine(in: combined),
+            askOffer(in: cue),
+            askOffer(in: author),
+            firstWords(cue),
+            firstWords(author),
+        ]
+        for candidate in candidates {
+            if let candidate, wordCount(candidate) >= spokenWordFloor {
+                return candidate
+            }
         }
-        let fallback = cue.isEmpty ? author : cue
-        return limit(fallback)
+        return ""
     }
 
     public static func repeatLine(_ spoken: String) -> String {
@@ -105,6 +119,18 @@ public enum SpokenCueForm {
         if water {
             return "Refill her water"
         }
+        if t.contains("heat pack") || t.contains("heating pad") || t.contains("warm compress") {
+            return "Offer her the heat pack"
+        }
+        if hasWord(t, "blanket") || hasWord(t, "blankets") {
+            return "Bring her a blanket"
+        }
+        if hasWord(t, "snack") || hasWord(t, "snacks") || hasWord(t, "food") || hasWord(t, "foods") {
+            return "Bring her a snack"
+        }
+        if hasWord(t, "diaper") || hasWord(t, "diapers") {
+            return "Change the diaper"
+        }
         // A roaming kid is a toddler, not the baby. "roamer" must not match "roam".
         if hasWord(t, "roam") || hasWord(t, "roaming") || hasWord(t, "kid") || hasWord(t, "kids")
             || hasWord(t, "toddler") || hasWord(t, "toddlers") {
@@ -117,7 +143,7 @@ public enum SpokenCueForm {
             return "Fold the mat"
         }
         if t.contains("burp") {
-            return "Hand her a burp cloth"
+            return "Burp the baby"
         }
         if t.contains("toy") && t.contains("floor") {
             return "Pick up the toys"
@@ -141,6 +167,98 @@ public enum SpokenCueForm {
             return "Lend a hand"
         }
         return nil
+    }
+
+    // MARK: - Ask pattern and fallbacks
+
+    /// Mom says "ask me for X" and the model says "ask if she wants X".
+    /// Both mean one action: offer her X (the noun phrase, at most 3 words).
+    private static func askOffer(in text: String) -> String? {
+        let words = tokens(text)
+        let lower = words.map { $0.lowercased() }
+        let markers: [[String]] = [
+            ["ask", "her", "for"],
+            ["ask", "me", "for"],
+            ["ask", "if", "she", "wants"],
+        ]
+        for marker in markers {
+            guard let end = endOfMarker(marker, in: lower) else {
+                continue
+            }
+            var object = cutAtClauseBreak(Array(words[end...]))
+            object = trimTail(object)
+            object = Array(object.prefix(3))
+            object = trimTail(object)
+            if !object.isEmpty {
+                return "Offer her \(object.joined(separator: " "))"
+            }
+        }
+        return nil
+    }
+
+    /// Offset just past the marker's first run, or nil when absent.
+    private static func endOfMarker(_ marker: [String], in words: [String]) -> Int? {
+        guard marker.count <= words.count else {
+            return nil
+        }
+        for start in 0...(words.count - marker.count) {
+            if words[start..<(start + marker.count)].elementsEqual(marker) {
+                return start + marker.count
+            }
+        }
+        return nil
+    }
+
+    /// First ≤5 words with leading hedges gone: the whisper before the need
+    /// name. Clause-cut like every other fallback so a reason cannot eat
+    /// the budget.
+    private static func firstWords(_ text: String) -> String? {
+        var words = tokens(stripPoliteness(text))
+        while let first = words.first?.lowercased(), leadingHedges.contains(first) {
+            words.removeFirst()
+        }
+        words = cutAtClauseBreak(words)
+        if words.count > CueSpeechTuning.spokenWordLimit {
+            words = Array(words.prefix(CueSpeechTuning.spokenWordLimit))
+        }
+        words = trimTail(words)
+        if words.isEmpty {
+            return nil
+        }
+        return capitalize(words)
+    }
+
+    private static let leadingHedges: Set<String> = ["maybe", "might", "could"]
+
+    private static func trimTail(_ words: [String]) -> [String] {
+        var words = words
+        while let last = words.last?.lowercased(), trailingHedges.contains(last) {
+            words.removeLast()
+        }
+        while words.count > 1, let last = words.last?.lowercased(), dangling.contains(last) {
+            words.removeLast()
+        }
+        return words
+    }
+
+    private static let trailingHedges: Set<String> = ["please", "now", "okay", "ok"]
+
+    /// Her words are first-person ("ask me for X"); his ear is third-person.
+    /// Runs before cutting so "me" is never a cut point.
+    private static func rewritePerson(_ text: String) -> String {
+        let replacements = ["me": "her", "my": "her", "i": "she"]
+        return text.split(whereSeparator: \.isWhitespace).map { raw -> String in
+            let token = String(raw)
+            let letters = token.trimmingCharacters(in: .punctuationCharacters)
+            guard let her = replacements[letters.lowercased()], !letters.isEmpty else {
+                return token
+            }
+            return token.replacingOccurrences(of: letters, with: her)
+        }.joined(separator: " ")
+    }
+
+    private static func wordCount(_ text: String) -> Int {
+        tokens(text).count
     }
 
     // MARK: - Words

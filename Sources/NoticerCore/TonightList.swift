@@ -35,3 +35,27 @@ public enum TonightList {
         }
     }
 }
+
+/// Tonight resets per evening, not per day: an evening runs 12:00 PM to
+/// 11:59 AM local time, so a 00:25 entry belongs to the previous night.
+/// Runs on launch and on session start; never on stop.
+public enum TonightReset {
+    public static func eveningStart(now: Date, calendar: Calendar = .current) -> Date {
+        let noon = calendar.date(bySettingHour: 12, minute: 0, second: 0, of: now) ?? now
+        if now < noon {
+            return calendar.date(byAdding: .day, value: -1, to: noon) ?? noon
+        }
+        return noon
+    }
+
+    public static func reset<Moment>(
+        _ moments: [Moment],
+        at: (Moment) -> Date,
+        now: Date,
+        calendar: Calendar = .current
+    ) -> (kept: [Moment], dropped: Int) {
+        let start = eveningStart(now: now, calendar: calendar)
+        let kept = moments.filter { at($0) >= start }
+        return (kept, moments.count - kept.count)
+    }
+}
