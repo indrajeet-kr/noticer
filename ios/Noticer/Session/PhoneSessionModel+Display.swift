@@ -56,10 +56,13 @@ extension PhoneSessionModel {
         MomentWords.text(for: moment, needs: needs)
     }
 
-    /// Tonight = the latest session: the running session's moments, or the
-    /// most recent session's once it ends.
+    /// Tonight's timeline: today's moments for needs still on her list.
+    /// The same selection while a session is running and after it stops.
+    /// A need she removed does not keep its old row.
     var tonightMoments: [SessionMoment] {
-        SessionMomentsStore.latestSessionMoments(from: moments)
+        let active = Set(needs.map(\.id))
+        let now = Date()
+        return TonightList.select(moments, at: \.at, needID: \.needID, activeNeedIDs: active, now: now)
     }
 
     /// True when the recorded session is the one on screen (as opposed to

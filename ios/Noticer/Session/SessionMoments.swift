@@ -89,10 +89,9 @@ enum SessionMomentsStore {
         defaults.set(data, forKey: key)
     }
 
-    /// Tonight = the latest session: moments carrying the most recent
-    /// session id, latest session first by activity time. Legacy moments
-    /// without an id join when they fall on the anchor day and within the
-    /// legacy window of the latest moment.
+    /// The latest session's moments. The Tonight timeline does not use this;
+    /// it uses `TonightList` (local day, needs still on her list). Kept so
+    /// a session-scoped read stays available.
     static func latestSessionMoments(from moments: [SessionMoment]) -> [SessionMoment] {
         guard !moments.isEmpty else {
             return []

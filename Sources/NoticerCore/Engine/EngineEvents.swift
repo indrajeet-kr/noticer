@@ -95,6 +95,9 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case cueFired
     case cueDeferredHandsBusy
     case cueDeferredRateLimit
+    /// Head start ended while a check for this need was in flight and the
+    /// partner was in view. The whisper waits for that reply, briefly.
+    case cueDeferredPartnerCheck
     case caughtHimself
     case resolvedByPartner
     case closedUnknown

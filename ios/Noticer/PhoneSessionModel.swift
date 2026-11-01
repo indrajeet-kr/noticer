@@ -1106,6 +1106,8 @@ final class PhoneSessionModel {
             return "Head start extended\(who)."
         case .cueDeferredHandsBusy:
             return "Deferring the cue\(who). Hands are busy."
+        case .cueDeferredPartnerCheck:
+            return "Holding the cue\(who). She may be handling it."
         case .resolvedByPartner:
             return "She handled it\(who)."
         default:

@@ -88,7 +88,7 @@ public enum ToolCatalog {
 
     private static let latchNeedHypothesis = ToolDefinition(
         name: .latchNeedHypothesis,
-        description: "Open a need when the strip shows it held across the keyframes. The phone still checks that the need is on mom's list and that a latch is allowed.",
+        description: "Open a need when its unmet visual condition is clearly visible across the keyframes, including when that condition was already true in the older keyframe. The phone still checks that the need is on mom's list and that a latch is allowed.",
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: [
@@ -141,7 +141,7 @@ public enum ToolCatalog {
 
     private static let reportNoTransition = ToolDefinition(
         name: .reportNoTransition,
-        description: "Nothing changed this turn. Use this instead of inventing a need, a resolution, or a cue.",
+        description: "No listed need is visibly unmet, and no open need changed. A problem that is already visible is not this tool. Use this instead of inventing a need, a resolution, or a cue.",
         parameters: objectSchema(
             properties: assessmentProperties(),
             required: []

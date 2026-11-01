@@ -93,6 +93,8 @@ public enum DemoStripMapper {
             return ("Handled · unclear who", .outcomeOther, nil)
         case .cueDeferredHandsBusy:
             return ("Holding the whisper · hands busy", .neutral, nil)
+        case .cueDeferredPartnerCheck:
+            return ("Holding the whisper · she may have it", .neutral, nil)
         case .headStartExtended:
             return ("More time for you", .neutral, nil)
         default:

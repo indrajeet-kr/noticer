@@ -53,6 +53,8 @@ public struct NeedEngine<TimeSource: Clock> {
         var lastMatchingInterventionAt: Date? = nil
         /// Last reply naming this need that saw the partner engaged.
         var partnerEngagedAt: Date? = nil
+        /// Logged once per open need when the whisper waits on an in-flight check.
+        var didLogPartnerHold: Bool = false
     }
 
     private struct CueEffect {
@@ -112,14 +114,22 @@ public struct NeedEngine<TimeSource: Clock> {
     private var lastModelCallAt: Date?
     private var lastHeartbeatAt: Date?
     private var lastLatchCallAt: Date?
-    /// Idle-latch token bucket: capacity 2, refill 1 per 10 s. Every latch
-    /// call admitted from the idle band spends a token; the quiet cadence
-    /// stays 10 s and only early calls need a token waiting.
+    /// Idle-latch token bucket: capacity 2, refill 1 per 10 s. Every idle
+    /// latch spends a token. A rising scene change may spend one early;
+    /// sustained motion does not.
     private var idleBucketTokens = 2.0
     private var idleBucketUpdatedAt: Date?
-    /// The gate reported an activity edge or motion at or above
-    /// `SignalGateTuning.activityEdgeMotion` since the last latch call.
+    /// A rising motion edge, hand-gate edge, or activity edge since the last
+    /// latch call. Cleared when that call is issued. Sustained high motion
+    /// does not set this again.
     private var sceneChangedSinceLatchCall = false
+    /// Motion on the previous ingested frame, for the rising-edge check.
+    private var previousMotionScore: Double = 0
+    /// Whether the previous frame already carried a hand or activity edge.
+    private var previousGateEdge = false
+    /// Latest `partner_in_view` from a completed assessment. Nil until the
+    /// model says. A cue hold reads this; it is not sticky across "she left".
+    private var latestPartnerInView: Bool?
     private var lastSuccessfulLatchAt: Date?
     private var revisionAtLastLatchCall = 0
     private var lastCueAt: Date?
@@ -273,11 +283,24 @@ public struct NeedEngine<TimeSource: Clock> {
         if buffer.revision != prevRevision {
             lastLoggedSkip = nil
         }
-        if gate.handGateRisingEdge || gate.activityEdge {
+        let edgeNow = gate.handGateRisingEdge || gate.activityEdge
+        if edgeNow {
             handEdgePending = true
         }
-        if gate.handGateRisingEdge || gate.activityEdge
-            || (gate.motionScore ?? 0) >= SignalGateTuning.activityEdgeMotion {
+        // A level of high motion is not a new scene. Only a rise through the
+        // activity threshold, or a fresh hand/activity edge, may buy one
+        // early idle check.
+        let motionRose: Bool
+        if let motion = gate.motionScore {
+            motionRose = motion >= SignalGateTuning.activityEdgeMotion
+                && previousMotionScore < SignalGateTuning.activityEdgeMotion
+            previousMotionScore = motion
+        } else {
+            motionRose = false
+        }
+        let edgeRose = edgeNow && !previousGateEdge
+        previousGateEdge = edgeNow
+        if motionRose || edgeRose {
             sceneChangedSinceLatchCall = true
         }
         // Evidence age follows a person rect or, later, Spark's partner_in_view.
@@ -317,6 +340,9 @@ public struct NeedEngine<TimeSource: Clock> {
         var verdict = verdict
         verdict.assessment = sanitize(verdict.assessment)
         let assessment = verdict.assessment
+        if let partner = assessment.partnerInView {
+            latestPartnerInView = partner
+        }
         notePartner(assessment, tool: verdict.tool, now: now)
 
         // An omitted need id can apply to the only open need. An unknown id
@@ -476,9 +502,32 @@ public struct NeedEngine<TimeSource: Clock> {
             }
             return
         }
+        // She was in view on the last reply, and a check that includes this
+        // need has not come back. Wait for it, briefly, so a whisper does
+        // not land on something she is already handling. No new call.
+        if holdCueForInFlightPartnerCheck(at: index, now: now) {
+            if !tracked[index].didLogPartnerHold {
+                tracked[index].didLogPartnerHold = true
+                record(.cueDeferredPartnerCheck, needID: needID, detail: nil)
+            }
+            return
+        }
 
         let kind = tracked[index].pendingCueKind ?? cueKind(for: need.mastery)
         deliverCue(kind, for: need, now: now)
+    }
+
+    /// True while the whisper should wait. The cap is measured from the cue
+    /// deadline, so a hung call still speaks.
+    private func holdCueForInFlightPartnerCheck(at index: Int, now: Date) -> Bool {
+        guard latestPartnerInView == true else { return false }
+        guard now.timeIntervalSince(tracked[index].cueDeadline) < EngineTuning.partnerInFlightCueHoldSeconds else {
+            return false
+        }
+        let needID = tracked[index].needID
+        return pendingModelCalls.contains { call in
+            call.request.openNeeds.contains { $0.needID == needID }
+        }
     }
 
     private func cueKind(for mastery: MasteryState) -> CueKind {
@@ -673,7 +722,7 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         var spendIdleToken = false
         if latency.sceneChangeLatchBypass {
-            let admission = admitIdleLatch(now: now, recentPerson: recentPerson)
+            let admission = admitIdleLatch(now: now)
             guard admission != .denied else { return }
             spendIdleToken = admission == .admittedSpendingToken
         } else {
@@ -760,25 +809,31 @@ public struct NeedEngine<TimeSource: Clock> {
         record(.skip, needID: nil, detail: detail)
     }
 
-    /// Idle-latch admission with the scene-change bucket. A scene change may
-    /// spend a token for an early call (still paced by the quick latch
-    /// interval); with no scene change the 10 s cadence stands. Every call
-    /// admitted from the idle band spends a token, which keeps ≤ 6/min
-    /// sustained. Suppression logs `idle-bucket` so dedupe shows on device.
-    private mutating func admitIdleLatch(now: Date, recentPerson: Bool) -> IdleLatchAdmission {
+    /// Idle-latch admission. With nothing open, every call spends a token
+    /// from the same bucket, including after a person sighting or a hand
+    /// edge. Those used to skip the bucket and latch every quick interval.
+    /// A rising scene change may spend a token early (quick interval, under
+    /// the 10 s cadence). Sustained motion does not re-arm that edge.
+    /// Suppression logs `idle-bucket`.
+    private mutating func admitIdleLatch(now: Date) -> IdleLatchAdmission {
         let quick = timing.latchMinIntervalSeconds
-        let idleLike = tracked.isEmpty && !recentPerson && !handEdgePending
+        let idle = tracked.isEmpty
         let warmedUp = now.timeIntervalSince(sessionStartedAt) >= latency.sessionWarmupSeconds
-        if latency.dedupeAllPurposes, idleLike, warmedUp {
+        if latency.dedupeAllPurposes, idle, warmedUp {
             refillIdleBucket(now: now)
+            guard idleBucketTokens >= 1 else {
+                recordSkip("idle-bucket")
+                return .denied
+            }
             guard let last = lastLatchCallAt else {
                 return .admittedSpendingToken
             }
             let elapsed = now.timeIntervalSince(last)
-            if sceneChangedSinceLatchCall, idleBucketTokens >= 1, elapsed >= quick {
+            let quiet = max(quick, SessionLimits.latchMinIntervalSeconds)
+            if sceneChangedSinceLatchCall, elapsed >= quick, elapsed < quiet {
                 return .admittedSpendingToken
             }
-            if elapsed < max(quick, SessionLimits.latchMinIntervalSeconds) {
+            if elapsed < quiet {
                 recordSkip("idle-bucket")
                 return .denied
             }
