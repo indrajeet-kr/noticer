@@ -1,3 +1,4 @@
+import NoticerCore
 import SwiftUI
 
 /// Words under the Tonight circle, one per state. The state is always in
@@ -8,7 +9,7 @@ enum SessionCircleWords {
         case .idle:
             return "Tap to start. You get a head start first."
         case .listening:
-            return "Watching quietly."
+            return DemoStripMapper.listeningStatus
         case .noticed(let name):
             return "Noticed: \(name)"
         case .headStart(let name, _, let secondsLeft):

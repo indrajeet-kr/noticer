@@ -31,6 +31,18 @@ The iPhone app's Replay mode runs those same scenarios. A clip in `fixtures/clip
 
 `ReplayModelClient` can also serve `fixtures/model-responses` by request fingerprint. `RecordedModelClient` plays a fixture list in order. Neither reads a key.
 
+## Demo mode
+
+On the phone, open Settings from the tab menu, then Developer, and turn on Demo mode. The toggle caption is "Shows each step on screen in big type, for screen recordings." While a session runs, each pipeline step shows in large type so a screen recording can follow the loop. The strip stays up after Stop until Demo mode is turned off.
+
+In Replay the model-time chip reads `Muse Spark · 0.0s`, because no live model call happens. The row times still follow the session clock.
+
+![Demo mode off](docs/demo-strip/demo-off.png)
+![Demo mode during a replay](docs/demo-strip/demo-mid.png)
+![Demo mode after the session](docs/demo-strip/demo-final.png)
+
+[Ten-second demo clip](docs/demo-strip/demo-clip10.mp4)
+
 ## Record a live response
 
 From a machine that has a key. This does not run in CI.

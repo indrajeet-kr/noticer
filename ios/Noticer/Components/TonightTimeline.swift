@@ -1,3 +1,4 @@
+import NoticerCore
 import SwiftUI
 
 /// Tonight's timeline: tonight's cues and catches, latest on top. A filled
@@ -18,7 +19,7 @@ struct TonightTimeline: View {
             if isRunning || !moments.isEmpty {
                 VStack(spacing: 0) {
                     if isRunning {
-                        timelineRow(dot: .now, words: "Watching quietly", time: Date(), detail: "Now")
+                        timelineRow(dot: .now, words: DemoStripMapper.listening, time: Date(), detail: "Now")
                         Divider().background(Theme.textPrimary.opacity(0.08))
                     }
                     ForEach(sortedMoments) { moment in
