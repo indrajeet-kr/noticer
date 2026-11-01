@@ -45,16 +45,19 @@ struct NeedDetailView: View {
 
                 VStack(spacing: Theme.Space.s12) {
                     Button(paused ? "Resume" : "Pause tonight") {
+                        model.sessionLog.appendActivity("UI", "\(!paused ? "pause" : "resume") tapped id=\(need.id)")
                         model.setPaused(need.id, paused: !paused)
                     }
                     .buttonStyle(.primaryCapsule)
 
                     Button("Change in words") {
+                        model.sessionLog.appendActivity("UI", "change-in-words tapped id=\(need.id)")
                         showingChange = true
                     }
                     .buttonStyle(.ghostCapsule)
 
                     Button("Remove", role: .destructive) {
+                        model.sessionLog.appendActivity("UI", "remove tapped id=\(need.id)")
                         service.removeSavedNeed(id: need.id, model: model)
                         dismiss()
                     }

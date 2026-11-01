@@ -21,7 +21,7 @@ struct LiveSessionView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            TimelineView(.periodic(from: .now, by: 1)) { _ in
+            TimelineView(.periodic(from: .now, by: 1)) { context in
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(spacing: Theme.Space.sectionGap) {
@@ -150,6 +150,7 @@ struct LiveSessionView: View {
                 guard !model.isRunning else {
                     return
                 }
+                model.sessionLog.appendActivity("UI", "start tapped")
                 model.mode = .live
                 model.start()
             }
@@ -168,6 +169,7 @@ struct LiveSessionView: View {
             }
             if model.isRunning {
                 Button("Stop") {
+                    model.sessionLog.appendActivity("UI", "stop tapped")
                     model.stop()
                 }
                 .font(Theme.Font.headline)

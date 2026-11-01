@@ -148,6 +148,10 @@ final class NeedsIntentService {
         }
         entries.append(.her(id: UUID(), text: message))
         lastMessage = message
+        model.sessionLog.appendActivity(
+            "CONV",
+            ActivityConversation.herLine(text: message, source: lastSource.rawValue)
+        )
         offline = false
         needsKey = false
         failureDetail = nil
@@ -178,6 +182,10 @@ final class NeedsIntentService {
             lastMessage = nil
             switch result {
             case .needs(let drafts, let readBack):
+                model.sessionLog.appendActivity(
+                    "CONV",
+                    ActivityConversation.replyNeedsLine(count: drafts.count, readBack: readBack)
+                )
                 let changed = ChangedDrafts.between(drafts: drafts, current: model.needs)
                 entries.append(.readBack(
                     id: UUID(),
@@ -188,6 +196,10 @@ final class NeedsIntentService {
                     superseded: false
                 ))
             case .question(let question, let suggestions):
+                model.sessionLog.appendActivity(
+                    "CONV",
+                    ActivityConversation.replyQuestionLine(question: question, chips: suggestions)
+                )
                 entries.append(.question(id: UUID(), text: question, suggestions: suggestions))
             }
         } catch let error as NeedsIntentError {
@@ -197,12 +209,14 @@ final class NeedsIntentService {
             }
             failureDetail = error.description
             offline = true
+            model.sessionLog.appendActivity("CONV", "turn failed: \(error.description)")
         } catch is CancellationError {
             thinking = false
         } catch {
             thinking = false
             failureDetail = nil
             offline = true
+            model.sessionLog.appendActivity("CONV", "turn failed: request failed (\(error.localizedDescription))")
         }
     }
 
@@ -215,7 +229,14 @@ final class NeedsIntentService {
         guard case .readBack(_, let drafts, _, let changed, false, false) = entries[index] else {
             return
         }
-        model.needs = NeedsIntentConversion.toNeeds(drafts, current: model.needs)
+        let before = model.needs
+        let converted = NeedsIntentConversion.toNeeds(drafts, current: model.needs)
+        logDiff(old: before, new: converted, cause: "looks-right", source: lastSource, model: model)
+        model.sessionLog.appendActivity(
+            "CONV",
+            "looks-right accepted source=\(lastSource.rawValue) n=\(converted.count)"
+        )
+        model.needs = converted
         model.commitNeeds()
         entries[index] = .readBack(
             id: entryID,
@@ -258,11 +279,14 @@ final class NeedsIntentService {
             superseded: superseded
         )
         if accepted, let savedIndex = model.needs.firstIndex(where: { $0.id == draftID }) {
+            let before = model.needs
             removed = (model.needs.remove(at: savedIndex), savedIndex)
+            logDiff(old: before, new: model.needs, cause: "remove-card", model: model)
             model.commitNeeds()
             markPendingSuperseded()
         } else {
             removed = nil
+            model.sessionLog.appendActivity("CONV", ActivityConversation.draftDiscardedLine(id: draftID))
         }
         // Pending read-backs re-derive from her words; nothing to undo.
         postNotice("Removed “\(draft.authorText)”.", undo: accepted)
@@ -293,7 +317,9 @@ final class NeedsIntentService {
         guard let savedIndex = model.needs.firstIndex(where: { $0.id == id }) else {
             return
         }
+        let before = model.needs
         let need = model.needs.remove(at: savedIndex)
+        logDiff(old: before, new: model.needs, cause: "remove", model: model)
         model.commitNeeds()
         markPendingSuperseded()
         removed = (need, savedIndex)
@@ -308,7 +334,9 @@ final class NeedsIntentService {
             return
         }
         let index = min(removed.index, model.needs.count)
+        let before = model.needs
         model.needs.insert(removed.need, at: index)
+        logDiff(old: before, new: model.needs, cause: "undo", model: model)
         model.commitNeeds()
         markPendingSuperseded()
         self.removed = nil
@@ -319,6 +347,31 @@ final class NeedsIntentService {
     func dismissNotice() {
         notice = nil
         noticeHasUndo = false
+    }
+
+    // MARK: - Activity source and list diffs
+
+    /// Where the latest turn came from. The sheet notes it at send time so
+    /// Looks-right lines can say typed, voice, or chip tap.
+    private(set) var lastSource: ListEditSource = .typed
+
+    func noteSendSource(_ source: ListEditSource) {
+        lastSource = source
+    }
+
+    private func logDiff(
+        old: [Need],
+        new: [Need],
+        cause: String,
+        source: ListEditSource? = nil,
+        model: PhoneSessionModel
+    ) {
+        let rows = { (needs: [Need]) in
+            needs.map { NeedListDiff.Row(need: $0, paused: model.isPaused($0.id)) }
+        }
+        for line in NeedListDiff.lines(old: rows(old), new: rows(new), cause: cause, source: source?.rawValue) {
+            model.sessionLog.appendActivity("LIST", line)
+        }
     }
 }
 

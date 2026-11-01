@@ -35,7 +35,10 @@ struct OnboardingView: View {
                 case 3:
                     ConnectStep(model: model) { step = 4 }
                 default:
-                    APIKeyStep(model: model) { done = true }
+                    APIKeyStep(model: model) {
+                        model.sessionLog.appendActivity("UI", "onboarding completed")
+                        done = true
+                    }
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -251,8 +254,10 @@ struct APIKeyStep: View {
         do {
             try ModelKeyStore.save(key)
             model.refreshKeyStatus()
+            model.sessionLog.appendActivity("SETTINGS", "api-key saved")
             next()
         } catch {
+            model.sessionLog.appendActivity("SETTINGS", "api-key save failed")
             message = error.localizedDescription
         }
     }

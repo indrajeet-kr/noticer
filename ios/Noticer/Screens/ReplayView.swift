@@ -37,6 +37,11 @@ struct ReplayView: View {
             controller.reload()
             selectFirstIfNeeded()
         }
+        .onChange(of: controller.loadError) { _, error in
+            if let error {
+                model.sessionLog.appendActivity("ERROR", "replay \(error)")
+            }
+        }
     }
 
     // MARK: - Header and picker
@@ -93,6 +98,7 @@ struct ReplayView: View {
         let selected = controller.selectedID == id
         let traits: AccessibilityTraits = selected ? [.isButton, .isSelected] : .isButton
         return Button {
+            model.sessionLog.appendActivity("UI", "replay selected id=\(id)")
             controller.select(id, timing: model.timing, needs: model.needsForSession())
         } label: {
             HStack {

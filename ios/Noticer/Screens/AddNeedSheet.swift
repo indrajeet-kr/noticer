@@ -1,3 +1,4 @@
+import NoticerCore
 import SwiftUI
 
 /// Add a need: a bottom sheet with a single free-text input, docked
@@ -82,8 +83,17 @@ struct AddNeedSheet: View {
         }
         .ambientScreen()
         .task { service.refreshSheetList(from: model) }
-        .onAppear { dictation.sessionRunning = model.isRunning }
-        .onDisappear { dictation.stop() }
+        .onAppear {
+            dictation.sessionRunning = model.isRunning
+            dictation.noteHandler = { [model] notice in
+                model.sessionLog.appendActivity("ERROR", "speech \(notice)")
+            }
+            model.sessionLog.appendActivity("UI", "add-sheet opened")
+        }
+        .onDisappear {
+            dictation.stop()
+            model.sessionLog.appendActivity("UI", "add-sheet closed")
+        }
         .onChange(of: model.isRunning) { _, running in
             dictation.sessionRunning = running
         }
@@ -179,8 +189,9 @@ struct AddNeedSheet: View {
                     FlowLayout {
                         ForEach(suggestions, id: \.self) { suggestion in
                             SuggestionChip(text: suggestion) {
+                                model.sessionLog.appendActivity("CONV", "chip tapped \"\(suggestion)\"")
                                 draft = suggestion
-                                send()
+                                send(forceSource: .chip)
                             }
                         }
                     }
@@ -246,6 +257,7 @@ struct AddNeedSheet: View {
             } else if !drafts.isEmpty {
                 Button("Looks right") {
                     composerFocused = false
+                    model.sessionLog.appendActivity("UI", "looks-right tapped")
                     service.accept(entryID: id, model: model)
                     onAccept()
                 }
@@ -269,12 +281,14 @@ struct AddNeedSheet: View {
         }
     }
 
-    private func send() {
+    private func send(forceSource: ListEditSource? = nil) {
         dictation.stop()
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             return
         }
+        let dictated = dictation.transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        service.noteSendSource(forceSource ?? ((!dictated.isEmpty && text == dictated) ? .voice : .typed))
         draft = ""
         withAnimation(Theme.spring) {
             service.send(text, model: model)

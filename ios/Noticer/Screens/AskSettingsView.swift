@@ -50,8 +50,23 @@ struct AskSettingsView: View {
         .onAppear {
             composerFocused = false
             dictation.sessionRunning = model.isRunning
+            dictation.noteHandler = { [model] notice in
+                model.sessionLog.appendActivity("ERROR", "speech \(notice)")
+            }
         }
         .onDisappear { dictation.stop() }
+        .onChange(of: night) { old, new in
+            model.sessionLog.appendActivity("SETTINGS", "night-look \(old) -> \(new)")
+        }
+        .onChange(of: demoMode) { old, new in
+            model.sessionLog.appendActivity("SETTINGS", "demo-mode \(old) -> \(new)")
+        }
+        .onChange(of: showingKey) { _, shown in
+            model.sessionLog.appendActivity("UI", shown ? "key-sheet opened" : "key-sheet closed")
+        }
+        .onChange(of: showingLog) { _, shown in
+            model.sessionLog.appendActivity("UI", shown ? "log opened" : "log closed")
+        }
         .onChange(of: model.isRunning) { _, running in
             dictation.sessionRunning = running
         }
@@ -194,6 +209,7 @@ struct AskSettingsView: View {
         if model.isRunning {
             model.stop()
         }
+        model.sessionLog.appendActivity("UI", "introduction restarted")
         onboardingDone = false
     }
 
@@ -397,8 +413,20 @@ struct AskSettingsView: View {
             readBack = nil
             question = "Do you want shorter head starts, or a change to check-ins?"
         }
-        if readBack != nil {
+        if let readBack {
             question = nil
+            model.sessionLog.appendActivity("SETTINGS", "ask \"\(text)\" -> \(Self.describe(readBack.change))")
+        } else {
+            model.sessionLog.appendActivity("SETTINGS", "ask \"\(text)\" -> question")
+        }
+    }
+
+    private static func describe(_ change: AskReadBack.Change) -> String {
+        switch change {
+        case .quickTiming(let enabled):
+            return "quick-timing(\(enabled))"
+        case .checkIns(let allowed):
+            return "check-ins(\(allowed))"
         }
     }
 
@@ -409,12 +437,11 @@ struct AskSettingsView: View {
     private func accept(_ readBack: AskReadBack) {
         switch readBack.change {
         case .quickTiming(let enabled):
+            model.sessionLog.appendActivity("SETTINGS", "ask accepted quick-timing -> \(enabled)")
             model.setQuickTiming(enabled)
         case .checkIns(let allowed):
-            for index in model.needs.indices {
-                model.needs[index].allowsCheckIn = allowed
-            }
-            model.saveNeeds()
+            model.sessionLog.appendActivity("SETTINGS", "ask accepted check-ins -> \(allowed)")
+            model.setAllCheckIns(allowed)
         }
         self.readBack = AskReadBack(text: readBack.text, change: readBack.change, accepted: true)
         acceptedPulse += 1
