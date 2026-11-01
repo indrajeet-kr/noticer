@@ -123,6 +123,10 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case retiredMiss
     case callIssued
     case stillOpen
+    /// A `partner_state_evidence` token naming no part id and matching no
+    /// condition part. Detail is `token=<t>`; the token is the model's own
+    /// text, so it is safe to log.
+    case partTokenUnknown = "partToken-unknown"
     case skip
     /// A brief high-confidence sighting earned one focused second look.
     case confirmScheduled

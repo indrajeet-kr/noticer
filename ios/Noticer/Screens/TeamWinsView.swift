@@ -122,16 +122,26 @@ struct TeamWinsView: View {
     }
 
     private var winCircles: some View {
-        HStack(spacing: Theme.Space.s8) {
-            ForEach(countedWins) { win in
-                Circle()
-                    .fill(win.kind.isUnprompted ? Theme.sage : Theme.terracotta)
-                    .frame(width: 20, height: 20)
+        VStack(spacing: Theme.Space.s8) {
+            HStack(spacing: Theme.Space.s8) {
+                ForEach(countedWins) { win in
+                    Circle()
+                        .fill(win.kind.isUnprompted ? Theme.sage : Theme.terracotta)
+                        .frame(width: 20, height: 20)
+                }
             }
+            .frame(maxWidth: .infinity, alignment: .center)
+            Text(countLine)
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textSecondary)
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("You noticed: \(selfNoticeCount). After a reminder: \(nudgeCount).")
+        .accessibilityLabel(countLine)
+    }
+
+    private var countLine: String {
+        "You noticed: \(selfNoticeCount) · After a reminder: \(nudgeCount)"
     }
 
     private var dayLine: String {

@@ -66,6 +66,38 @@ final class SessionMomentsTests: XCTestCase {
         XCTAssertTrue(SessionMomentsStore.latestSessionMoments(from: []).isEmpty)
     }
 
+    func testLegacyAndGarbageRowsLoadRowByRow() {
+        let suite = "SessionMomentsRowTests"
+        let defaults = UserDefaults(suiteName: suite)!
+        defaults.removePersistentDomain(forName: suite)
+        let now = Date().timeIntervalSinceReferenceDate
+        let json = """
+            [
+              {"id":"\(UUID())","at":\(now),"needID":"take-baby","kind":"noticed","text":"take the baby"},
+              {"id":"\(UUID())","at":\(now),"needID":"take-baby","kind":"cued","text":"take the baby"},
+              {"id":"\(UUID())","at":\(now),"needID":"take-baby","kind":"nudge","text":"take the baby","sessionID":"\(UUID())","episodeID":"e9"},
+              {"id":"\(UUID())","at":\(now),"needID":"refill-water","kind":"selfNotice","text":"water","sessionID":"\(UUID())"},
+              {"id":"\(UUID())","at":\(now),"needID":"take-baby","kind":"celebrated","text":"take the baby"}
+            ]
+            """.data(using: .utf8)!
+        defaults.set(json, forKey: SessionMomentsStore.key)
+
+        var lines: [String] = []
+        let moments = SessionMomentsStore.loadRecent(defaults: defaults, log: { lines.append($0) })
+
+        XCTAssertEqual(moments.count, 4, "one bad row must not wipe the night")
+        XCTAssertEqual(moments.first?.kind, .selfNotice, "legacy noticed migrates")
+        XCTAssertNil(moments[1].sessionID)
+        XCTAssertNil(moments[1].episodeID)
+        XCTAssertEqual(lines, ["decode-skip index=4 reason=corrupt"])
+        XCTAssertEqual(defaults.data(forKey: SessionMomentsStore.key), json, "load leaves stored data alone")
+
+        SessionMomentsStore.save(moments, defaults: defaults)
+        let saved = String(data: defaults.data(forKey: SessionMomentsStore.key)!, encoding: .utf8)!
+        XCTAssertFalse(saved.contains("noticed"), "saves write only the current kinds")
+        defaults.removePersistentDomain(forName: suite)
+    }
+
     func testSessionInfoRoundTrip() {
         let defaults = UserDefaults(suiteName: "SessionMomentsTests")!
         defaults.removePersistentDomain(forName: "SessionMomentsTests")
@@ -141,6 +173,68 @@ final class SessionMomentsTests: XCTestCase {
         XCTAssertTrue(model.sessionLog.activity.contains {
             $0.tag == "TONIGHT" && $0.message == "upgrade need=take-baby episode=e1 cued->nudge"
         })
+    }
+
+    @MainActor
+    func testUpgradeStaysInsideTheCurrentSession() {
+        let model = PhoneSessionModel()
+        model.needs = [Need(id: "trash-can-lid", authorText: "Close the lid", cueWording: "", priority: 0)]
+        model.moments = []
+        let now = Date()
+        let first = UUID()
+        let second = UUID()
+        func liveView(_ log: [EngineEvent]) -> SessionView {
+            SessionView(now: now, needs: [], openNeeds: [], cues: [], log: log, modelCalls: 1)
+        }
+        let cue1 = EngineEvent(kind: .cueFired, needID: "trash-can-lid", at: now, episodeID: "e1")
+        let cue2 = EngineEvent(kind: .cueFired, needID: "trash-can-lid", at: now, episodeID: "e2")
+        // The engine log is cumulative; the drain consumes only fresh tails.
+        model.currentSessionID = first
+        model.applyLiveState(liveView([cue1]))
+        model.currentSessionID = second
+        model.applyLiveState(liveView([cue1, cue2]))
+        model.applyLiveState(liveView([
+            cue1,
+            cue2,
+            EngineEvent(kind: .caughtHimself, needID: "trash-can-lid", at: now, detail: "after-cue", episodeID: "e2"),
+        ]))
+
+        XCTAssertEqual(model.moments.map(\.kind), [.cued, .nudge])
+        XCTAssertEqual(model.moments[0].sessionID, first)
+        XCTAssertEqual(model.moments[1].sessionID, second)
+
+        // The same episode id from the other session never upgrades here.
+        model.applyLiveState(liveView([
+            cue1,
+            cue2,
+            EngineEvent(kind: .caughtHimself, needID: "trash-can-lid", at: now, detail: "after-cue", episodeID: "e2"),
+            EngineEvent(kind: .caughtHimself, needID: "trash-can-lid", at: now, detail: "after-cue", episodeID: "e1"),
+        ]))
+        XCTAssertEqual(model.moments.map(\.kind), [.cued, .nudge, .selfNotice])
+        XCTAssertTrue(model.sessionLog.activity.contains {
+            $0.tag == "TONIGHT" && $0.message == "upgrade-miss need=trash-can-lid episode=e1"
+        })
+    }
+
+    @MainActor
+    func testCompletionBeforeAnyCueAddsSelfNotice() {
+        let model = PhoneSessionModel()
+        model.needs = [Need(id: "take-baby", authorText: "Take the baby", cueWording: "", priority: 0)]
+        model.moments = []
+        let now = Date()
+        model.applyLiveState(SessionView(
+            now: now,
+            needs: [],
+            openNeeds: [],
+            cues: [],
+            log: [EngineEvent(kind: .caughtHimself, needID: "take-baby", at: now)],
+            modelCalls: 1
+        ))
+
+        XCTAssertEqual(model.moments.map(\.kind), [.selfNotice])
+        XCTAssertFalse(model.sessionLog.activity.contains {
+            $0.tag == "TONIGHT" && $0.message.hasPrefix("upgrade-miss")
+        }, "no episode, no miss")
     }
 
     @MainActor

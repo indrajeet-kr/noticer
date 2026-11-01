@@ -120,7 +120,14 @@ final class PhoneSessionModel {
     /// events, speech, errors. Cleared on start, kept after stop for review.
     var sessionLog = SessionLog()
     /// Tonight's wins for the Wins tab. Saved on the phone only.
-    var moments: [SessionMoment] = SessionMomentsStore.loadRecent()
+    /// Loaded in init so skipped rows can reach the transcript.
+    var moments: [SessionMoment] = []
+
+    init() {
+        moments = SessionMomentsStore.loadRecent(log: { [sessionLog] line in
+            sessionLog.appendActivity("TONIGHT", line)
+        })
+    }
     /// Latest session boundaries, persisted with the moments so the Wins
     /// header can name the session's start after a restart.
     var currentSessionID: UUID? = SessionMomentsStore.loadSessionInfo()?.id
@@ -1037,9 +1044,17 @@ final class PhoneSessionModel {
                 }
                 if let needID = event.needID {
                     // One completed action, one entry: a completion in the
-                    // same episode upgrades the reminder row in place.
-                    if let episodeID = event.episodeID,
-                       let row = moments.firstIndex(where: { $0.episodeID == episodeID && $0.kind == .cued }) {
+                    // same episode upgrades the reminder row in place. The
+                    // match stays inside the current session: an episode id
+                    // from another session never upgrades here.
+                    let match: Array<SessionMoment>.Index? = if let episodeID = event.episodeID {
+                        moments.firstIndex(where: {
+                            $0.episodeID == episodeID && $0.kind == .cued && $0.sessionID == currentSessionID
+                        })
+                    } else {
+                        nil
+                    }
+                    if let episodeID = event.episodeID, let row = match {
                         moments[row].kind = .nudge
                         moments[row].sharedWithPartner = event.isSharedFinish
                         sessionLog.appendActivity(
@@ -1048,6 +1063,12 @@ final class PhoneSessionModel {
                         )
                         snapshotTonightForLog()
                     } else {
+                        if let episodeID = event.episodeID {
+                            sessionLog.appendActivity(
+                                "TONIGHT",
+                                "upgrade-miss need=\(needID) episode=\(episodeID)"
+                            )
+                        }
                         moments.append(SessionMoment(
                             at: Date(),
                             needID: needID,

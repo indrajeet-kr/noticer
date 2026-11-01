@@ -16,6 +16,6 @@ public enum DeveloperPrompt {
       - Open need out of view: need_id null, sustained_across_strip null, never false just because it is out of view.
       - No need open and none sustained: need_id null, sustained_across_strip false.
     action_code: use a wearer_ code only for an action that helps a listed need, and prefer that need's self_notice_signal exactly. Never give medical, dosing or health advice.
-    For a compound need (handled_when has AND parts), report each part in partner_state_evidence (lid_open, placement_unknown are examples, not vocabulary).
+    For a compound need, report each part as `<part_id>_handled`, `<part_id>_unmet` or `<part_id>_unknown` in partner_state_evidence. Use only the listed part ids.
     """
 }

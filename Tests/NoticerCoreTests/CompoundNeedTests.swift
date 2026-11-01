@@ -204,7 +204,7 @@ final class CompoundNeedTests: EngineTestCase {
         )
     }
 
-    private func resolvedVerdict(tokens: [String]) -> ModelVerdict {
+    private func resolvedVerdict(tokens: [String], resolution: Resolution = .caughtHimself) -> ModelVerdict {
         ModelVerdict(
             finishReason: .toolCalls,
             tool: .reportNeedResolved,
@@ -213,10 +213,190 @@ final class CompoundNeedTests: EngineTestCase {
                 sustainedAcrossStrip: false,
                 partnerStateEvidence: tokens,
                 wearerHandsOccupied: false,
-                resolution: .caughtHimself,
+                resolution: resolution,
                 actionCode: "wearer_closing_trash_lid",
                 confidence: 0.85
             )
         )
+    }
+
+    private func clearingIntervention(tokens: [String]) -> ModelVerdict {
+        ModelVerdict(
+            finishReason: .toolCalls,
+            tool: .logWearerIntervention,
+            assessment: SceneAssessment(
+                needID: "trash-can-lid",
+                sustainedAcrossStrip: false,
+                partnerStateEvidence: tokens,
+                actionCode: "wearer_closing_trash_lid",
+                confidence: 0.8
+            )
+        )
+    }
+
+    // MARK: - One compound gate
+
+    func testStrictPartialInterventionStaysOpen() throws {
+        try setupTrashCan()
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: partLatchVerdict("trash-can-lid"))
+
+        let arm = try nextLatchCall()
+        engine.handle(callID: arm.id, verdict: intervention("trash-can-lid", action: "wearer_closing_trash_lid"))
+        XCTAssertEqual(engine.openNeeds.first?.pendingWearerAction, "wearer_closing_trash_lid")
+
+        let clearing = try nextLatchCall()
+        engine.handle(
+            callID: clearing.id,
+            verdict: clearingIntervention(tokens: ["lid_handled", "placement_unknown"])
+        )
+
+        XCTAssertEqual(events(.stillOpen).last?.detail, "partial")
+        XCTAssertEqual(engine.openNeedIDs, ["trash-can-lid"])
+        XCTAssertEqual(mastery(of: "trash-can-lid"), .initial, "no credit for a partial fix")
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(
+            engine.openNeeds.first?.pendingWearerAction,
+            "wearer_closing_trash_lid",
+            "the pending action stays armed"
+        )
+    }
+
+    func testLegacyPartialInterventionStaysOpen() throws {
+        engine = try NeedEngine(
+            clock: clock,
+            needs: [trashCan(), Self.refillWater()],
+            latency: LatencyTuning(strictCredit: false)
+        )
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: partLatchVerdict("trash-can-lid"))
+
+        let arm = try nextLatchCall()
+        engine.handle(callID: arm.id, verdict: intervention("trash-can-lid", action: "wearer_closing_trash_lid"))
+        XCTAssertEqual(engine.openNeeds.first?.pendingWearerAction, "wearer_closing_trash_lid")
+
+        let clearing = try nextLatchCall()
+        engine.handle(
+            callID: clearing.id,
+            verdict: clearingIntervention(tokens: ["lid_handled", "placement_unknown"])
+        )
+
+        XCTAssertEqual(events(.stillOpen).last?.detail, "partial")
+        XCTAssertEqual(engine.openNeedIDs, ["trash-can-lid"])
+        XCTAssertEqual(mastery(of: "trash-can-lid"), .initial)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(engine.openNeeds.first?.pendingWearerAction, "wearer_closing_trash_lid")
+    }
+
+    func testPartialThenFullClosesAfterCue() throws {
+        var urgent = trashCan()
+        urgent.isUrgent = true
+        try engine.setNeeds([urgent, Self.refillWater()])
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: partLatchVerdict("trash-can-lid"))
+        XCTAssertEqual(events(.cueFired).map(\.needID), ["trash-can-lid"])
+        let masteryAfterCue = mastery(of: "trash-can-lid")
+
+        let partial = try nextLatchCall()
+        engine.handle(
+            callID: partial.id,
+            verdict: resolvedVerdict(tokens: ["lid_handled", "placement_unknown"])
+        )
+        XCTAssertEqual(events(.stillOpen).last?.detail, "partial")
+        XCTAssertEqual(engine.openNeedIDs, ["trash-can-lid"])
+        XCTAssertEqual(mastery(of: "trash-can-lid"), masteryAfterCue)
+
+        let full = try nextLatchCall()
+        engine.handle(
+            callID: full.id,
+            verdict: resolvedVerdict(tokens: ["lid_handled", "placement_handled"])
+        )
+        XCTAssertEqual(events(.caughtHimself).map(\.detail), ["after-cue"])
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+        XCTAssertEqual(mastery(of: "trash-can-lid"), masteryAfterCue, "zero self-notice increment after a cue")
+    }
+
+    func testPartnerPartialStaysOpen() throws {
+        try setupTrashCan()
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: partLatchVerdict("trash-can-lid"))
+
+        let heartbeat = try nextLatchCall()
+        engine.handle(
+            callID: heartbeat.id,
+            verdict: resolvedVerdict(tokens: ["lid_handled", "placement_unknown"], resolution: .resolvedByPartner)
+        )
+
+        XCTAssertEqual(events(.stillOpen).last?.detail, "partial")
+        XCTAssertEqual(engine.openNeedIDs, ["trash-can-lid"])
+        XCTAssertTrue(events(.resolvedByOther).isEmpty)
+        XCTAssertEqual(mastery(of: "trash-can-lid"), .initial)
+    }
+
+    // MARK: - Part ids
+
+    func testDerivedPartIDs() {
+        XCTAssertEqual(trashCan().resolvedParts.map(\.id), ["lid", "placement"])
+    }
+
+    func testPartIDTokenMatrix() {
+        let need = trashCan()
+        XCTAssertTrue(CompoundParts.allHandled(need: need, tokens: ["lid_handled", "placement_handled"]))
+        XCTAssertFalse(CompoundParts.allHandled(need: need, tokens: ["lid_handled", "placement_unmet"]))
+        XCTAssertFalse(CompoundParts.allHandled(need: need, tokens: ["lid_handled", "placement_unknown"]))
+        XCTAssertFalse(CompoundParts.allHandled(need: need, tokens: ["lid_handled"]))
+        XCTAssertFalse(CompoundParts.allHandled(need: need, tokens: ["lid_unmet", "placement_handled"]))
+        XCTAssertFalse(CompoundParts.allHandled(
+            need: need,
+            tokens: ["lid_handled", "placement_handled", "placement_unmet"]
+        ))
+    }
+
+    func testParaphrasedTokensFallBackAndLogUnknown() throws {
+        try setupTrashCan()
+        glancePair()
+        let latch = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: latch.id, verdict: partLatchVerdict("trash-can-lid"))
+
+        let heartbeat = try nextLatchCall()
+        engine.handle(
+            callID: heartbeat.id,
+            verdict: resolvedVerdict(tokens: ["can_placed_in_corner", "lid_shut"])
+        )
+
+        XCTAssertEqual(events(.stillOpen).last?.detail, "partial")
+        XCTAssertEqual(engine.openNeedIDs, ["trash-can-lid"])
+        XCTAssertEqual(mastery(of: "trash-can-lid"), .initial)
+        XCTAssertTrue(events(.caughtHimself).isEmpty)
+        XCTAssertEqual(
+            events(.partTokenUnknown).map(\.detail),
+            ["token=can_placed_in_corner", "token=lid_shut"]
+        )
+    }
+
+    func testOldNeedWithoutPartsDerivesIDs() throws {
+        let json = """
+        {"id": "trash-can-lid", "author_text": "Close the lid of trash can and move it to the corner",
+         "cue_wording": "Lid's open?",
+         "visual_condition": "lid visibly open, OR can visibly outside the designated corner",
+         "handled_condition": "lid closed AND can in the designated corner",
+         "unknown_condition": "placement cannot be judged when the corner is out of view",
+         "priority": 0}
+        """
+        let decoded = try JSONDecoder().decode(Need.self, from: Data(json.utf8))
+        XCTAssertEqual(decoded.parts?.map(\.id), ["lid", "placement"])
+        XCTAssertEqual(decoded.parts?.first?.handled, "lid closed")
+        XCTAssertEqual(decoded.parts?.first?.unmet, "lid visibly open")
+        XCTAssertEqual(decoded.parts?.last?.handled, "can in the designated corner")
+
+        let roundTripped = try JSONDecoder().decode(
+            Need.self,
+            from: JSONEncoder().encode(decoded)
+        )
+        XCTAssertEqual(roundTripped.parts, decoded.parts, "stored part ids survive a round trip")
     }
 }

@@ -189,6 +189,8 @@ public enum NeedsIntentConversion {
             taken.insert(id)
             let old = existing[id]
             let handled = draft.handledVisual.trimmingCharacters(in: .whitespacesAndNewlines)
+            let handledCond = handled.isEmpty ? old?.handledCondition : handled
+            let visual = draft.visualCue.isEmpty ? old?.visualCondition : draft.visualCue
             let unknown = draft.unknownVisual.trimmingCharacters(in: .whitespacesAndNewlines)
             let trimmedSignal = draft.wearerSignal.trimmingCharacters(in: .whitespacesAndNewlines)
             let signal: String
@@ -201,8 +203,8 @@ public enum NeedsIntentConversion {
                 id: id,
                 authorText: draft.authorText,
                 cueWording: draft.whisper,
-                visualCondition: draft.visualCue.isEmpty ? old?.visualCondition : draft.visualCue,
-                handledCondition: handled.isEmpty ? old?.handledCondition : handled,
+                visualCondition: visual,
+                handledCondition: handledCond,
                 unknownCondition: unknown.isEmpty ? old?.unknownCondition : unknown,
                 selfNoticeSignal: signal.isEmpty ? old?.selfNoticeSignal : signal,
                 dwellSeconds: old?.dwellSeconds,
@@ -210,7 +212,8 @@ public enum NeedsIntentConversion {
                 allowsCheckIn: draft.allowsCheckIn,
                 isUrgent: draft.isUrgent || (old?.isUrgent ?? false),
                 mastery: old?.mastery ?? .initial,
-                uiID: old?.uiID ?? UUID()
+                uiID: old?.uiID ?? UUID(),
+                parts: (visual == old?.visualCondition && handledCond == old?.handledCondition) ? old?.parts : nil
             )
         }
     }
