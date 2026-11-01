@@ -58,6 +58,31 @@ public enum EngineTuning {
     /// that reply before whispering. A hung call still cues once the cap
     /// passes. No extra model call is issued.
     public static let partnerInFlightCueHoldSeconds: TimeInterval = 3
+
+    /// A not-sustained hypothesis at or above this confidence earns one
+    /// confirm call instead of being dropped.
+    public static let confirmMinConfidence: Double = 0.6
+
+    /// The confirm call goes out this soon after the brief sighting.
+    public static let confirmDelaySeconds: TimeInterval = 1.5
+
+    /// Two hypotheses for one need inside this window count as sustained,
+    /// even when each was individually sustained=false.
+    public static let hypothesisRepeatWindowSeconds: TimeInterval = 10
+
+    /// An unlatched wearer action credits only at or above this confidence.
+    public static let unpromptedMinConfidence: Double = 0.7
+
+    /// One unprompted credit per need per window. The need stays unlatched,
+    /// so without this every heartbeat would credit again.
+    public static let unpromptedDebounceSeconds: TimeInterval = 600
+
+    /// Below this sharpness a frame reads as dark (lens covered or lights
+    /// out). Three in a row logs once and holds model calls.
+    public static let darkSharpness: Double = 0.005
+
+    /// Consecutive dark frames before the engine calls it dark.
+    public static let darkStreakFrames = 3
 }
 
 /// How a cue sounds. One place so the speaker, the repeat, and the tests

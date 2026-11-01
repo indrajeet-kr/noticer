@@ -209,5 +209,6 @@ private func assessmentProperties() -> [String: JSONValue] {
         AssessmentField.resolution: jsonStringEnum(Resolution.recognized.map(\.rawValue)),
         AssessmentField.actionCode: jsonString(),
         AssessmentField.confidence: jsonNumber(),
+        AssessmentField.partnerAsleep: jsonBool(),
     ]
 }

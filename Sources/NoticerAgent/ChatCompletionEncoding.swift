@@ -120,6 +120,9 @@ enum ChatCompletionRequest {
                 lines.append(openLine)
             }
         }
+        if let focus = request.focusNeedID {
+            lines.append("focus=\(focus) (check only this need)")
+        }
         lines.append(
             "Keyframes follow, oldest first. Each image is one keyframe. age_seconds is printed in the text part before that image."
         )

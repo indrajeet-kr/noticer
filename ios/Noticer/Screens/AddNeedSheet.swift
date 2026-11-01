@@ -237,6 +237,13 @@ struct AddNeedSheet: View {
                     .font(Theme.Font.body)
                     .foregroundStyle(Theme.textSecondary)
             }
+            if !accepted, !superseded {
+                ForEach(removals(from: drafts), id: \.id) { need in
+                    Text("Removing: \(removalWords(for: need))")
+                        .font(Theme.Font.body)
+                        .foregroundStyle(Theme.terracottaText)
+                }
+            }
             if drafts.isEmpty {
                 Text("Your list is empty.")
                     .font(Theme.Font.body)
@@ -293,6 +300,17 @@ struct AddNeedSheet: View {
     }
 
     // MARK: - Send
+
+    /// Saved needs the pending list drops: exactly what Looks right will
+    /// remove. Blocked removals stay in the drafts, so they never show here.
+    private func removals(from drafts: [NeedsIntentDraft]) -> [Need] {
+        NeedListEdit.removedNeeds(current: model.needs, mergedIDs: Set(drafts.map(\.id)))
+    }
+
+    private func removalWords(for need: Need) -> String {
+        let words = need.authorText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return words.isEmpty ? need.id : words
+    }
 
     private func remove(entryID: UUID, draftID: String) {
         composerFocused = false

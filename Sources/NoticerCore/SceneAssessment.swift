@@ -11,6 +11,7 @@ public enum AssessmentField {
     public static let resolution = "resolution"
     public static let actionCode = "action_code"
     public static let confidence = "confidence"
+    public static let partnerAsleep = "partner_asleep"
 
     public static let all = [
         needID,
@@ -22,6 +23,7 @@ public enum AssessmentField {
         resolution,
         actionCode,
         confidence,
+        partnerAsleep,
     ]
 }
 
@@ -68,6 +70,9 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
     public var resolution: Resolution?
     public var actionCode: String?
     public var confidence: Double?
+    /// She is visibly asleep or her eyes are closed. Check-in needs stay
+    /// quiet; chores still cue. Nil means the model did not say.
+    public var partnerAsleep: Bool?
 
     public init(
         needID: String? = nil,
@@ -78,7 +83,8 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         wearerHandsVisible: Bool? = nil,
         resolution: Resolution? = nil,
         actionCode: String? = nil,
-        confidence: Double? = nil
+        confidence: Double? = nil,
+        partnerAsleep: Bool? = nil
     ) {
         self.needID = needID
         self.sustainedAcrossStrip = sustainedAcrossStrip
@@ -89,6 +95,7 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         self.resolution = resolution
         self.actionCode = actionCode
         self.confidence = confidence
+        self.partnerAsleep = partnerAsleep
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -101,5 +108,6 @@ public struct SceneAssessment: Equatable, Sendable, Codable {
         case resolution
         case actionCode = "action_code"
         case confidence
+        case partnerAsleep = "partner_asleep"
     }
 }

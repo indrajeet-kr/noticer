@@ -13,11 +13,11 @@ struct TeamWinsView: View {
     }
 
     private var selfNoticeCount: Int {
-        wins.filter { $0.kind == .selfNotice }.count
+        wins.filter(\.kind.isUnprompted).count
     }
 
     private var cueCount: Int {
-        wins.filter { $0.kind != .selfNotice }.count
+        wins.filter { !$0.kind.isUnprompted }.count
     }
 
     var body: some View {
@@ -120,7 +120,7 @@ struct TeamWinsView: View {
         HStack(spacing: Theme.Space.s8) {
             ForEach(wins) { win in
                 Circle()
-                    .fill(win.kind == .selfNotice ? Theme.sage : Theme.terracotta)
+                    .fill(win.kind.isUnprompted ? Theme.sage : Theme.terracotta)
                     .frame(width: 20, height: 20)
             }
         }

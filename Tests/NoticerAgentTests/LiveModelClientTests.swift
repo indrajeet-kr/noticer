@@ -117,6 +117,25 @@ final class LiveModelClientTests: XCTestCase {
         XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.partnerInView))
         XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.wearerHandsVisible))
         XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.wearerHandsOccupied))
+        XCTAssertTrue(DeveloperPrompt.text.contains(AssessmentField.partnerAsleep))
+        XCTAssertTrue(DeveloperPrompt.text.contains("report it even when no need is open"))
+        XCTAssertTrue(DeveloperPrompt.text.contains("focus=<need_id>"))
+    }
+
+    func testPartnerAsleepIsOnEveryTool() {
+        for definition in ToolCatalog.all {
+            let entry = definition.chatCompletionsEntry
+            guard case .object(let tool) = entry,
+                  case .object(let function)? = tool["function"],
+                  case .object(let parameters)? = function["parameters"],
+                  case .object(let properties)? = parameters["properties"] else {
+                return XCTFail("tool was not a strict object: \(definition.name)")
+            }
+            XCTAssertNotNil(
+                properties[AssessmentField.partnerAsleep],
+                "\(definition.name.rawValue) must carry partner_asleep"
+            )
+        }
     }
 
     func testUnsetMaxTokensIsOmittedAndLowCapIsRejectedLocally() async {

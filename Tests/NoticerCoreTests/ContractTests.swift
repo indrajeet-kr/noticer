@@ -126,7 +126,8 @@ final class ContractTests: XCTestCase {
             wearerHandsVisible: false,
             resolution: .unknown,
             actionCode: ActionCodeExamples.waterGlassPresent,
-            confidence: 0.7
+            confidence: 0.7,
+            partnerAsleep: false
         )
         let data = try JSONEncoder().encode(assessment)
         let object = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])

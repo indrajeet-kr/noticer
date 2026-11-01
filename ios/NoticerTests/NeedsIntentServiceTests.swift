@@ -376,4 +376,74 @@ final class NeedsIntentServiceTests: XCTestCase {
         // The model dropped four needs nobody named: all six stay.
         XCTAssertEqual(drafts.map(\.id), sixStubNeeds().map(\.id))
     }
+
+    @MainActor
+    func testChoreReplyBlocksRemovalAndLogsIt() async {
+        let model = PhoneSessionModel()
+        var needs = Array(sixStubNeeds().prefix(4))
+        // Evidence wording: the chore names water through "table".
+        needs[2] = Need(id: "water", authorText: "Keep water bottle on dining table", cueWording: "Water?", priority: 1)
+        model.needs = needs
+        let service = model.intentService
+        service.interpretHook = { _, _ in
+            .needs(
+                [
+                    self.stubDraft("take-baby", "eating one-handed, take the baby"),
+                    self.stubDraft("refill-water", "nursing, no water"),
+                    self.stubDraft("pick-roaming-kid", "pick up the roaming kid"),
+                    self.stubDraft("put-plates-in-sink", "Put plates in the sink"),
+                ],
+                readBack: "Removed the water bottle and added plates."
+            )
+        }
+
+        await service.interpret(message: "Remove the table from hall and put plates in sink", model: model)
+
+        guard case .readBack(_, let drafts, _, _, false, false) = service.entries.last else {
+            return XCTFail("expected a read-back, got \(String(describing: service.entries.last))")
+        }
+        // A chore that shares a word with a saved need adds; nothing leaves.
+        XCTAssertEqual(
+            drafts.map(\.id),
+            ["take-baby", "refill-water", "pick-roaming-kid", "put-plates-in-sink", "water"]
+        )
+        XCTAssertTrue(
+            model.sessionLog.activity.contains {
+                $0.tag == "CONV" && $0.message == "removal-blocked id=water reason=no-edit-intent"
+            },
+            "the blocked removal must be logged"
+        )
+        XCTAssertTrue(
+            NeedListEdit.removedNeeds(current: model.needs, mergedIDs: Set(drafts.map(\.id))).isEmpty,
+            "no Removing: line renders when nothing is applied"
+        )
+    }
+
+    @MainActor
+    func testExplicitFromMyListReplyShowsRemoval() async {
+        let model = PhoneSessionModel()
+        model.needs = Array(sixStubNeeds().prefix(4))
+        let service = model.intentService
+        service.interpretHook = { _, _ in
+            .needs(
+                [
+                    self.stubDraft("take-baby", "eating one-handed, take the baby"),
+                    self.stubDraft("refill-water", "nursing, no water"),
+                    self.stubDraft("pick-roaming-kid", "pick up the roaming kid"),
+                ],
+                readBack: "Removed water."
+            )
+        }
+
+        await service.interpret(message: "remove the water bottle need from my list", model: model)
+
+        guard case .readBack(_, let drafts, _, _, false, false) = service.entries.last else {
+            return XCTFail("expected a read-back, got \(String(describing: service.entries.last))")
+        }
+        XCTAssertEqual(
+            NeedListEdit.removedNeeds(current: model.needs, mergedIDs: Set(drafts.map(\.id))).map(\.id),
+            ["water"],
+            "the read-back renders a Removing: line for the applied removal"
+        )
+    }
 }

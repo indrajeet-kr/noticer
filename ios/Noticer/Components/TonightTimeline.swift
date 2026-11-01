@@ -24,10 +24,10 @@ struct TonightTimeline: View {
                     }
                     ForEach(sortedMoments) { moment in
                         timelineRow(
-                            dot: moment.kind == .selfNotice ? .caught : .nudged,
+                            dot: moment.kind.isUnprompted ? .caught : .nudged,
                             words: wordsForMoment(moment),
                             time: moment.at,
-                            detail: moment.sharedWithPartner == true ? "You finished it" : (moment.kind == .selfNotice ? "You got it" : "With a nudge")
+                            detail: moment.sharedWithPartner == true ? "You finished it" : (moment.kind.isUnprompted ? "You got it" : "With a nudge")
                         )
                         if moment.id != sortedMoments.last?.id {
                             Divider().background(Theme.textPrimary.opacity(0.08))

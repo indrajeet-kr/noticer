@@ -264,6 +264,67 @@ final class NeedListEditTests: XCTestCase {
         XCTAssertEqual(merged.map(\.id), ["take-baby", "refill-water", "water", "pick-roaming-kid"])
     }
 
+    func testChorePhrasingKeepsTheSharedWordNeed() {
+        // Evidence: "Remove the table from hall and put plates in sink"
+        // named water through the shared word "table". It is a chore to
+        // add, never a removal: water stays and two needs join.
+        let current = [
+            need("take-baby", "eating one-handed, take the baby", priority: 0),
+            need("refill-water", "nursing, no water"),
+            need("water", "Keep water bottle on dining table"),
+            need("heat-pack", "Ask me for heat pack while on couch"),
+        ]
+        let drafts = [
+            draft("take-baby", "eating one-handed, take the baby"),
+            draft("refill-water", "nursing, no water"),
+            draft("heat-pack", "Ask me for heat pack while on couch"),
+            draft("clear-hall-table", "Clear the table from the hall"),
+            draft("put-plates-in-sink", "Put plates in the sink"),
+        ]
+        let message = "Remove the table from hall and put plates in sink"
+        let merged = NeedListEdit.merge(current: current, drafts: drafts, message: message)
+        XCTAssertEqual(
+            merged.map(\.id),
+            ["take-baby", "refill-water", "heat-pack", "clear-hall-table", "put-plates-in-sink", "water"]
+        )
+        let modelIDs = Set(drafts.map(\.id))
+        XCTAssertEqual(
+            NeedListEdit.blockedRemovals(current: current, modelIDs: modelIDs, message: message).map(\.id),
+            ["water"]
+        )
+        XCTAssertTrue(NeedListEdit.removedNeeds(current: current, mergedIDs: Set(merged.map(\.id))).isEmpty)
+    }
+
+    func testExplicitFromMyListRemoves() {
+        let current = [
+            need("take-baby", "Take the baby"),
+            need("water", "Keep water bottle on dining table"),
+        ]
+        let drafts = [draft("take-baby", "Take the baby")]
+        let merged = NeedListEdit.merge(
+            current: current,
+            drafts: drafts,
+            message: "remove the water bottle need from my list"
+        )
+        XCTAssertEqual(merged.map(\.id), ["take-baby"])
+        XCTAssertEqual(
+            NeedListEdit.removedNeeds(current: current, mergedIDs: Set(merged.map(\.id))).map(\.id),
+            ["water"]
+        )
+    }
+
+    func testDontNeedAnymoreAndStopRemindingRemove() {
+        let current = [
+            need("take-baby", "Take the baby"),
+            need("water", "Keep water bottle on dining table"),
+        ]
+        let drafts = [draft("take-baby", "Take the baby")]
+        for message in ["I don't need the water one anymore", "stop reminding me about water"] {
+            let merged = NeedListEdit.merge(current: current, drafts: drafts, message: message)
+            XCTAssertEqual(merged.map(\.id), ["take-baby"], message)
+        }
+    }
+
     func testUnnamedDropsAreKept() {
         // Regression for the 6 -> 4 bug: the model returned 4 needs that
         // left out toys and glasses and never added the mat. Nothing she

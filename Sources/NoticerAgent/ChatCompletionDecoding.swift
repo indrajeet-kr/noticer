@@ -214,6 +214,7 @@ enum ChatCompletionResponse {
         AssessmentField.wearerHandsOccupied,
         AssessmentField.partnerInView,
         AssessmentField.wearerHandsVisible,
+        AssessmentField.partnerAsleep,
     ]
 
     private static let nullableStringFields: Set<String> = [

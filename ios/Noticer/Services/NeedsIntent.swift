@@ -73,6 +73,7 @@ public enum NeedsIntentSystemPrompt {
         - Priority: "important" if she stresses urgency or safety, "gentle" if casual, otherwise "normal". allowsCheckIn is true only if she says asking her is fine.
         - Do not add medical, medication or dosing, fever, infant sleep or breathing monitoring, or mental-health requests. Instead call ask_clarifying_question, gently explaining that Noticer only helps with everyday household logistics, and suggest a household version if there is one.
         - If CURRENT_LIST is non-empty, treat her message as an edit (reprioritize, remove, reword, add) and return the FULL updated list via set_needs, keeping existing ids.
+        - An imperative chore ("Remove the table from the hall", "Take out the trash", "Clear the dishes") is a NEW need to add, never a removal. Drop an existing need only when she explicitly edits the list ("remove X from my list", "I don't need X anymore", "stop reminding me about X").
         - If she lists more than 6 needs, call ask_clarifying_question asking which 6 matter most, with suggestions.
         - If a need is too vague to observe, call ask_clarifying_question with exactly one gentle question.
         - Otherwise call set_needs. Never call both tools.
