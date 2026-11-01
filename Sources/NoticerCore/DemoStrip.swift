@@ -101,17 +101,21 @@ public enum DemoStripMapper {
     }
 
     /// The head-start row that follows a latch immediately. Nil for other
-    /// events or when no head start is known.
+    /// events or when no head start is known. The countdown end is anchored
+    /// to `now` (wall time at drain), not the engine-stamped event time: the
+    /// strip renders against the wall clock, and replay stamps events on a
+    /// clock that can lag it, which expired the countdown instantly.
     public static func headStartFollowUp(
         for event: EngineEvent,
-        headStartSeconds: (String) -> TimeInterval?
+        headStartSeconds: (String) -> TimeInterval?,
+        now: Date = Date()
     ) -> (String, DemoStripItem.Style, Date?)? {
         guard event.kind == .needLatched,
             let needID = event.needID,
             let seconds = headStartSeconds(needID)
         else { return nil }
         let shown = max(0, Int(seconds.rounded()))
-        return ("Head start: \(shown)s for you", .headStart, event.at.addingTimeInterval(TimeInterval(shown)))
+        return ("Head start: \(shown)s for you", .headStart, now.addingTimeInterval(TimeInterval(shown)))
     }
 
     /// "Whispered: “\(spokenText)”". The inner text is byte-equal to the input.

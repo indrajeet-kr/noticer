@@ -45,7 +45,7 @@ final class DemoStripTests: XCTestCase {
         XCTAssertEqual(noticed.1, .noticed)
         XCTAssertNil(noticed.2)
 
-        let followUp = try XCTUnwrap(DemoStripMapper.headStartFollowUp(for: latched, headStartSeconds: { _ in 10 }))
+        let followUp = try XCTUnwrap(DemoStripMapper.headStartFollowUp(for: latched, headStartSeconds: { _ in 10 }, now: start))
         XCTAssertEqual(followUp.0, "Head start: 10s for you")
         XCTAssertEqual(followUp.1, .headStart)
         XCTAssertEqual(followUp.2, start.addingTimeInterval(10))
@@ -91,6 +91,18 @@ final class DemoStripTests: XCTestCase {
         XCTAssertNil(mapped(event(.cueFired, needID: "couch-water", detail: "whisper")))
         XCTAssertNil(DemoStripMapper.headStartFollowUp(for: event(.cueFired), headStartSeconds: { _ in 10 }))
         XCTAssertNil(DemoStripMapper.headStartFollowUp(for: event(.needLatched), headStartSeconds: { _ in 10 }))
+    }
+
+    func testHeadStartCountdownAnchoredToNowNotEventTime() throws {
+        // Replay stamps the latch on a clock that can lag the wall clock
+        // the strip renders against. The countdown must start from drain
+        // time, not the stale event stamp.
+        let stale = event(.needLatched, needID: "couch-water", at: start)
+        let followUp = try XCTUnwrap(
+            DemoStripMapper.headStartFollowUp(for: stale, headStartSeconds: { _ in 10 }, now: start.addingTimeInterval(30))
+        )
+        XCTAssertEqual(followUp.0, "Head start: 10s for you")
+        XCTAssertEqual(followUp.2, start.addingTimeInterval(40))
     }
 
     func testShortTitleUsesWordsNotIDs() {

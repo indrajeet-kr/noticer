@@ -128,6 +128,28 @@ final class DemoStripModelTests: XCTestCase {
     }
 
     @MainActor
+    func testHeadStartCountdownAnchoredToWallTime() throws {
+        UserDefaults.standard.set(true, forKey: demoKey)
+        let model = PhoneSessionModel()
+        model.mode = .replay
+        model.selectedReplayID = "missing"
+        model.start()
+
+        // Replay stamps events on the engine clock, which can lag the wall
+        // clock the strip renders against. The countdown must still start
+        // live instead of expiring instantly to "Head start: 0s for you".
+        let eventAt = Date().addingTimeInterval(-30)
+        model.applyLiveState(view(at: Date(), log: [EngineEvent(kind: .needLatched, needID: "take-baby", at: eventAt)]))
+
+        let row = try XCTUnwrap(model.demoStrip.items.last { $0.style == .headStart })
+        XCTAssertEqual(row.text, "Head start: 10s for you")
+        let endsAt = try XCTUnwrap(row.countdownEndsAt)
+        XCTAssertGreaterThan(endsAt.timeIntervalSinceNow, 5, "countdown already expired")
+        XCTAssertLessThan(endsAt.timeIntervalSinceNow, 11, "countdown runs past the grant")
+        model.stop()
+    }
+
+    @MainActor
     func testSpeechStartCaptionMatchesSpoken() async {
         UserDefaults.standard.set(true, forKey: demoKey)
         let model = PhoneSessionModel()

@@ -20,34 +20,46 @@ struct LiveSessionView: View {
     var body: some View {
         NavigationStack(path: $path) {
             TimelineView(.periodic(from: .now, by: 1)) { _ in
-                ScrollView {
-                    VStack(spacing: Theme.Space.sectionGap) {
-                        header
-                        deviceRow
-                        circleSection
-                        if showDemoStrip {
-                            DemoLiveStrip(
-                                items: model.demoStrip.visibleItems(),
-                                chip: model.demoChip,
-                                relative: { model.demoStrip.relativeTime($0) }
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(spacing: Theme.Space.sectionGap) {
+                            header
+                            deviceRow
+                            circleSection
+                            if showDemoStrip {
+                                DemoLiveStrip(
+                                    items: model.demoStrip.visibleItems(),
+                                    chip: model.demoChip,
+                                    relative: { model.demoStrip.relativeTime($0) }
+                                )
+                                // Keeps the newest strip row above the tab bar:
+                                // scrolling this tail to the bottom lands the
+                                // strip exactly clear of it. Off means off.
+                                Color.clear
+                                    .frame(height: 96)
+                                    .id("demoStripTail")
+                            }
+                            if model.runError != nil || !model.notices.isEmpty {
+                                attentionCard
+                            }
+                            TonightTimeline(
+                                moments: model.tonightMoments,
+                                isRunning: model.isRunning,
+                                wordsForMoment: { model.momentWords(for: $0) }
                             )
+                            quickTiming
+                            auxiliaryActions
                         }
-                        if model.runError != nil || !model.notices.isEmpty {
-                            attentionCard
-                        }
-                        TonightTimeline(
-                            moments: model.tonightMoments,
-                            isRunning: model.isRunning,
-                            wordsForMoment: { model.momentWords(for: $0) }
-                        )
-                        quickTiming
-                        auxiliaryActions
+                        .screenMargins()
+                        .padding(.top, Theme.Space.s16)
+                        .padding(.bottom, Theme.Space.s32)
                     }
-                    .screenMargins()
-                    .padding(.top, Theme.Space.s16)
-                    .padding(.bottom, Theme.Space.s32)
+                    .contentMargins(.bottom, 96, for: .scrollContent)
+                    .onChange(of: model.demoStrip.items.map(\.id)) { _, _ in
+                        guard showDemoStrip else { return }
+                        proxy.scrollTo("demoStripTail", anchor: .bottom)
+                    }
                 }
-                .contentMargins(.bottom, 96, for: .scrollContent)
             }
             .ambientScreen()
             .toolbar {
