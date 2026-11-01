@@ -363,11 +363,11 @@ final class PhoneSessionModelTests: XCTestCase {
         ))
 
         XCTAssertEqual(model.moments.map(\.needID), ["take-baby"])
-        XCTAssertEqual(model.moments.map(\.kind), [.noticed])
+        XCTAssertEqual(model.moments.map(\.kind), [.selfNotice])
         XCTAssertTrue(model.moments.allSatisfy(\.kind.isUnprompted))
         XCTAssertTrue(
             model.sessionLog.activity.contains {
-                $0.tag == "TONIGHT" && $0.message.contains("kind=noticed") && $0.message.contains("why=unprompted")
+                $0.tag == "TONIGHT" && $0.message.contains("kind=selfNotice") && $0.message.contains("why=unprompted")
             }
         )
         XCTAssertEqual(model.tonightCueCount, 0, "an unprompted notice is not a cue")

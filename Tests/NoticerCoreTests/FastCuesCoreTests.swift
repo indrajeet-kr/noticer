@@ -577,7 +577,7 @@ final class FastCuesCoreTests: EngineTestCase {
         let latch = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: latch.id, verdict: latchVerdict("take-baby"))
 
-        // `resolvedByPartner` on `report_no_transition` or `defer_cue_wearer_busy` is ignored.
+        // `resolvedByOther` on `report_no_transition` or `defer_cue_wearer_busy` is ignored.
         for (idx, wrongTool) in [ToolName.reportNoTransition, .deferCueWearerBusy].enumerated() {
             advance(SessionLimits.heartbeatSeconds)
             see([mom()], jpeg: UInt8(idx + 3))
@@ -604,7 +604,7 @@ final class FastCuesCoreTests: EngineTestCase {
         )
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
         XCTAssertEqual(mastery(of: "take-baby").score, 0)
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
     }
 
     func testMatchingSignalCredits() throws {
@@ -1272,7 +1272,7 @@ final class FastCuesCoreTests: EngineTestCase {
         let catches = events(.caughtHimself).filter { $0.needID == "clean-floor-toys" }
         XCTAssertEqual(catches.count, 1)
         XCTAssertTrue(["after-cue", "recent-intervention"].contains(catches.first?.detail ?? ""))
-        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+        XCTAssertTrue(events(.resolvedByOther).isEmpty)
         XCTAssertEqual(engine.openNeedIDs, [])
         XCTAssertEqual(mastery(of: "clean-floor-toys"), masteryAfterCue)
     }
@@ -1287,7 +1287,7 @@ final class FastCuesCoreTests: EngineTestCase {
 
         try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: true, hands: false))
 
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
     }
 
@@ -1300,7 +1300,7 @@ final class FastCuesCoreTests: EngineTestCase {
 
         try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
 
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
     }
 
@@ -1316,7 +1316,7 @@ final class FastCuesCoreTests: EngineTestCase {
 
         try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
 
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
     }
 
@@ -1329,7 +1329,7 @@ final class FastCuesCoreTests: EngineTestCase {
         try heartbeatToys(noTransition("clean-floor-toys", sustained: true))
 
         XCTAssertTrue(events(.caughtHimself).isEmpty)
-        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+        XCTAssertTrue(events(.resolvedByOther).isEmpty)
         XCTAssertEqual(engine.openNeedIDs, ["clean-floor-toys"])
     }
 
@@ -1398,8 +1398,8 @@ final class FastCuesCoreTests: EngineTestCase {
         XCTAssertNil(closingContext.wearerActedSecondsAgo)
         engine.handle(callID: closing.id, verdict: resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
 
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
-        XCTAssertEqual(events(.resolvedByPartner).first?.detail, "report_need_resolved")
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).first?.detail, "report_need_resolved")
         XCTAssertTrue(events(.caughtHimself).isEmpty)
     }
 
@@ -1446,7 +1446,7 @@ final class FastCuesCoreTests: EngineTestCase {
         XCTAssertEqual(catches.count, 1)
         XCTAssertEqual(catches.first?.detail, "shared-finish")
         XCTAssertEqual(catches.first?.isSharedFinish, true)
-        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+        XCTAssertTrue(events(.resolvedByOther).isEmpty)
         XCTAssertEqual(engine.openNeedIDs, [])
         XCTAssertEqual(mastery(of: "clean-floor-toys"), masteryAfterCue)
     }
@@ -1464,7 +1464,7 @@ final class FastCuesCoreTests: EngineTestCase {
         let masteryBeforeClose = mastery(of: "clean-floor-toys")
         engine.handle(callID: close.id, verdict: resolvedToys(resolution: .resolvedByPartner, partner: true, hands: false))
 
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
         XCTAssertEqual(mastery(of: "clean-floor-toys"), masteryBeforeClose)
         XCTAssertEqual(engine.openNeedIDs, [])
@@ -1479,7 +1479,7 @@ final class FastCuesCoreTests: EngineTestCase {
 
         try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: true, hands: true))
 
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
     }
 
@@ -1495,7 +1495,7 @@ final class FastCuesCoreTests: EngineTestCase {
         let catches = events(.caughtHimself).filter { $0.needID == "clean-floor-toys" }
         XCTAssertEqual(catches.count, 1)
         XCTAssertNotEqual(catches.first?.detail, "shared-finish")
-        XCTAssertTrue(events(.resolvedByPartner).isEmpty)
+        XCTAssertTrue(events(.resolvedByOther).isEmpty)
     }
 
     func testSharedFinishBeforeCueAppliesSelfNotice() throws {
@@ -1530,7 +1530,7 @@ final class FastCuesCoreTests: EngineTestCase {
 
         try heartbeatToys(resolvedToys(resolution: .resolvedByPartner, partner: false, hands: false))
 
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
     }
 
@@ -1701,7 +1701,7 @@ final class FastCuesCoreTests: EngineTestCase {
         engine.handle(callID: heartbeat.id, verdict: partnerResolvedKid())
         XCTAssertTrue(engine.cues.isEmpty, "resolved reply must not speak")
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
-        XCTAssertEqual(events(.resolvedByPartner).count, 1)
+        XCTAssertEqual(events(.resolvedByOther).count, 1)
     }
 
     func testNoPartnerInViewDoesNotDelayTheCue() throws {

@@ -123,6 +123,9 @@ enum ChatCompletionRequest {
         if let focus = request.focusNeedID {
             lines.append("focus=\(focus) (check only this need)")
         }
+        if !request.unpromptedStartedIDs.isEmpty {
+            lines.append("Started by wearer: \(request.unpromptedStartedIDs.joined(separator: ", "))")
+        }
         lines.append(
             "Keyframes follow, oldest first. Each image is one keyframe. age_seconds is printed in the text part before that image."
         )

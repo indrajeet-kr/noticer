@@ -168,7 +168,7 @@ CI runs that on Ubuntu for every pull request, and it builds `noticer-replay` an
 
 ## Privacy
 
-Sampled frames will go to Meta's API in live mode, or to Baseten if that fallback is added later. This repo does not send them. Rules, labels, and the log are what stay on the phone. Frames stay in memory: the upload JPEG is about 512 px on the long side at quality 0.65, and nothing in the gate or the camera seam writes a frame to disk. The DAT SDK's analytics and crash reporting are opted out with `MWDAT > Analytics > OptOut` and `MWDAT > CrashReporting > OptOut` in `Info.plist` (SDK 1.0.1 README). There is no separate runtime switch. Retention terms for the APIs were not checked. There is no microphone permission: the glasses mic stays closed.
+Noticer doesn't save camera frames. Your needs, progress and activity log stay on the phone. Selected frames and the need descriptions are sent to Meta's model to check the scene. This repo does not send them; sampled frames go to Meta's API in live mode, or to Baseten if that fallback is added later. Frames stay in memory: the upload JPEG is about 512 px on the long side at quality 0.65, and nothing in the gate or the camera seam writes a frame to disk. The DAT SDK's analytics and crash reporting are opted out with `MWDAT > Analytics > OptOut` and `MWDAT > CrashReporting > OptOut` in `Info.plist` (SDK 1.0.1 README). There is no separate runtime switch. The standard model setting doesn't train on our data. There is no microphone permission: the glasses mic stays closed. Visitor pausing is manual: the live frame gate passes no people to the engine, so uploads never pause on their own.
 
 ## License
 

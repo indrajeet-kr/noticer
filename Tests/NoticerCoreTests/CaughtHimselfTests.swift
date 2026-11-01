@@ -94,7 +94,7 @@ final class CaughtHimselfTests: EngineTestCase {
         XCTAssertEqual(mastery(of: "take-baby"), seeded)
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
         XCTAssertTrue(engine.cues.isEmpty)
-        XCTAssertEqual(events(.resolvedByPartner).last?.detail, ToolName.reportNeedResolved.rawValue)
+        XCTAssertEqual(events(.resolvedByOther).last?.detail, ToolName.reportNeedResolved.rawValue)
     }
 
     func testPartnerResolutionOnAnyToolBeatsAPendingCatch() throws {
@@ -109,7 +109,7 @@ final class CaughtHimselfTests: EngineTestCase {
         try heartbeat(partnerResolved("take-baby", tool: .deferCueWearerBusy))
         XCTAssertEqual(mastery(of: "take-baby"), seeded)
         XCTAssertTrue(events(.caughtHimself).isEmpty)
-        XCTAssertEqual(events(.resolvedByPartner).last?.detail, ToolName.deferCueWearerBusy.rawValue)
+        XCTAssertEqual(events(.resolvedByOther).last?.detail, ToolName.deferCueWearerBusy.rawValue)
     }
 
     func testAnUnknownResolutionStringIsIgnored() throws {

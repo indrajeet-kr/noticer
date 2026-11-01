@@ -5,16 +5,24 @@ import NoticerCore
 /// or a cue helped. Stored on the phone only.
 struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
     enum Kind: String, Codable, Sendable {
+        /// Completed before any cue in its episode, or completed outside
+        /// any episode. The only unprompted kind.
         case selfNotice
+        /// A reminder row. Shown, but never counted as a win. Upgraded to
+        /// nudge in place when its episode completes after the cue.
         case cued
-        /// He handled it after a whisper. Reads as nudged, like a cue.
+        /// Completed after a cue in that same episode.
         case nudge
-        /// He did it with nothing open: no latch, no cue. Reads as his own.
-        case noticed
 
-        /// Self-notices and unprompted notices: help with no cue behind it.
+        /// Help with no cue behind it.
         var isUnprompted: Bool {
-            self == .selfNotice || self == .noticed
+            self == .selfNotice
+        }
+
+        /// A completed win: done with or without a reminder. Cued rows
+        /// are reminders, not wins.
+        var isWin: Bool {
+            self == .selfNotice || self == .nudge
         }
     }
 
@@ -31,8 +39,12 @@ struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
     /// She started it, he wrapped it up. Nil for moments saved before the
     /// shared finish existed; those decode unchanged.
     var sharedWithPartner: Bool?
+    /// The engine episode, when the moment belongs to one. A cue and its
+    /// completion share it; the upgrade matches on this, never on need
+    /// and time alone. Nil for unprompted completions and legacy rows.
+    var episodeID: String?
 
-    init(id: UUID = UUID(), at: Date, needID: String, kind: Kind, text: String, sessionID: UUID? = nil, sharedWithPartner: Bool? = nil) {
+    init(id: UUID = UUID(), at: Date, needID: String, kind: Kind, text: String, sessionID: UUID? = nil, sharedWithPartner: Bool? = nil, episodeID: String? = nil) {
         self.id = id
         self.at = at
         self.needID = needID
@@ -40,6 +52,7 @@ struct SessionMoment: Identifiable, Codable, Equatable, Sendable {
         self.text = text
         self.sessionID = sessionID
         self.sharedWithPartner = sharedWithPartner
+        self.episodeID = episodeID
     }
 }
 

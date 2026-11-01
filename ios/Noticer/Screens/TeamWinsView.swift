@@ -12,12 +12,17 @@ struct TeamWinsView: View {
         model.tonightMoments.sorted { $0.at < $1.at }
     }
 
-    private var selfNoticeCount: Int {
-        wins.filter(\.kind.isUnprompted).count
+    /// Completed wins only. Cued rows are shown below but never counted.
+    private var countedWins: [SessionMoment] {
+        wins.filter(\.kind.isWin)
     }
 
-    private var cueCount: Int {
-        wins.filter { !$0.kind.isUnprompted }.count
+    private var selfNoticeCount: Int {
+        countedWins.filter { $0.kind == .selfNotice }.count
+    }
+
+    private var nudgeCount: Int {
+        countedWins.filter { $0.kind == .nudge }.count
     }
 
     var body: some View {
@@ -113,12 +118,12 @@ struct TeamWinsView: View {
 
     private var summary: String {
         let prior = CueHistoryStore.mostRecentPriorDay(before: model.tonightSessionDay, in: model.cueHistory)?.count
-        return WinsSummary.sentence(selfNotices: selfNoticeCount, cues: cueCount, priorCues: prior)
+        return WinsSummary.sentence(selfNotices: selfNoticeCount, cues: nudgeCount, priorCues: prior)
     }
 
     private var winCircles: some View {
         HStack(spacing: Theme.Space.s8) {
-            ForEach(wins) { win in
+            ForEach(countedWins) { win in
                 Circle()
                     .fill(win.kind.isUnprompted ? Theme.sage : Theme.terracotta)
                     .frame(width: 20, height: 20)
@@ -126,7 +131,7 @@ struct TeamWinsView: View {
         }
         .frame(maxWidth: .infinity, alignment: .center)
         .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(selfNoticeCount) caught on his own, \(cueCount) with a nudge")
+        .accessibilityLabel("You noticed: \(selfNoticeCount). After a reminder: \(nudgeCount).")
     }
 
     private var dayLine: String {

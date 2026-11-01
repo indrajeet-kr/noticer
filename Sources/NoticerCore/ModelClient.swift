@@ -11,19 +11,24 @@ public struct ModelRequest: Equatable, Sendable {
     public var purpose: ModelCallPurpose?
     /// Confirm calls check only this need. Nil for every other purpose.
     public var focusNeedID: String?
+    /// Needs with an armed unprompted start. The model may close one by
+    /// naming it on `report_need_resolved` when its handled state is true.
+    public var unpromptedStartedIDs: [String]
 
     public init(
         keyframes: [Keyframe],
         needs: [Need],
         openNeeds: [OpenNeedContext] = [],
         purpose: ModelCallPurpose? = nil,
-        focusNeedID: String? = nil
+        focusNeedID: String? = nil,
+        unpromptedStartedIDs: [String] = []
     ) {
         self.keyframes = keyframes
         self.needs = needs
         self.openNeeds = openNeeds
         self.purpose = purpose
         self.focusNeedID = focusNeedID
+        self.unpromptedStartedIDs = unpromptedStartedIDs
     }
 }
 
