@@ -83,8 +83,8 @@ struct NeedDetailView: View {
     }
 
     private var cueWords: String {
-        let cue = need.cueWording.trimmingCharacters(in: .whitespacesAndNewlines)
-        return cue.isEmpty ? displayWords : cue
+        let spoken = SpokenCueForm.line(cueWording: need.cueWording, authorText: need.authorText)
+        return spoken.isEmpty ? displayWords : spoken
     }
 
     private var timing: (main: String, detail: String?) {

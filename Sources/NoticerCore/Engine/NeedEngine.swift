@@ -49,6 +49,10 @@ public struct NeedEngine<TimeSource: Clock> {
         /// a resolution verdict can still credit it.
         var cueFiredAt: Date?
         var cueID: String?
+        /// One slower "Again" after the cue, if he is still new to the need.
+        var repeatDueAt: Date? = nil
+        var repeatDelivered: Bool = false
+        var repeatAllowed: Bool = false
         /// Last matching intervention. Later replies never clear it.
         var lastMatchingInterventionAt: Date? = nil
         /// Last reply naming this need that saw the partner engaged.
@@ -108,6 +112,7 @@ public struct NeedEngine<TimeSource: Clock> {
     private var closedAt: [String: Date] = [:]
     private var sessionStartedAt: Date
     private var didLogSessionEnd = false
+    private var sessionStopped = false
     private var didLogBudget = false
     private var callSerial = 0
     private var cueSerial = 0
@@ -133,6 +138,9 @@ public struct NeedEngine<TimeSource: Clock> {
     private var lastSuccessfulLatchAt: Date?
     private var revisionAtLastLatchCall = 0
     private var lastCueAt: Date?
+    /// Live and Demo mode leave this on. Plain replay turns it off so a
+    /// review of a take does not invent a second utterance.
+    private var repeatsEnabled = true
     private var handEdgePending = false
     private var staleCallIDs: Set<String> = []
     private var callsIssued = 0
@@ -247,6 +255,23 @@ public struct NeedEngine<TimeSource: Clock> {
         choreMark = nil
     }
 
+    /// Plain replay turns repeats off. Live and Demo mode leave them on.
+    /// Stopping the session is separate: `stopSession()` drops a pending repeat.
+    public mutating func setRepeatsEnabled(_ enabled: Bool) {
+        repeatsEnabled = enabled
+    }
+
+    /// The phone calls this when the session stops (live, demo, or replay)
+    /// so a later tick cannot speak the repeat.
+    public mutating func stopSession() {
+        sessionStopped = true
+        if !didLogSessionEnd {
+            didLogSessionEnd = true
+            record(.sessionEnded, needID: nil, detail: "stopped")
+        }
+        pendingModelCalls.removeAll()
+    }
+
     /// A phone tap that this whisper was wrong. Mastery returns to the
     /// pre-cue value. The cue still counts toward the rate limit.
     public mutating func dismissFalseCue(_ cueID: String) {
@@ -256,6 +281,10 @@ public struct NeedEngine<TimeSource: Clock> {
         catalog.update(need)
         effect.dismissed = true
         cueEffects[cueID] = effect
+        if let index = indexOfOpen(effect.needID) {
+            tracked[index].repeatAllowed = false
+            tracked[index].repeatDelivered = true
+        }
         record(.falseCueDismissed, needID: effect.needID, detail: cueID)
     }
 
@@ -390,7 +419,7 @@ public struct NeedEngine<TimeSource: Clock> {
     private mutating func evaluate() {
         let now = clock.now()
         buffer.expire(now: now)
-        if sessionIsOver(now) {
+        if sessionStopped || sessionIsOver(now) {
             if !didLogSessionEnd {
                 didLogSessionEnd = true
                 record(.sessionEnded, needID: nil, detail: nil)
@@ -402,6 +431,7 @@ public struct NeedEngine<TimeSource: Clock> {
         closeNeedsWithNoPerson(now: now)
         closePostCueTimeouts(now: now)
         resolveDueNeeds(now: now)
+        considerRepeats(now: now)
         scheduleModelCall(now: now)
     }
 
@@ -611,9 +641,8 @@ public struct NeedEngine<TimeSource: Clock> {
         let text: String
         switch kind {
         case .whisper, .checkIn:
-            // Check-in has no separate phrase in the contract. The kind is the
-            // signal; the words stay the ones mom already wrote.
-            text = need.cueWording
+            // The longer reason stays on the need. His ear gets the short action.
+            text = SpokenCueForm.line(cueWording: need.cueWording, authorText: need.authorText)
         case .chime:
             text = ""
         }
@@ -638,6 +667,17 @@ public struct NeedEngine<TimeSource: Clock> {
             tracked[index].cueDelivered = true
             tracked[index].cueFiredAt = now
             tracked[index].cueID = cue.id
+            // Score from before applyCueFired. A cue multiplies mastery, and
+            // the streak resets, so the post-cue numbers cannot say "still new".
+            let allowRepeat = repeatsEnabled
+                && (kind == .whisper || kind == .checkIn)
+                && !text.isEmpty
+                && need.mastery.score < CueSpeechTuning.repeatMasteryCutoff
+            tracked[index].repeatAllowed = allowRepeat
+            tracked[index].repeatDelivered = false
+            tracked[index].repeatDueAt = allowRepeat
+                ? now.addingTimeInterval(CueSpeechTuning.repeatDelaySeconds)
+                : nil
             recordedCueTimings.append(
                 CueTimingSnapshot(
                     cueID: cue.id,
@@ -649,6 +689,79 @@ public struct NeedEngine<TimeSource: Clock> {
             )
         }
         record(.cueFired, needID: need.id, detail: kind.rawValue)
+    }
+
+    /// One slower "Again," if the delay has passed and the same gates that
+    /// would hold a whisper still say it is his to hear. A jumped clock that
+    /// lands past the window does not speak late.
+    private mutating func considerRepeats(now: Date) {
+        guard repeatsEnabled else { return }
+        for index in tracked.indices {
+            guard tracked[index].repeatAllowed, !tracked[index].repeatDelivered else { continue }
+            guard let due = tracked[index].repeatDueAt else { continue }
+            guard now >= due else { continue }
+            if now >= due.addingTimeInterval(CueSpeechTuning.repeatWindowSeconds) {
+                tracked[index].repeatDelivered = true
+                continue
+            }
+            let needID = tracked[index].needID
+            guard catalog.need(id: needID) != nil else {
+                tracked[index].repeatDelivered = true
+                continue
+            }
+            if wearerIntervenedSinceCue(at: index) {
+                tracked[index].repeatDelivered = true
+                continue
+            }
+            // Same hands-busy hold as the original whisper: wait inside the
+            // window, and do not speak once the window has passed.
+            if tracked[index].handsBusy && now < tracked[index].hardCapAt {
+                continue
+            }
+            if holdRepeatForPartner(at: index) {
+                continue
+            }
+            guard let need = catalog.need(id: needID) else { continue }
+            deliverRepeat(for: need, at: index, now: now)
+        }
+    }
+
+    private func wearerIntervenedSinceCue(at index: Int) -> Bool {
+        if tracked[index].pendingWearerAction != nil {
+            return true
+        }
+        guard let acted = tracked[index].lastMatchingInterventionAt,
+              let fired = tracked[index].cueFiredAt
+        else { return false }
+        return acted >= fired
+    }
+
+    /// Partner in view and a check for this need still in flight. Unlike the
+    /// pre-cue hold, this is not capped from the cue deadline: the repeat
+    /// window is already short, and a hung call simply misses the window.
+    private func holdRepeatForPartner(at index: Int) -> Bool {
+        guard latestPartnerInView == true else { return false }
+        let needID = tracked[index].needID
+        return pendingModelCalls.contains { call in
+            call.request.openNeeds.contains { $0.needID == needID }
+        }
+    }
+
+    private mutating func deliverRepeat(for need: Need, at index: Int, now: Date) {
+        tracked[index].repeatDelivered = true
+        cueSerial += 1
+        let base = playedCues.last { $0.needID == need.id && !$0.isRepeat }?.text
+            ?? SpokenCueForm.line(cueWording: need.cueWording, authorText: need.authorText)
+        let cue = Cue(
+            id: "cue-\(cueSerial)",
+            needID: need.id,
+            text: SpokenCueForm.repeatLine(base),
+            kind: tracked[index].pendingCueKind == .checkIn ? .checkIn : .whisper,
+            createdAt: now,
+            isRepeat: true
+        )
+        playedCues.append(cue)
+        record(.cueFired, needID: need.id, detail: CueSpeechTuning.repeatEventDetail)
     }
 
     private mutating func recordRetiredMiss(_ needID: String, now: Date) {

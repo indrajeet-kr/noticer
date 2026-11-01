@@ -1,3 +1,4 @@
+import NoticerCore
 import SwiftUI
 
 /// One numbered read-back of a need in her words: the need, the whisper
@@ -6,6 +7,11 @@ struct NeedReadBackCard: View {
     var number: Int
     var draft: NeedsIntentDraft
     var changed: Bool = false
+
+    private var heard: String {
+        let spoken = SpokenCueForm.line(cueWording: draft.whisper, authorText: draft.authorText)
+        return spoken.isEmpty ? draft.whisper : spoken
+    }
 
     var body: some View {
         GlassCard(padding: Theme.Space.card) {
@@ -19,7 +25,7 @@ struct NeedReadBackCard: View {
                             .foregroundStyle(Theme.sageStrong)
                     }
                 }
-                Text("He'll hear: “\(draft.whisper)”")
+                Text("He'll hear: “\(heard)”")
                     .font(Theme.Font.body)
                     .foregroundStyle(Theme.textSecondary)
                 HStack(spacing: Theme.Space.s8) {

@@ -178,6 +178,19 @@ final class DemoStripTests: XCTestCase {
         XCTAssertEqual(Array(inner.utf8), Array(spoken.utf8))
     }
 
+    func testRepeatStepCaption() {
+        XCTAssertEqual(DemoStripMapper.repeatCaption, "Repeated once")
+        XCTAssertEqual(
+            DemoStripMapper.stepCaption(spoken: "Refill her water", isRepeat: false),
+            "Whispered: “Refill her water”"
+        )
+        XCTAssertEqual(
+            DemoStripMapper.stepCaption(spoken: "Again, Refill her water", isRepeat: true),
+            "Repeated once"
+        )
+        XCTAssertTrue(DemoStripMapper.passesWordRules(DemoStripMapper.repeatCaption))
+    }
+
     func testAllFixedStringsPassWordRules() {
         var corpus = [DemoStripMapper.firstFrame] + DemoStripMapper.userFacingListeningLines
         for kind in Self.allKinds {
@@ -191,6 +204,7 @@ final class DemoStripTests: XCTestCase {
             corpus.append(followUp.0)
         }
         corpus.append(DemoStripMapper.whisperCaption("Toys everywhere, quick tidy?"))
+        corpus.append(DemoStripMapper.repeatCaption)
         if let chip = DemoStripMapper.latencyChip(fromTimingLine: "call=call-4 purpose=latch queue=0ms model=2694ms apply=0.7ms bytes=44208") {
             corpus.append(chip)
         }
@@ -223,6 +237,7 @@ final class DemoStripTests: XCTestCase {
             }
         }
         corpus.append(DemoStripMapper.whisperCaption("Toys everywhere, quick tidy?"))
+        corpus.append(DemoStripMapper.repeatCaption)
         if let chip = DemoStripMapper.latencyChip(fromTimingLine: "call=call-4 purpose=latch queue=0ms model=2694ms apply=0.7ms bytes=44208") {
             corpus.append(chip)
         }

@@ -181,6 +181,16 @@ public actor SessionPipeline {
         engine.dismissFalseCue(id)
     }
 
+    /// Live and Demo mode leave repeats on. Plain replay turns them off.
+    public func setCueRepeatsEnabled(_ enabled: Bool) {
+        engine.setRepeatsEnabled(enabled)
+    }
+
+    /// Session stop. A later tick must not speak a pending repeat.
+    public func stopSession() {
+        engine.stopSession()
+    }
+
     public func replaceNeeds(_ needs: [Need]) async throws {
         try engine.setNeeds(needs)
         if latency.instantSpeech {

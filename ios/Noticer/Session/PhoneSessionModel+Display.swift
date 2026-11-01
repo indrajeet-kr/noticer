@@ -42,6 +42,20 @@ extension PhoneSessionModel {
         )
     }
 
+    /// Most recent spoken cue, with a relative time, for a glance at Tonight.
+    func lastCueGlance(at now: Date) -> String? {
+        guard let at = liveLastCueAt else { return nil }
+        let spoken: String
+        if liveLastCueIsChime {
+            spoken = "Quiet note"
+        } else {
+            let text = liveLastCueText.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !text.isEmpty else { return nil }
+            spoken = text
+        }
+        return CueRecency.line(spoken: spoken, at: at, now: now)
+    }
+
     func needWords(for needID: String) -> String {
         if let need = needs.first(where: { $0.id == needID }),
            !need.authorText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
