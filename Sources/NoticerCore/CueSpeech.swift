@@ -4,12 +4,12 @@ import Foundation
 /// this derives a short action from it (and from her own words when the
 /// compiled line is only a reason). Deterministic: no model call.
 public enum SpokenCueForm {
-    /// The smallest speakable line: a verb and an object, two to five words.
+    /// The smallest speakable line: a verb and an object, two to eight words.
     /// Every candidate below that floor is skipped, so the ear never hears
     /// a bare "Ask". Empty only when both inputs are blank or single words.
     public static let spokenWordFloor = 2
 
-    /// Action first, two to five words. First-person author text ("ask me
+    /// Action first, two to eight words. First-person author text ("ask me
     /// for X") is rewritten to her before cutting, so "me" never truncates
     /// the line. Empty when both inputs are blank.
     public static func line(cueWording: String = "", authorText: String = "") -> String {
@@ -209,7 +209,7 @@ public enum SpokenCueForm {
         return nil
     }
 
-    /// First ≤5 words with leading hedges gone: the whisper before the need
+    /// First ≤8 words with leading hedges gone: the whisper before the need
     /// name. Clause-cut like every other fallback so a reason cannot eat
     /// the budget.
     private static func firstWords(_ text: String) -> String? {
@@ -279,6 +279,7 @@ public enum SpokenCueForm {
         while let last = words.last?.lowercased(), hedges.contains(last) {
             words.removeLast()
         }
+        words = cutAtActionJoiner(words)
         if words.count > CueSpeechTuning.spokenWordLimit {
             words = Array(words.prefix(CueSpeechTuning.spokenWordLimit))
         }
@@ -301,13 +302,41 @@ public enum SpokenCueForm {
         return Array(words.prefix(index))
     }
 
-    /// Words a spoken line must not end on. Includes the clause breaks, so a
-    /// cut that still lands on one loses that word too.
+    /// Joining words that start a second action ("close the lid and move
+    /// it"). The split keeps the first action; the second is still checked
+    /// visually, it just isn't spoken.
+    private static let actionJoiners: Set<String> = ["and", "then", "&", "plus"]
+
+    /// Splits a compound action at its joining word, but only when the
+    /// part before it is already a complete action: a verb plus an
+    /// object, at least 2 words.
+    private static func cutAtActionJoiner(_ words: [String]) -> [String] {
+        guard let index = words.firstIndex(where: { actionJoiners.contains($0.lowercased()) }),
+              index >= 2,
+              let first = words.first?.lowercased(),
+              actionVerbs.contains(first)
+        else {
+            return words
+        }
+        return Array(words.prefix(index))
+    }
+
+    /// Words a spoken line must not end on: prepositions, articles,
+    /// conjunctions, and auxiliary verbs (plus the clause breaks, so a
+    /// cut that still lands on one loses that word too). Words that pull
+    /// double duty as particles or nouns stay speakable: no phrasal
+    /// "up" / "out" / "off", no "can" (the trash can) or "refill".
     private static let dangling: Set<String> = [
         "a", "an", "the", "her", "his", "some", "that", "to", "of", "from", "for",
         "on", "in", "with", "and", "or", "at", "by",
         "if", "when", "while", "because", "so", "but", "he", "she", "it", "is",
         "that's", "thats", "who", "which", "since", "until", "before", "after",
+        "into", "onto", "during", "beside", "between", "beyond", "toward",
+        "towards", "upon", "within", "without", "about", "under", "than",
+        "plus", "then", "nor", "yet", "&",
+        "be", "am", "are", "was", "were", "been", "do", "does", "did",
+        "have", "has", "had", "will", "would", "could", "should", "might",
+        "must", "shall",
     ]
 
     /// Whole word, so "roam" does not match "roamer" and "water" still matches "water's".

@@ -138,6 +138,52 @@ final class DemoStripTests: XCTestCase {
         XCTAssertEqual(ids, ids.sorted())
     }
 
+    func testConsecutiveIdenticalRowsCollapseToOne() {
+        var strip = DemoStripBuffer()
+        strip.reset(sessionStart: start)
+        for i in 0..<4 {
+            strip.append(
+                "Still open · out of view",
+                style: .neutral,
+                at: start.addingTimeInterval(TimeInterval(i)),
+                needID: "take-baby"
+            )
+        }
+        XCTAssertEqual(strip.items.count, 1)
+        XCTAssertEqual(strip.items.first?.text, "Still open · out of view")
+        XCTAssertEqual(strip.items.first?.at, start.addingTimeInterval(3))
+    }
+
+    func testDifferentCaptionBreaksTheRun() {
+        var strip = DemoStripBuffer()
+        strip.reset(sessionStart: start)
+        strip.append("Still open · out of view", style: .neutral, at: start, needID: "take-baby")
+        strip.append("More time for you", style: .neutral, at: start.addingTimeInterval(1), needID: "take-baby")
+        strip.append(
+            "Still open · out of view",
+            style: .neutral,
+            at: start.addingTimeInterval(2),
+            needID: "take-baby"
+        )
+        XCTAssertEqual(
+            strip.items.map(\.text),
+            ["Still open · out of view", "More time for you", "Still open · out of view"]
+        )
+    }
+
+    func testDifferentNeedsNeverMerge() {
+        var strip = DemoStripBuffer()
+        strip.reset(sessionStart: start)
+        strip.append("Still open · out of view", style: .neutral, at: start, needID: "take-baby")
+        strip.append(
+            "Still open · out of view",
+            style: .neutral,
+            at: start.addingTimeInterval(1),
+            needID: "refill-water"
+        )
+        XCTAssertEqual(strip.items.count, 2)
+    }
+
     func testRelativeTimeFormat() {
         var strip = DemoStripBuffer()
         strip.reset(sessionStart: start)

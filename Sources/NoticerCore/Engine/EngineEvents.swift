@@ -127,6 +127,12 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     /// condition part. Detail is `token=<t>`; the token is the model's own
     /// text, so it is safe to log.
     case partTokenUnknown = "partToken-unknown"
+    /// A seen wearer action armed `pendingWearerAction`. Detail is the code.
+    case actionArmed
+    /// An out-of-view verdict left the pending action in place.
+    case actionKept
+    /// The pending action cleared. Detail is `reason=<visible-still-open|ttl|closed>`.
+    case actionCleared
     case skip
     /// A brief high-confidence sighting earned one focused second look.
     case confirmScheduled

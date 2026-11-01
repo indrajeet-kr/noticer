@@ -62,6 +62,10 @@ public struct NeedEngine<TimeSource: Clock> {
         var pendingCueKind: CueKind?
         var choreID: String?
         var pendingWearerAction: String?
+        /// When the pending action was armed. Out-of-view verdicts keep
+        /// it; only a visibly still-open verdict, the TTL, or the close
+        /// clears it.
+        var pendingWearerActionArmedAt: Date?
         var didLogBusyDefer: Bool
         var didLogRateLimit: Bool
         var cueDelivered: Bool
@@ -1643,6 +1647,52 @@ public struct NeedEngine<TimeSource: Clock> {
         )
     }
 
+    /// Arms the pending action with its timestamp. One line so the
+    /// next device log shows the action was seen.
+    private mutating func armPendingAction(at index: Int, actionCode: String?, now: Date) {
+        tracked[index].pendingWearerAction = actionCode
+        tracked[index].pendingWearerActionArmedAt = now
+        record(.actionArmed, needID: tracked[index].needID, detail: actionCode)
+    }
+
+    /// TTL expiry: a pending action older than 30 s clears, whatever the
+    /// verdict says. Runs before the verdict's own keep-or-clear rule.
+    private mutating func expirePendingAction(at index: Int, now: Date) {
+        guard tracked[index].pendingWearerAction != nil,
+              let armedAt = tracked[index].pendingWearerActionArmedAt,
+              now.timeIntervalSince(armedAt) > EngineTuning.pendingActionTTLSeconds
+        else {
+            return
+        }
+        tracked[index].pendingWearerAction = nil
+        tracked[index].pendingWearerActionArmedAt = nil
+        record(.actionCleared, needID: tracked[index].needID, detail: "reason=ttl")
+    }
+
+    /// The one keep-or-clear rule, shared by the strict and legacy paths.
+    /// Out-of-view verdicts and omitted needs keep the action; only a
+    /// verdict for this need that sees it visibly still open clears it.
+    private mutating func keepOrClearPendingAction(
+        at index: Int,
+        needOmitted: Bool,
+        verdict: ModelVerdict,
+        assessment: SceneAssessment
+    ) {
+        let needID = tracked[index].needID
+        if verdict.tool == .reportNoTransition, assessment.sustainedAcrossStrip == nil {
+            record(.actionKept, needID: needID, detail: "out-of-view")
+            return
+        }
+        if needOmitted {
+            return
+        }
+        if verdict.tool == .reportNoTransition, assessment.sustainedAcrossStrip == true {
+            tracked[index].pendingWearerAction = nil
+            tracked[index].pendingWearerActionArmedAt = nil
+            record(.actionCleared, needID: needID, detail: "reason=visible-still-open")
+        }
+    }
+
     private mutating func applyAssessment(
         _ needID: String,
         verdict: ModelVerdict,
@@ -1666,6 +1716,7 @@ public struct NeedEngine<TimeSource: Clock> {
         }
 
         guard let index = indexOfOpen(needID) else { return }
+        expirePendingAction(at: index, now: now)
 
         // Any reply naming an open need that still sees her engaged keeps the
         // handoff on record. Never cleared while the need is open.
@@ -1701,7 +1752,12 @@ public struct NeedEngine<TimeSource: Clock> {
             }
 
             if hadPending {
-                tracked[index].pendingWearerAction = nil
+                keepOrClearPendingAction(
+                    at: index,
+                    needOmitted: needOmitted,
+                    verdict: verdict,
+                    assessment: assessment
+                )
             }
 
             if verdict.tool == .reportNoTransition && !needOmitted {
@@ -1717,7 +1773,7 @@ public struct NeedEngine<TimeSource: Clock> {
             // only when `actionCode` equals `need.selfNoticeSignal`.
             if verdict.tool == .logWearerIntervention {
                 if MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) {
-                    tracked[index].pendingWearerAction = assessment.actionCode
+                    armPendingAction(at: index, actionCode: assessment.actionCode, now: now)
                     tracked[index].lastMatchingInterventionAt = now
                 } else if MasteryMath.hasWearerPrefix(assessment.actionCode) {
                     record(.actionRejected, needID: needID, detail: "unrelated-wearer-action")
@@ -1745,7 +1801,12 @@ public struct NeedEngine<TimeSource: Clock> {
         }
 
         if hadPending {
-            tracked[index].pendingWearerAction = nil
+            keepOrClearPendingAction(
+                at: index,
+                needOmitted: needOmitted,
+                verdict: verdict,
+                assessment: assessment
+            )
         }
 
         if verdict.tool == .logWearerIntervention && !wearerAction {
@@ -1754,7 +1815,7 @@ public struct NeedEngine<TimeSource: Clock> {
         }
 
         if wearerAction {
-            tracked[index].pendingWearerAction = assessment.actionCode
+            armPendingAction(at: index, actionCode: assessment.actionCode, now: now)
             if MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) {
                 tracked[index].lastMatchingInterventionAt = now
             }
@@ -2052,6 +2113,7 @@ public struct NeedEngine<TimeSource: Clock> {
                 pendingCueKind: nil,
                 choreID: choreID,
                 pendingWearerAction: nil,
+                pendingWearerActionArmedAt: nil,
                 didLogBusyDefer: false,
                 didLogRateLimit: false,
                 cueDelivered: false,
@@ -2130,6 +2192,10 @@ public struct NeedEngine<TimeSource: Clock> {
     }
 
     private mutating func close(_ id: String, now: Date, cooldown: Bool) {
+        if tracked.first(where: { $0.needID == id })?.pendingWearerAction != nil {
+            // First: record() clears the episode stash set below.
+            record(.actionCleared, needID: id, detail: "reason=closed")
+        }
         if let episodeID = tracked.first(where: { $0.needID == id })?.episodeID {
             closingEpisode = (needID: id, episodeID: episodeID)
         }
