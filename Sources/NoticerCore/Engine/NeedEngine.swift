@@ -29,6 +29,9 @@ public struct NeedEngine<TimeSource: Clock> {
 
     private struct TrackedNeed {
         var needID: String
+        /// One latch, one episode. Every engine event about the latch
+        /// carries it, so the phone can match a cue to its resolution.
+        var episodeID: String
         var visibleAt: Date
         var latchedAt: Date
         var cueDeadline: Date
@@ -172,6 +175,21 @@ public struct NeedEngine<TimeSource: Clock> {
     /// a readable frame clears the streak.
     private var darkStreak = 0
     private var darkStreakLogged = false
+    /// Episode counter. `e1`, `e2`, … in latch order.
+    private var nextEpisodeNumber = 1
+    /// Last closed episode per need, so the closing event still carries it.
+    private var lastClosedEpisodeID: [String: String] = [:]
+    /// Wearer actions started outside any episode, awaiting their handled
+    /// state. Arming is not credit; only completion credits.
+    private var unpromptedPending: [String: UnpromptedStart] = [:]
+    /// Self-notice steps this verdict. At most one; the assert at the end
+    /// of `handle` proves the credit paths never double-count.
+    private var debugMasteryMutations = 0
+
+    private struct UnpromptedStart: Equatable {
+        var actionCode: String
+        var at: Date
+    }
 
     public private(set) var pendingModelCalls: [PendingModelCall] = []
     public var pendingModelCall: PendingModelCall? { pendingModelCalls.first }
@@ -373,6 +391,10 @@ public struct NeedEngine<TimeSource: Clock> {
             return
         }
         let completedCall = pendingModelCalls.remove(at: callIndex)
+        debugMasteryMutations = 0
+        // Unprompted means outside any episode. Snapshot the open episodes
+        // before this verdict closes one of them.
+        let openAtVerdictStart = Set(tracked.map(\.needID))
         if latency.concurrentInFlight,
            let newestAppliedIssuedAt,
            completedCall.issuedAt < newestAppliedIssuedAt {
@@ -431,7 +453,7 @@ public struct NeedEngine<TimeSource: Clock> {
             tryLatch(assessment, callKeyframes: completedCall.request.keyframes, now: now)
         }
 
-        maybeCreditUnprompted(verdict: verdict, now: now)
+        maybeCreditUnprompted(verdict: verdict, openAtVerdictStart: openAtVerdictStart, now: now)
 
         if let needID = assessment.needID, indexOfOpen(needID) != nil {
             applyDeferAndExtension(needID, verdict: verdict)
@@ -441,43 +463,100 @@ public struct NeedEngine<TimeSource: Clock> {
             finishRecheck(at: index, assessment: assessment, needOmitted: needOmitted, now: now)
         }
 
+        assert(
+            debugMasteryMutations <= 1,
+            "one verdict credited mastery \(debugMasteryMutations) times"
+        )
         evaluate()
     }
 
-    /// Credit for help he gives on his own: a wearer action (or a handled
-    /// state right after one) for a listed need that is not open. Applies
-    /// the self-notice mastery step and records the Tonight entry through
-    /// the event. Speaks nothing. Open needs keep the existing credit paths.
-    private mutating func maybeCreditUnprompted(verdict: ModelVerdict, now: Date) {
+    /// Credit for help he gives on his own, in two steps. An intervention
+    /// with no open episode only arms the start; the credit lands when a
+    /// verdict inside the window shows the need's full handled state.
+    /// A need that had an open episode at verdict start never reaches
+    /// here: the in-episode paths already credited or skipped it.
+    private mutating func maybeCreditUnprompted(
+        verdict: ModelVerdict,
+        openAtVerdictStart: Set<String>,
+        now: Date
+    ) {
         guard verdict.tool == .logWearerIntervention || verdict.tool == .reportNeedResolved else {
             return
         }
         let assessment = verdict.assessment
         guard let needID = assessment.needID,
-              var need = catalog.need(id: needID),
-              indexOfOpen(needID) == nil
+              let need = catalog.need(id: needID)
         else {
             return
         }
+        if openAtVerdictStart.contains(needID) {
+            // The episode was open when this verdict arrived. If it closed
+            // during the verdict, the closing path already did the credit.
+            if indexOfOpen(needID) == nil {
+                record(.unpromptedSkipped, needID: needID, detail: "reason=same-verdict-close")
+            }
+            return
+        }
+        if verdict.tool == .logWearerIntervention {
+            armUnprompted(needID: needID, actionCode: assessment.actionCode, now: now)
+            return
+        }
+        completeUnprompted(need: need, assessment: assessment, now: now)
+    }
+
+    /// A started action is a marker, not a credit. Any named action arms;
+    /// the completion verdict still has to show the handled state.
+    private mutating func armUnprompted(needID: String, actionCode: String?, now: Date) {
+        guard let actionCode, !actionCode.isEmpty else { return }
+        unpromptedPending[needID] = UnpromptedStart(actionCode: actionCode, at: now)
+        record(.unpromptedStarted, needID: needID, detail: nil)
+    }
+
+    /// The handled state, within the window of the start, completes the
+    /// action: one mastery step, one Tonight entry, no cue. Anything else
+    /// leaves the start armed (or clears it, for her close).
+    private mutating func completeUnprompted(need: Need, assessment: SceneAssessment, now: Date) {
+        let needID = need.id
+        guard let start = unpromptedPending[needID] else { return }
+        if assessment.resolution == .resolvedByPartner {
+            unpromptedPending.removeValue(forKey: needID)
+            record(.resolvedByOther, needID: needID, detail: "no-episode")
+            return
+        }
+        guard now.timeIntervalSince(start.at) <= EngineTuning.unpromptedCompleteWindowSeconds else { return }
         guard let confidence = assessment.confidence,
               confidence >= EngineTuning.unpromptedMinConfidence
         else {
             return
         }
-        guard MasteryMath.matchesSelfNoticeSignal(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal) else {
-            return
-        }
+        let wearerCompletion = assessment.resolution == .caughtHimself
+        let unclearCompletion = assessment.resolution != .resolvedByPartner
+            && MasteryMath.matchesSelfNoticeSignal(start.actionCode, selfNoticeSignal: need.selfNoticeSignal)
+            && assessment.partnerInView != true
+        guard wearerCompletion || unclearCompletion else { return }
         if let last = unpromptedCreditedAt[needID],
            now.timeIntervalSince(last) < EngineTuning.unpromptedDebounceSeconds {
             return
         }
+        unpromptedPending.removeValue(forKey: needID)
         unpromptedCreditedAt[needID] = now
-        let before = need.mastery
-        need.mastery = MasteryMath.applySelfNotice(need.mastery)
-        catalog.update(need)
+        debugMasteryMutations += 1
+        var credited = need
+        let before = credited.mastery
+        credited.mastery = MasteryMath.applySelfNotice(credited.mastery)
+        catalog.update(credited)
         record(.selfNoticedUnprompted, needID: needID, detail: nil)
-        if before.phase != .retired && need.mastery.phase == .retired {
+        if before.phase != .retired && credited.mastery.phase == .retired {
             record(.masteryRetired, needID: needID, detail: nil)
+        }
+    }
+
+    /// Starts whose window ran out without a completion. No credit, one line.
+    private mutating func expireUnpromptedStarts(now: Date) {
+        for (needID, start) in unpromptedPending {
+            guard now.timeIntervalSince(start.at) > EngineTuning.unpromptedCompleteWindowSeconds else { continue }
+            unpromptedPending.removeValue(forKey: needID)
+            record(.unpromptedExpired, needID: needID, detail: "reason=not-completed")
         }
     }
 
@@ -497,6 +576,7 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         closeNeedsWithNoPerson(now: now)
         closePostCueTimeouts(now: now)
+        expireUnpromptedStarts(now: now)
         resolveDueNeeds(now: now)
         considerRepeats(now: now)
         scheduleModelCall(now: now)
@@ -1156,7 +1236,8 @@ public struct NeedEngine<TimeSource: Clock> {
                     needs: catalog.needs,
                     openNeeds: open,
                     purpose: purpose,
-                    focusNeedID: focusNeedID
+                    focusNeedID: focusNeedID,
+                    unpromptedStartedIDs: unpromptedPending.keys.sorted()
                 ),
                 issuedAt: now
             )
@@ -1297,10 +1378,36 @@ public struct NeedEngine<TimeSource: Clock> {
         text.split { !$0.isLetter && !$0.isNumber }.map(String.init).filter { $0.count > 2 }
     }
 
+    /// The one place a wearer credit lands. Help after a cue earns zero
+    /// self-notice increment (the cue already penalized); only help
+    /// before any cue steps mastery up. Either way the episode closes
+    /// with a `caughtHimself`, so the phone can match it to its cue.
+    private mutating func creditWearer(at index: Int, detail: String?, now: Date) {
+        let needID = tracked[index].needID
+        guard var need = catalog.need(id: needID) else { return }
+        if tracked[index].cueDelivered {
+            noteResolution(needID: needID, index: index, shared: detail == "shared-finish", now: now)
+            close(needID, now: now, cooldown: true)
+            let afterCueDetail = (detail == "shared-finish" || detail == "recent-intervention") ? detail : "after-cue"
+            record(.caughtHimself, needID: needID, detail: afterCueDetail)
+            return
+        }
+        debugMasteryMutations += 1
+        let before = need.mastery
+        need.mastery = MasteryMath.applySelfNotice(need.mastery)
+        catalog.update(need)
+        noteResolution(needID: needID, index: index, shared: detail == "shared-finish", now: now)
+        close(needID, now: now, cooldown: true)
+        record(.caughtHimself, needID: needID, detail: detail)
+        if before.phase != .retired && need.mastery.phase == .retired {
+            record(.masteryRetired, needID: needID, detail: nil)
+        }
+    }
+
     /// One verdict settles the open need. `report_need_resolved` carries who
     /// handled it; anything else only confirms the need is still open.
     private mutating func resolve(_ needID: String, verdict: ModelVerdict, now: Date) {
-        guard var need = catalog.need(id: needID) else { return }
+        guard let need = catalog.need(id: needID) else { return }
         guard let index = indexOfOpen(needID) else { return }
         let assessment = verdict.assessment
         // A resolved verdict that still sees her keeps the handoff on record
@@ -1326,7 +1433,7 @@ public struct NeedEngine<TimeSource: Clock> {
         if assessment.resolution == .resolvedByPartner, recentCreditDetail == nil {
             noteResolution(needID: needID, index: index, shared: false, now: now)
             close(needID, now: now, cooldown: true)
-            record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
+            record(.resolvedByOther, needID: needID, detail: verdict.tool.rawValue)
             return
         }
         let wearerResolved: Bool
@@ -1341,25 +1448,8 @@ public struct NeedEngine<TimeSource: Clock> {
                 || (tracked[index].cueDelivered && assessment.sustainedAcrossStrip == false)
         }
         if wearerResolved || recentCreditDetail != nil {
-            if tracked[index].cueDelivered {
-                // The cue already applied applyCueFired: no self-notice step,
-                // but the success still fires so the phone shows "You got it".
-                noteResolution(needID: needID, index: index, shared: recentCreditDetail == "shared-finish", now: now)
-                close(needID, now: now, cooldown: true)
-                record(.caughtHimself, needID: needID, detail: recentCreditDetail ?? "after-cue")
-            } else {
-                let before = need.mastery
-                need.mastery = MasteryMath.applySelfNotice(need.mastery)
-                let becameRetired = before.phase != .retired && need.mastery.phase == .retired
-                catalog.update(need)
-                noteResolution(needID: needID, index: index, shared: recentCreditDetail == "shared-finish", now: now)
-                close(needID, now: now, cooldown: true)
-                let detail = recentCreditDetail ?? (assessment.resolution == .caughtHimself ? "before-cue" : (pendingAction ?? "before-cue"))
-                record(.caughtHimself, needID: needID, detail: detail)
-                if becameRetired {
-                    record(.masteryRetired, needID: needID, detail: nil)
-                }
-            }
+            let detail = recentCreditDetail ?? (assessment.resolution == .caughtHimself ? "before-cue" : (pendingAction ?? "before-cue"))
+            creditWearer(at: index, detail: detail, now: now)
             return
         }
         if blockedByVisibleProblem(eligibility, assessment: assessment, tool: verdict.tool) {
@@ -1454,7 +1544,7 @@ public struct NeedEngine<TimeSource: Clock> {
         now: Date
     ) {
         let assessment = verdict.assessment
-        guard var need = catalog.need(id: needID) else { return }
+        guard let need = catalog.need(id: needID) else { return }
 
         if verdict.tool == .reportNeedResolved {
             resolve(needID, verdict: verdict, now: now)
@@ -1464,7 +1554,7 @@ public struct NeedEngine<TimeSource: Clock> {
         if !latency.strictCredit && assessment.resolution == .resolvedByPartner {
             guard indexOfOpen(needID) != nil else { return }
             close(needID, now: now, cooldown: true)
-            record(.resolvedByPartner, needID: needID, detail: verdict.tool.rawValue)
+            record(.resolvedByOther, needID: needID, detail: verdict.tool.rawValue)
             return
         }
 
@@ -1498,16 +1588,7 @@ public struct NeedEngine<TimeSource: Clock> {
                 && assessment.sustainedAcrossStrip == false
 
             if hadPending && clearedByIntervention {
-                let before = need.mastery
-                need.mastery = MasteryMath.applySelfNotice(need.mastery)
-                let becameRetired = before.phase != .retired && need.mastery.phase == .retired
-                let caughtAfterCue = tracked[index].cueDelivered
-                catalog.update(need)
-                close(needID, now: now, cooldown: true)
-                record(.caughtHimself, needID: needID, detail: caughtAfterCue ? "after-cue" : pendingAction)
-                if becameRetired {
-                    record(.masteryRetired, needID: needID, detail: nil)
-                }
+                creditWearer(at: index, detail: pendingAction, now: now)
                 return
             }
 
@@ -1550,16 +1631,7 @@ public struct NeedEngine<TimeSource: Clock> {
         let wearerAction = MasteryMath.isWearerAction(assessment.actionCode, selfNoticeSignal: need.selfNoticeSignal)
 
         if hadPending && cleared {
-            let before = need.mastery
-            need.mastery = MasteryMath.applySelfNotice(need.mastery)
-            let becameRetired = before.phase != .retired && need.mastery.phase == .retired
-            let caughtAfterCue = tracked[index].cueDelivered
-            catalog.update(need)
-            close(needID, now: now, cooldown: true)
-            record(.caughtHimself, needID: needID, detail: caughtAfterCue ? "after-cue" : pendingAction)
-            if becameRetired {
-                record(.masteryRetired, needID: needID, detail: nil)
-            }
+            creditWearer(at: index, detail: pendingAction, now: now)
             return
         }
 
@@ -1703,9 +1775,13 @@ public struct NeedEngine<TimeSource: Clock> {
         }
         let headStart = MasteryMath.headStartSeconds(for: need, timing: timing, latency: latency)
         let choreID = freshChoreID(now: now)
+        let episodeID = "e\(nextEpisodeNumber)"
+        nextEpisodeNumber += 1
+        unpromptedPending.removeValue(forKey: needID)
         tracked.append(
             TrackedNeed(
                 needID: needID,
+                episodeID: episodeID,
                 visibleAt: visibleAt,
                 latchedAt: now,
                 cueDeadline: now.addingTimeInterval(headStart),
@@ -1796,6 +1872,9 @@ public struct NeedEngine<TimeSource: Clock> {
     }
 
     private mutating func close(_ id: String, now: Date, cooldown: Bool) {
+        if let episodeID = tracked.first(where: { $0.needID == id })?.episodeID {
+            lastClosedEpisodeID[id] = episodeID
+        }
         tracked.removeAll { $0.needID == id }
         if cooldown {
             closedAt[id] = now
@@ -1803,6 +1882,25 @@ public struct NeedEngine<TimeSource: Clock> {
     }
 
     private mutating func record(_ kind: EngineEventKind, needID: String?, detail: String?) {
-        events.append(EngineEvent(kind: kind, needID: needID, at: clock.now(), detail: detail))
+        events.append(EngineEvent(
+            kind: kind,
+            needID: needID,
+            at: clock.now(),
+            detail: detail,
+            episodeID: episodeID(for: kind, needID: needID)
+        ))
+    }
+
+    /// The five latch-scoped kinds carry the open episode, or the
+    /// just-closed one: every `close` stashes its id first, and these
+    /// events only fire while open or at the close.
+    private func episodeID(for kind: EngineEventKind, needID: String?) -> String? {
+        switch kind {
+        case .cueFired, .caughtHimself, .resolvedByOther, .closedUnknown, .stillOpen:
+            guard let needID else { return nil }
+            return tracked.first { $0.needID == needID }?.episodeID ?? lastClosedEpisodeID[needID]
+        default:
+            return nil
+        }
     }
 }

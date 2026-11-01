@@ -64,7 +64,7 @@ struct ReplayView: View {
     private var picker: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
             if !controller.scenarios.isEmpty {
-                Text("Scenarios")
+                Text("Simulated replay")
                     .font(Theme.Font.headline)
                 ForEach(controller.scenarios) { scenario in
                     replayRow(

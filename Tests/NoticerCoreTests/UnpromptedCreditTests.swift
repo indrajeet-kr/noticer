@@ -1,9 +1,11 @@
 import XCTest
 @testable import NoticerCore
 
-/// Credit for help he gives on his own: a wearer action for a listed
-/// need that is not open applies the self-notice step and records the
-/// Tonight entry, speaks nothing, and debounces to one per 10 minutes.
+/// Credit for help he gives on his own, in two steps: an intervention
+/// with no open episode only arms the start, and the credit lands when a
+/// verdict inside 60 s shows the need's full handled state. Completion
+/// applies the self-notice step, speaks nothing, and debounces to one
+/// per need per 10 minutes.
 final class UnpromptedCreditTests: EngineTestCase {
     private var signal: String { ActionCodeExamples.wearerHandsReceivingBaby }
 
@@ -30,13 +32,36 @@ final class UnpromptedCreditTests: EngineTestCase {
         return try XCTUnwrap(engine.pendingModelCall)
     }
 
-    func testInterventionWithNoOpenNeedCreditsAndSpeaksNothing() throws {
+    private func startAction() throws {
+        let call = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: call.id, verdict: wearerAction(.logWearerIntervention))
+    }
+
+    private func completeAction() throws {
+        let call = try nextLatchCall()
+        engine.handle(callID: call.id, verdict: wearerAction(.reportNeedResolved))
+    }
+
+    func testInterventionAloneArmsWithoutCredit() throws {
         try setupSignalledNeeds()
         glancePair()
-        let call = try XCTUnwrap(engine.pendingModelCall)
+
+        try startAction()
+
+        XCTAssertEqual(events(.unpromptedStarted).map(\.needID), ["take-baby"])
+        XCTAssertTrue(events(.selfNoticedUnprompted).isEmpty)
+        XCTAssertEqual(mastery(of: "take-baby"), .initial)
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+        XCTAssertTrue(engine.cues.isEmpty)
+    }
+
+    func testResolvedWithinWindowCompletesExactlyOnce() throws {
+        try setupSignalledNeeds()
+        glancePair()
         let before = mastery(of: "take-baby")
 
-        engine.handle(callID: call.id, verdict: wearerAction(.logWearerIntervention))
+        try startAction()
+        try completeAction()
 
         XCTAssertEqual(events(.selfNoticedUnprompted).map(\.needID), ["take-baby"])
         XCTAssertEqual(mastery(of: "take-baby"), MasteryMath.applySelfNotice(before))
@@ -44,43 +69,37 @@ final class UnpromptedCreditTests: EngineTestCase {
         XCTAssertTrue(engine.cues.isEmpty)
     }
 
-    func testResolvedAfterActionCreditsToo() throws {
+    func testSecondCompletionWithinTenMinutesIsIgnored() throws {
         try setupSignalledNeeds()
         glancePair()
-        let call = try XCTUnwrap(engine.pendingModelCall)
-        let before = mastery(of: "take-baby")
 
-        engine.handle(callID: call.id, verdict: wearerAction(.reportNeedResolved))
-
-        XCTAssertEqual(events(.selfNoticedUnprompted).map(\.needID), ["take-baby"])
-        XCTAssertEqual(mastery(of: "take-baby"), MasteryMath.applySelfNotice(before))
-        XCTAssertTrue(engine.cues.isEmpty)
-    }
-
-    func testSecondActionWithinTenMinutesIsIgnored() throws {
-        try setupSignalledNeeds()
-        glancePair()
-        let first = try XCTUnwrap(engine.pendingModelCall)
-        engine.handle(callID: first.id, verdict: wearerAction(.logWearerIntervention))
+        try startAction()
+        try completeAction()
         let credited = mastery(of: "take-baby")
 
-        let second = try nextLatchCall()
-        engine.handle(callID: second.id, verdict: wearerAction(.logWearerIntervention))
+        try startActionOnFreshCall()
+        try completeAction()
 
         XCTAssertEqual(events(.selfNoticedUnprompted).count, 1)
         XCTAssertEqual(mastery(of: "take-baby"), credited)
     }
 
-    func testActionAfterTenMinutesCreditsAgain() throws {
+    private func startActionOnFreshCall() throws {
+        let call = try nextLatchCall()
+        engine.handle(callID: call.id, verdict: wearerAction(.logWearerIntervention))
+    }
+
+    func testCompletionAfterTenMinutesCreditsAgain() throws {
         try setupSignalledNeeds()
         glancePair()
-        let first = try XCTUnwrap(engine.pendingModelCall)
-        engine.handle(callID: first.id, verdict: wearerAction(.logWearerIntervention))
+
+        try startAction()
+        try completeAction()
 
         advance(EngineTuning.unpromptedDebounceSeconds)
         glancePair()
-        let second = try XCTUnwrap(engine.pendingModelCall)
-        engine.handle(callID: second.id, verdict: wearerAction(.logWearerIntervention))
+        try startAction()
+        try completeAction()
 
         XCTAssertEqual(events(.selfNoticedUnprompted).count, 2)
     }

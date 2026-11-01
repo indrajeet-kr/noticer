@@ -31,7 +31,7 @@ final class DemoStripTests: XCTestCase {
     /// and the demo change must not touch it, so the sweep lists kinds here.
     private static let allKinds: [EngineEventKind] = [
         .needLatched, .latchRejected, .cueFired, .cueDeferredHandsBusy, .cueDeferredPartnerCheck, .cueDeferredRateLimit,
-        .caughtHimself, .resolvedByPartner, .closedUnknown, .falseCueDismissed,
+        .caughtHimself, .resolvedByOther, .closedUnknown, .falseCueDismissed,
         .masteryRetired, .masteryUnretired, .needReset, .visitorPaused, .visitorResumed,
         .headStartExtended, .headStartExtensionDenied, .recheckRequested, .actionRejected,
         .assessmentDropped, .staleReplyDropped, .callBudgetExhausted, .sessionEnded,
@@ -63,7 +63,7 @@ final class DemoStripTests: XCTestCase {
             XCTAssertEqual(solo.1, .outcomeWin)
         }
 
-        let partner = try XCTUnwrap(mapped(event(.resolvedByPartner, needID: "couch-water")))
+        let partner = try XCTUnwrap(mapped(event(.resolvedByOther, needID: "couch-water")))
         XCTAssertEqual(partner.0, "She handled it")
         XCTAssertEqual(partner.1, .outcomeOther)
 
@@ -259,7 +259,7 @@ final class DemoStripTests: XCTestCase {
             DemoStripMapper.item(for: latched, needs: needs, headStartSeconds: headStart),
             DemoStripMapper.headStartFollowUp(for: latched, headStartSeconds: headStart),
             DemoStripMapper.item(for: event(.stillOpen, needID: "clean-floor-toys", detail: "out-of-view"), needs: needs, headStartSeconds: headStart),
-            DemoStripMapper.item(for: event(.resolvedByPartner, needID: "clean-floor-toys"), needs: needs, headStartSeconds: headStart),
+            DemoStripMapper.item(for: event(.resolvedByOther, needID: "clean-floor-toys"), needs: needs, headStartSeconds: headStart),
         ] {
             guard let row else {
                 XCTFail("expected a strip row")

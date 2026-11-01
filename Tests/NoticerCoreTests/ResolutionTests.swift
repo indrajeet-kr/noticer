@@ -62,7 +62,7 @@ final class ResolutionTests: EngineTestCase {
         try latch("take-baby")
         try heartbeat(resolved("take-baby", resolution: .resolvedByPartner))
 
-        XCTAssertEqual(events(.resolvedByPartner).map(\.needID), ["take-baby"])
+        XCTAssertEqual(events(.resolvedByOther).map(\.needID), ["take-baby"])
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
         XCTAssertEqual(mastery(of: "take-baby"), .initial)
     }
@@ -72,7 +72,7 @@ final class ResolutionTests: EngineTestCase {
         let afterCue = mastery(of: "take-baby")
         try heartbeat(resolved("take-baby", resolution: .resolvedByPartner))
 
-        XCTAssertEqual(events(.resolvedByPartner).map(\.needID), ["take-baby"])
+        XCTAssertEqual(events(.resolvedByOther).map(\.needID), ["take-baby"])
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
         XCTAssertEqual(mastery(of: "take-baby"), afterCue)
     }

@@ -101,7 +101,7 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     /// partner was in view. The whisper waits for that reply, briefly.
     case cueDeferredPartnerCheck
     case caughtHimself
-    case resolvedByPartner
+    case resolvedByOther
     case closedUnknown
     case falseCueDismissed
     case masteryRetired
@@ -131,6 +131,13 @@ public enum EngineEventKind: String, Equatable, Sendable, Codable {
     case quietPartnerAsleep
     /// Three dark frames in a row. The phone renders this as [FRAME] dark.
     case frameDark
+    /// A wearer action started outside any episode. No credit yet.
+    case unpromptedStarted
+    /// An open episode at verdict start closed during it; the closing
+    /// path already credited, so the unprompted path skips.
+    case unpromptedSkipped
+    /// A started action never showed its handled state in time. No credit.
+    case unpromptedExpired
 }
 
 public struct EngineEvent: Equatable, Sendable {
@@ -138,12 +145,18 @@ public struct EngineEvent: Equatable, Sendable {
     public var needID: String?
     public var at: Date
     public var detail: String?
+    /// The open episode this event belongs to, for the five latch-scoped
+    /// kinds (`cueFired`, `caughtHimself`, `resolvedByOther`,
+    /// `closedUnknown`, `stillOpen`). Nil for everything else, including
+    /// unprompted completions, which by definition have no episode.
+    public var episodeID: String?
 
-    public init(kind: EngineEventKind, needID: String?, at: Date, detail: String? = nil) {
+    public init(kind: EngineEventKind, needID: String?, at: Date, detail: String? = nil, episodeID: String? = nil) {
         self.kind = kind
         self.needID = needID
         self.at = at
         self.detail = detail
+        self.episodeID = episodeID
     }
 
     /// A shared finish: she started it, he wrapped it up.

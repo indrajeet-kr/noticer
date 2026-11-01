@@ -316,7 +316,7 @@ final class CueRepeatTests: EngineTestCase {
         let cue = try whisperTakeBaby()
         try handleNext(partnerResolved("take-baby"))
         XCTAssertTrue(engine.openNeedIDs.isEmpty)
-        XCTAssertFalse(events(.resolvedByPartner).isEmpty)
+        XCTAssertFalse(events(.resolvedByOther).isEmpty)
         advance(to: cue.createdAt.addingTimeInterval(CueSpeechTuning.repeatDelaySeconds))
         engine.tick()
         XCTAssertTrue(engine.cues.filter(\.isRepeat).isEmpty)

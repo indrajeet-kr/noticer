@@ -77,6 +77,10 @@ public enum EngineTuning {
     /// so without this every heartbeat would credit again.
     public static let unpromptedDebounceSeconds: TimeInterval = 600
 
+    /// A started unprompted action must show its handled state inside this
+    /// window, or the start expires with no credit.
+    public static let unpromptedCompleteWindowSeconds: TimeInterval = 60
+
     /// Below this sharpness a frame reads as dark (lens covered or lights
     /// out). Three in a row logs once and holds model calls.
     public static let darkSharpness: Double = 0.005

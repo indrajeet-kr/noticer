@@ -1036,22 +1036,33 @@ final class PhoneSessionModel {
                     sessionLog.append("ENGINE", "sharedFinish \(needID) partnerSeen=\(partner) wearerActed=\(acted)")
                 }
                 if let needID = event.needID {
-                    let cueFired = event.detail == "after-cue"
-                        || moments.contains { $0.needID == needID && $0.kind == .cued }
-                    let kind: SessionMoment.Kind = cueFired ? .nudge : .selfNotice
-                    moments.append(SessionMoment(
-                        at: Date(),
-                        needID: needID,
-                        kind: kind,
-                        text: Self.words(for: needID, in: view),
-                        sessionID: currentSessionID,
-                        sharedWithPartner: event.isSharedFinish
-                    ))
-                    sessionLog.appendActivity(
-                        "TONIGHT",
-                        ActivityTonight.addLine(kind: kind.rawValue, needID: needID, why: "caught-himself")
-                    )
-                    snapshotTonightForLog()
+                    // One completed action, one entry: a completion in the
+                    // same episode upgrades the reminder row in place.
+                    if let episodeID = event.episodeID,
+                       let row = moments.firstIndex(where: { $0.episodeID == episodeID && $0.kind == .cued }) {
+                        moments[row].kind = .nudge
+                        moments[row].sharedWithPartner = event.isSharedFinish
+                        sessionLog.appendActivity(
+                            "TONIGHT",
+                            "upgrade need=\(needID) episode=\(episodeID) cued->nudge"
+                        )
+                        snapshotTonightForLog()
+                    } else {
+                        moments.append(SessionMoment(
+                            at: Date(),
+                            needID: needID,
+                            kind: .selfNotice,
+                            text: Self.words(for: needID, in: view),
+                            sessionID: currentSessionID,
+                            sharedWithPartner: event.isSharedFinish,
+                            episodeID: event.episodeID
+                        ))
+                        sessionLog.appendActivity(
+                            "TONIGHT",
+                            ActivityTonight.addLine(kind: SessionMoment.Kind.selfNotice.rawValue, needID: needID, why: "caught-himself")
+                        )
+                        snapshotTonightForLog()
+                    }
                 }
             case .cueFired:
                 let isRepeat = event.detail == CueSpeechTuning.repeatEventDetail
@@ -1063,7 +1074,8 @@ final class PhoneSessionModel {
                             needID: needID,
                             kind: .cued,
                             text: Self.words(for: needID, in: view),
-                            sessionID: currentSessionID
+                            sessionID: currentSessionID,
+                            episodeID: event.episodeID
                         ))
                         sessionLog.appendActivity(
                             "TONIGHT",
@@ -1080,17 +1092,18 @@ final class PhoneSessionModel {
                     liveLastLatchedAt = event.at
                 }
             case .selfNoticedUnprompted:
+                // No episode by definition: always its own new entry.
                 if let needID = event.needID {
                     moments.append(SessionMoment(
                         at: Date(),
                         needID: needID,
-                        kind: .noticed,
+                        kind: .selfNotice,
                         text: Self.words(for: needID, in: view),
                         sessionID: currentSessionID
                     ))
                     sessionLog.appendActivity(
                         "TONIGHT",
-                        ActivityTonight.addLine(kind: SessionMoment.Kind.noticed.rawValue, needID: needID, why: "unprompted")
+                        ActivityTonight.addLine(kind: SessionMoment.Kind.selfNotice.rawValue, needID: needID, why: "unprompted")
                     )
                     snapshotTonightForLog()
                 }
@@ -1284,7 +1297,7 @@ final class PhoneSessionModel {
             return "Deferring the cue\(who). Hands are busy."
         case .cueDeferredPartnerCheck:
             return "Holding the cue\(who). She may be handling it."
-        case .resolvedByPartner:
+        case .resolvedByOther:
             return "She handled it\(who)."
         default:
             let detail = event.detail.map { " \($0)" } ?? ""

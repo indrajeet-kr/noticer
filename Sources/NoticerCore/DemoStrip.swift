@@ -87,7 +87,7 @@ public enum DemoStripMapper {
             return ("You finished it. Nice teamwork.", .outcomeWin, nil)
         case .caughtHimself:
             return ("You got it", .outcomeWin, nil)
-        case .resolvedByPartner:
+        case .resolvedByOther:
             return ("She handled it", .outcomeOther, nil)
         case .closedUnknown:
             return ("Handled · unclear who", .outcomeOther, nil)
