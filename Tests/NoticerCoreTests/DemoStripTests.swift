@@ -31,7 +31,7 @@ final class DemoStripTests: XCTestCase {
     /// and the demo change must not touch it, so the sweep lists kinds here.
     private static let allKinds: [EngineEventKind] = [
         .needLatched, .latchRejected, .cueFired, .cueDeferredHandsBusy, .cueDeferredPartnerCheck, .cueDeferredRateLimit,
-        .caughtHimself, .resolvedByOther, .closedUnknown, .falseCueDismissed,
+        .caughtHimself, .selfNoticedUnprompted, .resolvedByOther, .closedUnknown, .falseCueDismissed,
         .masteryRetired, .masteryUnretired, .needReset, .visitorPaused, .visitorResumed,
         .headStartExtended, .headStartExtensionDenied, .recheckRequested, .actionRejected,
         .assessmentDropped, .staleReplyDropped, .callBudgetExhausted, .sessionEnded,
@@ -62,6 +62,11 @@ final class DemoStripTests: XCTestCase {
             XCTAssertEqual(solo.0, "You got it", "detail \(detail ?? "nil")")
             XCTAssertEqual(solo.1, .outcomeWin)
         }
+
+        let unprompted = try XCTUnwrap(mapped(event(.selfNoticedUnprompted, needID: "couch-water")))
+        XCTAssertEqual(unprompted.0, "You got it")
+        XCTAssertEqual(unprompted.1, .outcomeWin)
+        XCTAssertNil(unprompted.2)
 
         let partner = try XCTUnwrap(mapped(event(.resolvedByOther, needID: "couch-water")))
         XCTAssertEqual(partner.0, "She handled it")
