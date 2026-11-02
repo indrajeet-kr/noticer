@@ -44,7 +44,7 @@ final class QuickTimingTests: XCTestCase {
         XCTAssertEqual(timing.defaultHeadStartSeconds, 10)
         XCTAssertEqual(timing.headStartCapSeconds, 40)
         XCTAssertEqual(timing.cueRateLimitSeconds, 30)
-        XCTAssertEqual(timing.relatchCooldownSeconds, 60)
+        XCTAssertEqual(timing.relatchCooldownSeconds, 180)
         XCTAssertEqual(timing.staleEvidenceSeconds, 15)
         XCTAssertEqual(timing.noPersonKeyframeCloseSeconds, 20)
         XCTAssertEqual(timing.glanceAbsentSeconds, 1)
@@ -53,6 +53,25 @@ final class QuickTimingTests: XCTestCase {
         XCTAssertEqual(timing.maxSessionSeconds, SessionLimits.maxSessionSeconds)
         XCTAssertEqual(CueFadeSpec.headStartMasteryCoefficient, 2)
         XCTAssertEqual(SessionLimits.maxModelCallsPerSession, 300)
+    }
+
+    func testQuickCooldownStillRejectsAtSixtyOneSeconds() throws {
+        try latch("take-baby")
+        try closeWithCooldown("take-baby")
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+
+        advance(61)
+        glancePair()
+        let rejected = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: rejected.id, verdict: latchVerdict("take-baby"))
+        XCTAssertEqual(events(.latchRejected).last?.detail, "cooldown")
+        XCTAssertTrue(engine.openNeedIDs.isEmpty)
+
+        advance(120)
+        glancePair()
+        let allowed = try XCTUnwrap(engine.pendingModelCall)
+        engine.handle(callID: allowed.id, verdict: latchVerdict("take-baby"))
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
     }
 
     func testAVisibleNeedLatchesWithinSixSeconds() throws {
@@ -211,5 +230,25 @@ final class QuickTimingTests: XCTestCase {
             tool: .reportNoTransition,
             assessment: SceneAssessment(needID: id, sustainedAcrossStrip: true)
         )
+    }
+
+    private func events(_ kind: EngineEventKind) -> [EngineEvent] {
+        engine.log.filter { $0.kind == kind }
+    }
+
+    private func partnerResolved(_ id: String) -> ModelVerdict {
+        ModelVerdict(
+            finishReason: .toolCalls,
+            tool: .reportNeedResolved,
+            assessment: SceneAssessment(needID: id, resolution: .resolvedByPartner)
+        )
+    }
+
+    private func closeWithCooldown(_ id: String) throws {
+        advance(TimingProfile.quick.heartbeatSeconds)
+        see([mom()])
+        let call = try XCTUnwrap(engine.pendingModelCall)
+        XCTAssertEqual(call.purpose, .heartbeat)
+        engine.handle(callID: call.id, verdict: partnerResolved(id))
     }
 }

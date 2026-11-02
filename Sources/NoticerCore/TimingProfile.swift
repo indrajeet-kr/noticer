@@ -88,7 +88,7 @@ public struct TimingProfile: Equatable, Sendable {
         defaultHeadStartSeconds: 10,
         headStartCapSeconds: 40,
         cueRateLimitSeconds: 30,
-        relatchCooldownSeconds: 60,
+        relatchCooldownSeconds: 180,
         staleEvidenceSeconds: 15,
         noPersonKeyframeCloseSeconds: 20,
         glanceAbsentSeconds: 1,
