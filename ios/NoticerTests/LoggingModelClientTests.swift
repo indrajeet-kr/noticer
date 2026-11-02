@@ -43,8 +43,8 @@ final class LoggingModelClientTests: XCTestCase {
     }
 
     func testPayloadTuningDefaults() {
-        XCTAssertEqual(LatencyTuning.default.uploadMaxEdge, 448)
-        XCTAssertEqual(LatencyTuning.default.jpegQuality, 0.55, accuracy: 0.001)
+        XCTAssertEqual(LatencyTuning.default.uploadMaxEdge, 896)
+        XCTAssertEqual(LatencyTuning.default.jpegQuality, 0.70, accuracy: 0.001)
     }
 
     func testCancelLogsCancelledNotError() async {
