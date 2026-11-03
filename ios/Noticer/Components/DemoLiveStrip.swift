@@ -7,6 +7,8 @@ struct DemoLiveStrip: View {
     var items: [DemoStripItem]
     var chip: String?
     var relative: (DemoStripItem) -> String
+    var onClear: (() -> Void)? = nil
+    var canClear: Bool = false
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ScaledMetric(relativeTo: .body) private var rowSize: CGFloat = 20
@@ -36,15 +38,25 @@ struct DemoLiveStrip: View {
             Text("Live steps")
                 .font(Theme.Font.hero)
                 .foregroundStyle(Theme.textPrimary)
+            if canClear, let onClear {
+                Button("Clear", action: onClear)
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                    .buttonStyle(.plain)
+                    .accessibilityLabel("Clear live steps")
+            }
             Spacer()
             if let chip {
                 Text(chip)
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.textSecondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
                     .padding(.horizontal, Theme.Space.s12)
                     .padding(.vertical, Theme.Space.s4)
                     .background(Theme.bgSubtle, in: Capsule())
-                    .accessibilityLabel("Last reply \(chip)")
+                    .accessibilityLabel("Muse \(chip)")
             }
         }
     }
@@ -118,11 +130,13 @@ struct DemoLiveStrip: View {
             DemoStripItem(id: 4, at: start.addingTimeInterval(22), text: "You got it", style: .outcomeWin),
             DemoStripItem(id: 5, at: start.addingTimeInterval(30), text: "Noticed: Toys on the floor", style: .noticed),
         ],
-        chip: "Muse Spark · 2.6s",
+        chip: "Muse Spark · 12 calls · 2.6s",
         relative: { item in
             let delta = max(0, item.at.timeIntervalSince(start))
             return String(format: "+%.1fs", delta)
-        }
+        },
+        onClear: {},
+        canClear: true
     )
     .padding(.horizontal, Theme.Space.screenMargin)
     .ambientScreen()
@@ -141,7 +155,7 @@ struct DemoLiveStrip: View {
             DemoStripItem(id: 0, at: start, text: "Noticed: Her water is empty", style: .noticed),
             DemoStripItem(id: 1, at: start.addingTimeInterval(8), text: "You finished it. Nice teamwork.", style: .outcomeWin),
         ],
-        chip: "Muse Spark · 2.6s",
+        chip: "Muse Spark · 12 calls · 2.6s",
         relative: { _ in "+8.0s" }
     )
     .padding(.horizontal, Theme.Space.screenMargin)
@@ -156,7 +170,7 @@ struct DemoLiveStrip: View {
             DemoStripItem(id: 0, at: start, text: "Noticed: Her water is empty", style: .noticed),
             DemoStripItem(id: 1, at: start.addingTimeInterval(8), text: "You finished it. Nice teamwork.", style: .outcomeWin),
         ],
-        chip: "Muse Spark · 2.6s",
+        chip: "Muse Spark · 12 calls · 2.6s",
         relative: { _ in "+8.0s" }
     )
     .padding(.horizontal, Theme.Space.screenMargin)

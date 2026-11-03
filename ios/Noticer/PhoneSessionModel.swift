@@ -99,12 +99,14 @@ final class PhoneSessionModel {
     var liveLastLatchedAt: Date?
     /// Engine event timeline for the dev panel, oldest first, capped.
     var liveEventTimeline: [String] = []
-    /// Demo mode's live strip and last-call chip. Written only while
+    /// Demo mode's live strip and last-call chip. Written while
     /// `demoModeActive`; contents survive stop so the final outcome stays
-    /// on screen for the recording.
+    /// on screen for the recording, until Clear or the next start.
     private(set) var demoStrip = DemoStripBuffer()
     private(set) var demoChip: String?
     private(set) var demoModeActive = false
+    /// Completed-reply count behind `demoChip`. Reset on start and Clear.
+    private var demoCallMeter = DemoCallMeter()
     /// True while this session's Demo mode wants the screen kept awake.
     private var demoOwnsIdleTimer = false
     /// False after the root view leaves, so a disappeared screen can sleep.
@@ -583,9 +585,10 @@ final class PhoneSessionModel {
             Task { @MainActor in log.append(tag, message) }
         }
         demoModeActive = UserDefaults.standard.bool(forKey: "noticer.demo.mode")
+        demoStrip.reset(sessionStart: Date())
+        demoCallMeter.reset()
+        demoChip = nil
         if demoModeActive {
-            demoStrip.reset(sessionStart: Date())
-            demoChip = nil
             demoOwnsIdleTimer = true
         }
         applyIdleTimer()
@@ -658,6 +661,15 @@ final class PhoneSessionModel {
                 self?.demoStrip.append(caption, style: .whisper, at: Date())
             }
         }
+    }
+
+    /// Clears the Live steps rows and the call chip after stop. No-op
+    /// while running. Leaves the session log, Tonight, and Team Wins alone.
+    func clearDemoStrip() {
+        guard !isRunning else { return }
+        demoStrip = DemoStripBuffer()
+        demoCallMeter.reset()
+        demoChip = nil
     }
 
     /// Demo teardown: drop Demo mode's claim on the screen, speech callback
@@ -957,8 +969,8 @@ final class PhoneSessionModel {
         }
         if demoModeActive {
             for line in step.timingLines {
-                if let chip = DemoStripMapper.latencyChip(fromTimingLine: line) {
-                    demoChip = chip
+                if demoCallMeter.record(timingLine: line) {
+                    demoChip = demoCallMeter.chip
                 }
             }
         }

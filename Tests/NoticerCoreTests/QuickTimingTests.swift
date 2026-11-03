@@ -32,6 +32,7 @@ final class QuickTimingTests: XCTestCase {
         XCTAssertEqual(timing.continuousPresenceKeyframeSeconds, SessionLimits.continuousPresenceKeyframeSeconds)
         XCTAssertEqual(timing.keyframeBufferSeconds, SessionLimits.keyframeBufferSeconds)
         XCTAssertEqual(timing.maxSessionSeconds, SessionLimits.maxSessionSeconds)
+        XCTAssertEqual(timing.cueRepeatDelaySeconds, CueSpeechTuning.repeatDelaySeconds)
         XCTAssertEqual(timing.name, "standard")
     }
 
@@ -45,6 +46,7 @@ final class QuickTimingTests: XCTestCase {
         XCTAssertEqual(timing.headStartCapSeconds, 40)
         XCTAssertEqual(timing.cueRateLimitSeconds, 30)
         XCTAssertEqual(timing.relatchCooldownSeconds, 180)
+        XCTAssertEqual(timing.cueRepeatDelaySeconds, 60)
         XCTAssertEqual(timing.staleEvidenceSeconds, 15)
         XCTAssertEqual(timing.noPersonKeyframeCloseSeconds, 20)
         XCTAssertEqual(timing.glanceAbsentSeconds, 1)
@@ -72,6 +74,36 @@ final class QuickTimingTests: XCTestCase {
         let allowed = try XCTUnwrap(engine.pendingModelCall)
         engine.handle(callID: allowed.id, verdict: latchVerdict("take-baby"))
         XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+    }
+
+    func testQuickRepeatFiresAtSixtySeconds() throws {
+        try latch("take-baby")
+        let open = try XCTUnwrap(engine.openNeeds.first)
+        try refresh(before: open.cueDeadline, lead: 5)
+        advance(to: open.cueDeadline)
+        engine.tick()
+        let cue = try XCTUnwrap(engine.cues.first { $0.needID == "take-baby" && !$0.isRepeat })
+
+        // The person stays in frame with fresh evidence and no
+        // intervention, so the no-person close never ends it first.
+        var elapsed: TimeInterval = 5
+        while elapsed < 59 {
+            advance(to: cue.createdAt.addingTimeInterval(elapsed))
+            see([mom()])
+            if let call = engine.pendingModelCall {
+                engine.handle(callID: call.id, verdict: noTransition("take-baby"))
+            }
+            elapsed += 5
+        }
+        advance(to: cue.createdAt.addingTimeInterval(59))
+        engine.tick()
+        XCTAssertEqual(engine.openNeedIDs, ["take-baby"])
+        XCTAssertTrue(engine.cues.filter(\.isRepeat).isEmpty)
+
+        advance(to: cue.createdAt.addingTimeInterval(60))
+        engine.tick()
+        XCTAssertEqual(engine.cues.filter(\.isRepeat).count, 1)
+        XCTAssertEqual(events(.cueFired).filter { $0.detail == CueSpeechTuning.repeatEventDetail }.count, 1)
     }
 
     func testAVisibleNeedLatchesWithinSixSeconds() throws {

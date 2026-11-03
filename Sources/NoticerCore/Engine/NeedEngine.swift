@@ -888,7 +888,7 @@ public struct NeedEngine<TimeSource: Clock> {
             tracked[index].repeatAllowed = allowRepeat
             tracked[index].repeatDelivered = false
             tracked[index].repeatDueAt = allowRepeat
-                ? now.addingTimeInterval(CueSpeechTuning.repeatDelaySeconds)
+                ? now.addingTimeInterval(timing.cueRepeatDelaySeconds)
                 : nil
             recordedCueTimings.append(
                 CueTimingSnapshot(
