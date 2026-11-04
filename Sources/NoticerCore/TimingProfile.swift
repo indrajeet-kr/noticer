@@ -12,6 +12,7 @@ public struct TimingProfile: Equatable, Sendable {
     public var defaultHeadStartSeconds: TimeInterval
     public var headStartCapSeconds: TimeInterval
     public var cueRateLimitSeconds: TimeInterval
+    public var cueRepeatDelaySeconds: TimeInterval
     public var relatchCooldownSeconds: TimeInterval
     public var staleEvidenceSeconds: TimeInterval
     public var noPersonKeyframeCloseSeconds: TimeInterval
@@ -31,6 +32,7 @@ public struct TimingProfile: Equatable, Sendable {
         defaultHeadStartSeconds: TimeInterval,
         headStartCapSeconds: TimeInterval,
         cueRateLimitSeconds: TimeInterval,
+        cueRepeatDelaySeconds: TimeInterval = CueSpeechTuning.repeatDelaySeconds,
         relatchCooldownSeconds: TimeInterval,
         staleEvidenceSeconds: TimeInterval,
         noPersonKeyframeCloseSeconds: TimeInterval,
@@ -49,6 +51,7 @@ public struct TimingProfile: Equatable, Sendable {
         self.defaultHeadStartSeconds = defaultHeadStartSeconds
         self.headStartCapSeconds = headStartCapSeconds
         self.cueRateLimitSeconds = cueRateLimitSeconds
+        self.cueRepeatDelaySeconds = cueRepeatDelaySeconds
         self.relatchCooldownSeconds = relatchCooldownSeconds
         self.staleEvidenceSeconds = staleEvidenceSeconds
         self.noPersonKeyframeCloseSeconds = noPersonKeyframeCloseSeconds
@@ -88,6 +91,7 @@ public struct TimingProfile: Equatable, Sendable {
         defaultHeadStartSeconds: 10,
         headStartCapSeconds: 40,
         cueRateLimitSeconds: 30,
+        cueRepeatDelaySeconds: 60,
         relatchCooldownSeconds: 180,
         staleEvidenceSeconds: 15,
         noPersonKeyframeCloseSeconds: 20,

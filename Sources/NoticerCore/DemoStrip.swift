@@ -96,6 +96,40 @@ public struct DemoStripBuffer: Sendable {
     }
 }
 
+/// Counts completed model replies for the Live steps chip. Each timing
+/// line with a `model=…ms` token is one reply; anything else is ignored.
+public struct DemoCallMeter: Equatable, Sendable {
+    public private(set) var calls = 0
+    public private(set) var lastSeconds: Double?
+
+    public init() {}
+
+    public mutating func reset() {
+        calls = 0
+        lastSeconds = nil
+    }
+
+    /// Records one timing line. Returns true when it was a completed
+    /// reply and the count moved.
+    @discardableResult
+    public mutating func record(timingLine: String) -> Bool {
+        guard let seconds = DemoStripMapper.modelSeconds(fromTimingLine: timingLine) else {
+            return false
+        }
+        calls += 1
+        lastSeconds = seconds
+        return true
+    }
+
+    /// "Muse Spark · 12 calls · 7.0s" (singular "1 call"). Nil until the
+    /// first reply lands.
+    public var chip: String? {
+        guard calls > 0, let lastSeconds else { return nil }
+        let unit = calls == 1 ? "1 call" : "\(calls) calls"
+        return String(format: "Muse Spark · %@ · %.1fs", unit, lastSeconds)
+    }
+}
+
 public enum DemoStripMapper {
     /// Returns nil for events that are not shown. The head-start closure
     /// feeds `headStartFollowUp`; this function ignores it.
@@ -164,11 +198,19 @@ public enum DemoStripMapper {
     /// Parses "call=… purpose=… model=2604ms …" into "Muse Spark · 2.6s".
     /// Any other timing line returns nil.
     public static func latencyChip(fromTimingLine line: String) -> String? {
+        guard let seconds = modelSeconds(fromTimingLine: line) else { return nil }
+        return String(format: "Muse Spark · %.1fs", seconds)
+    }
+
+    /// The `model=…ms` token of a completed-reply timing line, in seconds.
+    /// Shared by `latencyChip` and `DemoCallMeter` so both agree on what
+    /// counts as a reply.
+    static func modelSeconds(fromTimingLine line: String) -> Double? {
         for token in line.split(whereSeparator: \.isWhitespace) {
             guard token.hasPrefix("model="), token.hasSuffix("ms") else { continue }
             let digits = token.dropFirst("model=".count).dropLast("ms".count)
             guard let ms = Double(digits) else { continue }
-            return String(format: "Muse Spark · %.1fs", ms / 1_000)
+            return ms / 1_000
         }
         return nil
     }

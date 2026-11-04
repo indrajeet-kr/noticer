@@ -135,6 +135,43 @@ final class DemoStripModelTests: XCTestCase {
     }
 
     @MainActor
+    func testClearEmptiesStripAndChipAfterStop() {
+        UserDefaults.standard.set(true, forKey: demoKey)
+        let model = PhoneSessionModel()
+        model.mode = .replay
+        model.selectedReplayID = "missing"
+
+        model.start()
+        let at = Date()
+        model.applyLiveState(view(at: at, log: [EngineEvent(kind: .needLatched, needID: "take-baby", at: at)]))
+        XCTAssertFalse(model.demoStrip.items.isEmpty)
+
+        model.stop()
+        XCTAssertFalse(model.demoStrip.items.isEmpty, "strip stays for the recording")
+
+        model.clearDemoStrip()
+        XCTAssertTrue(model.demoStrip.items.isEmpty)
+        XCTAssertNil(model.demoChip)
+    }
+
+    @MainActor
+    func testClearDoesNothingWhileRunning() {
+        UserDefaults.standard.set(true, forKey: demoKey)
+        let model = PhoneSessionModel()
+        model.mode = .replay
+        model.selectedReplayID = "missing"
+
+        model.start()
+        let at = Date()
+        model.applyLiveState(view(at: at, log: [EngineEvent(kind: .needLatched, needID: "take-baby", at: at)]))
+        XCTAssertFalse(model.demoStrip.items.isEmpty)
+
+        model.clearDemoStrip()
+        XCTAssertFalse(model.demoStrip.items.isEmpty, "Clear is a stopped-session action")
+        model.stop()
+    }
+
+    @MainActor
     func testHeadStartCountdownAnchoredToWallTime() throws {
         UserDefaults.standard.set(true, forKey: demoKey)
         let model = PhoneSessionModel()

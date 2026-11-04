@@ -32,7 +32,9 @@ struct LiveSessionView: View {
                                 DemoLiveStrip(
                                     items: model.demoStrip.visibleItems(),
                                     chip: model.demoChip,
-                                    relative: { model.demoStrip.relativeTime($0) }
+                                    relative: { model.demoStrip.relativeTime($0) },
+                                    onClear: { model.clearDemoStrip() },
+                                    canClear: !model.isRunning && !model.demoStrip.items.isEmpty
                                 )
                                 // Keeps the newest strip row above the tab bar:
                                 // scrolling this tail to the bottom lands the

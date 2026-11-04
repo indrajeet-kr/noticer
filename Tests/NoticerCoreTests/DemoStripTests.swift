@@ -143,6 +143,24 @@ final class DemoStripTests: XCTestCase {
         XCTAssertEqual(ids, ids.sorted())
     }
 
+    func testResetEmptiesTheStripAndRestartsIDs() {
+        var strip = DemoStripBuffer()
+        strip.append("row 0", style: .neutral, at: start)
+        strip.append("row 1", style: .neutral, at: start.addingTimeInterval(1))
+        XCTAssertEqual(strip.items.map(\.id), [0, 1])
+
+        strip = DemoStripBuffer()
+        XCTAssertTrue(strip.items.isEmpty)
+        strip.append("fresh", style: .neutral, at: start)
+        XCTAssertEqual(strip.items.map(\.id), [0])
+
+        strip.append("row 2", style: .neutral, at: start.addingTimeInterval(2))
+        strip.reset(sessionStart: start)
+        XCTAssertTrue(strip.items.isEmpty)
+        strip.append("restarted", style: .neutral, at: start)
+        XCTAssertEqual(strip.items.map(\.id), [0])
+    }
+
     func testConsecutiveIdenticalRowsCollapseToOne() {
         var strip = DemoStripBuffer()
         strip.reset(sessionStart: start)
@@ -217,6 +235,29 @@ final class DemoStripTests: XCTestCase {
         XCTAssertNil(DemoStripMapper.latencyChip(fromTimingLine: "call=call-1 purpose=latch model=abcms"))
     }
 
+    func testCallMeterCountsCompletedReplies() {
+        var meter = DemoCallMeter()
+        XCTAssertEqual(meter.calls, 0)
+        XCTAssertNil(meter.chip)
+
+        XCTAssertFalse(meter.record(timingLine: "calls/min=6 open=0"))
+        XCTAssertEqual(meter.calls, 0)
+        XCTAssertNil(meter.chip)
+
+        XCTAssertTrue(meter.record(timingLine: "call=call-1 purpose=latch queue=0ms model=2604ms apply=0.7ms bytes=44208"))
+        XCTAssertEqual(meter.calls, 1)
+        XCTAssertEqual(meter.chip, "Muse Spark · 1 call · 2.6s")
+
+        XCTAssertTrue(meter.record(timingLine: "call=call-2 purpose=heartbeat queue=12ms model=1800ms apply=0.5ms bytes=38000"))
+        XCTAssertTrue(meter.record(timingLine: "call=call-3 purpose=latch queue=0ms model=7000ms apply=0.7ms bytes=44208"))
+        XCTAssertEqual(meter.calls, 3)
+        XCTAssertEqual(meter.chip, "Muse Spark · 3 calls · 7.0s")
+
+        meter.reset()
+        XCTAssertEqual(meter.calls, 0)
+        XCTAssertNil(meter.chip)
+    }
+
     func testWhisperCaptionIsExactSpokenText() {
         let spoken = "Toys everywhere, quick tidy?"
         let caption = DemoStripMapper.whisperCaption(spoken)
@@ -258,6 +299,12 @@ final class DemoStripTests: XCTestCase {
         corpus.append(DemoStripMapper.repeatCaption)
         if let chip = DemoStripMapper.latencyChip(fromTimingLine: "call=call-4 purpose=latch queue=0ms model=2694ms apply=0.7ms bytes=44208") {
             corpus.append(chip)
+        }
+        corpus.append("Clear")
+        var meter = DemoCallMeter()
+        if meter.record(timingLine: "call=call-4 purpose=latch queue=0ms model=2694ms apply=0.7ms bytes=44208"),
+           let meterChip = meter.chip {
+            corpus.append(meterChip)
         }
         XCTAssertFalse(corpus.isEmpty)
         for text in corpus {
