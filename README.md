@@ -21,11 +21,15 @@ No API key, no glasses, and no clip. From this repo:
 ```sh
 swift test
 swift run noticer-replay
-swift run noticer-replay --scenario take-baby-whisper
+swift run noticer-replay --scenario water-table-whisper
 swift run noticer-replay --list
 ```
 
-`noticer-replay` plays `fixtures/scenarios` through the same pipeline as the phone: replay frames, a scripted signal gate, `NeedEngine`, recorded model responses, then a cue speaker. The clock jumps, so the head start does not take 90 wall-clock seconds. A pass means the whisper fires at the head start, or a self-catch raises mastery and stays quiet. The two needs are `take-baby` (one-handed eating) and `refill-water` (nursing without water). The scripted gate does not need an API key. Its people preset stands in for the live luma decision and still feeds the visitor rule.
+`noticer-replay` plays `fixtures/scenarios` through the same pipeline as the phone: replay frames, a scripted signal gate, `NeedEngine`, recorded model responses, then a cue speaker. The clock jumps, so the head start does not take 90 wall-clock seconds. A pass means the whisper fires at the head start, a self-catch raises mastery and stays quiet, or she handles it with no credit. The water-table scenarios (`water-table-whisper`, `water-table-self-catch`, `water-table-she-handled-it`) run on quick timing against the "Keep water on the dining table" need; the older take-baby/refill-water scenarios stay on standard timing. The scripted gate does not need an API key. Its people preset stands in for the live luma decision and still feeds the visitor rule.
+
+Drop real glasses frames (`0001.jpg`, … in time order) plus an optional `verdicts.json` into `fixtures/keyframes/water-table/`, then run `ios/make-replay-scenario.sh` to downsize them and wire them into the scenarios. The Replay tab shows the current still as "Glasses view (recorded)"; with no frames those scenarios stay hidden.
+
+![Replay with recorded stills](docs/replay/water-table.png)
 
 The iPhone app's Replay mode runs those same scenarios. A clip in `fixtures/clips` is optional and still goes through the engine.
 

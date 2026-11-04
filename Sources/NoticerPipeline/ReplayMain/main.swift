@@ -60,10 +60,10 @@ enum ReplayCommand {
         } else {
             selected = scenarios
         }
-        let timingName = value(of: "--timing", in: arguments) ?? "standard"
-        let timing: TimingProfile = timingName == "quick" ? .quick : .standard
+        let flagTiming: TimingProfile? = value(of: "--timing", in: arguments).map { $0 == "quick" ? .quick : .standard }
         var failed = false
         for var scenario in selected {
+            let timing = flagTiming ?? scenario.resolvedTiming
             if timing == .quick {
                 scenario.sampleEvery = 2
                 if scenario.expect.headStartSeconds != nil {

@@ -26,6 +26,9 @@ final class ReplayController {
     /// Scenario-clock offsets in seconds, parallel to frames.
     var times: [TimeInterval] = []
     var markers: [ReplayMarker] = []
+    /// Live-steps rows per frame, parallel to frames. Built during the
+    /// headless precompute so scrubbing replays the same list live shows.
+    var stripSnapshots: [[DemoStripItem]] = []
     var index = 0
     var isPlaying = false
     var isLoading = false
@@ -34,6 +37,7 @@ final class ReplayController {
 
     private var playTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
+    private var stripMemory = ReplayStripMemory()
 
     /// Watchable wall-clock pace per recorded frame.
     private static let framePace: Duration = .milliseconds(250)
@@ -66,6 +70,33 @@ final class ReplayController {
         statuses.indices.contains(index) ? statuses[index] : .idle
     }
 
+    /// The Live steps rows visible at the playhead, oldest first.
+    var currentStripItems: [DemoStripItem] {
+        guard stripSnapshots.indices.contains(index) else { return [] }
+        return Array(stripSnapshots[index].suffix(DemoStripBuffer.visible))
+    }
+
+    func stripRelativeTime(_ item: DemoStripItem) -> String {
+        stripMemory.buffer.relativeTime(item)
+    }
+
+    /// The recorded still for the playhead, if this scenario has stills.
+    var currentStillURL: URL? {
+        guard let scenario = selectedScenario,
+            let still = scenario.still(at: elapsed),
+            let url = BundledStills.url(for: still.image)
+        else {
+            return nil
+        }
+        return url
+    }
+
+    private var selectedScenario: ReplayScenario? {
+        guard selectedID.hasPrefix("scenario:") else { return nil }
+        let name = String(selectedID.dropFirst("scenario:".count))
+        return scenarios.first { $0.scenarioID == name }
+    }
+
     var currentDevLines: [String] {
         guard let frame = currentFrame else {
             return ["No replay loaded"]
@@ -86,7 +117,9 @@ final class ReplayController {
     func reload() {
         clips = ClipLibrary.videoURLs()
         do {
-            scenarios = try BundledScenarios.load()
+            let loaded = try BundledScenarios.load()
+            let available = BundledStills.availableImages()
+            scenarios = loaded.filter { $0.stillsAvailable(in: available) }
         } catch {
             scenarios = []
             addNotice(error.localizedDescription)
@@ -96,12 +129,12 @@ final class ReplayController {
         }
     }
 
+    /// Selecting always starts at 0:00, paused — even re-selecting the
+    /// scenario already loaded.
     func select(_ id: String, timing: TimingProfile, needs: [Need]) {
-        guard id != selectedID || frames.isEmpty else {
-            return
-        }
         selectedID = id
         pause()
+        index = 0
         loadTask?.cancel()
         isLoading = true
         loadError = nil
@@ -163,6 +196,8 @@ final class ReplayController {
         statuses = []
         times = []
         markers = []
+        stripSnapshots = []
+        stripMemory = ReplayStripMemory()
         index = 0
         guard let option = options.first(where: { $0.id == selectedID }) else {
             loadError = "Pick a replay first."
@@ -182,6 +217,8 @@ final class ReplayController {
                 try await loadClip(url: url, timing: timing, needs: needs)
             }
             buildMarkers()
+            index = 0
+            pause()
         } catch is CancellationError {
             // A newer selection superseded this load.
         } catch {
@@ -191,7 +228,8 @@ final class ReplayController {
 
     private func loadScenario(_ scenario: ReplayScenario, timing: TimingProfile) async throws {
         addNotice("Replay clock. No API key. The scenario uses its own need list.")
-        let playback = try ScenarioPlayback(scenario: scenario, speaker: SilentCueSpeaker(), timing: timing)
+        let effective = scenario.timingName == nil ? timing : scenario.resolvedTiming
+        let playback = try ScenarioPlayback(scenario: scenario, speaker: SilentCueSpeaker(), timing: effective)
         var collected: [(PipelineStep, SessionView)] = []
         _ = try await playback.run(pace: nil) { step, view in
             collected.append((step, view))
@@ -247,6 +285,8 @@ final class ReplayController {
         }
         memory.advance(view: view, spoken: step.spoken)
         statuses.append(memory.status())
+        stripMemory.ingest(step: step, view: view)
+        stripSnapshots.append(stripMemory.buffer.items)
     }
 
     private func buildMarkers() {
@@ -363,6 +403,12 @@ private struct ReplayStatusMemory {
             return
         }
         if let open = view.openNeeds.first {
+            if view.now >= open.cueDeadline {
+                // The head start is over (the cue fired or is due): an
+                // open need reads as noticed, never as a 0s head start.
+                current = .noticed(needName: openName)
+                return
+            }
             let remaining = max(0, open.cueDeadline.timeIntervalSince(view.now))
             let total = max(1, open.cueDeadline.timeIntervalSince(open.latchedAt))
             if let since = openSince, view.now.timeIntervalSince(since) < 3, remaining >= total - 0.5 {
@@ -395,4 +441,49 @@ private struct ReplayStatusMemory {
 private struct SilentCueSpeaker: CueSpeaker {
     func speak(_ cue: Cue) async throws {}
     func stop() async {}
+}
+
+// MARK: - Per-frame Live steps (scenario clock)
+
+/// Replays the same Live steps list the live session shows: spoken cues
+/// caption as whispers, engine events map through `DemoStripMapper`, and
+/// row times use the scenario clock. Countdowns freeze as text — a
+/// recording never counts down.
+private struct ReplayStripMemory {
+    var buffer = DemoStripBuffer()
+    private var started = false
+    private var seenLogCount = 0
+    private var seenCueIDs = Set<String>()
+
+    mutating func ingest(step: PipelineStep, view: SessionView) {
+        if !started {
+            buffer.reset(sessionStart: view.now)
+            started = true
+        }
+        let headStartSeconds: (String) -> TimeInterval? = { needID in
+            view.openNeeds.first(where: { $0.needID == needID }).map {
+                $0.cueDeadline.timeIntervalSince($0.latchedAt)
+            }
+        }
+        for event in view.log.dropFirst(seenLogCount) {
+            if let row = DemoStripMapper.item(for: event, needs: view.needs, headStartSeconds: headStartSeconds) {
+                buffer.append(row.0, style: row.1, at: event.at, countdownEndsAt: row.2, needID: event.needID)
+            }
+            if event.kind == .needLatched,
+                let followUp = DemoStripMapper.headStartFollowUp(for: event, headStartSeconds: headStartSeconds, now: view.now) {
+                buffer.append(followUp.0, style: followUp.1, at: event.at, needID: event.needID)
+            }
+        }
+        seenLogCount = view.log.count
+        for cue in step.spoken where !seenCueIDs.contains(cue.id) {
+            seenCueIDs.insert(cue.id)
+            guard cue.kind != .chime else { continue }
+            buffer.append(
+                DemoStripMapper.stepCaption(spoken: cue.text, isRepeat: cue.isRepeat),
+                style: .whisper,
+                at: view.now,
+                needID: cue.needID
+            )
+        }
+    }
 }

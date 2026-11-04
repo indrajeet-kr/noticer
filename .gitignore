@@ -14,3 +14,7 @@ xcuserdata/
 # Session transcripts pulled off the phone. Source that writes them is fine.
 *.log
 SessionLogs/
+
+# User-supplied replay stills (see ios/make-replay-scenario.sh).
+fixtures/keyframes/water-table/*.jpg
+!fixtures/keyframes/water-table/.gitkeep

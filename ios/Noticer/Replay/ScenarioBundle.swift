@@ -12,6 +12,42 @@ enum ScenarioBundleError: LocalizedError {
     }
 }
 
+/// Recorded glasses stills bundled from `fixtures/keyframes`. Paths are
+/// bundle-relative (`water-table/0007.jpg`); anything else fails closed.
+enum BundledStills {
+    static func url(for image: String) -> URL? {
+        guard !image.isEmpty, !image.contains("..") else { return nil }
+        let url = Bundle.main.bundleURL
+            .appendingPathComponent("keyframes")
+            .appendingPathComponent(image)
+        var isDirectory: ObjCBool = false
+        guard FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+            !isDirectory.boolValue
+        else {
+            return nil
+        }
+        return url
+    }
+
+    /// Bundle-relative paths of the stills actually present.
+    static func availableImages() -> Set<String> {
+        let root = Bundle.main.bundleURL.appendingPathComponent("keyframes")
+        guard let enumerator = FileManager.default.enumerator(
+            at: root,
+            includingPropertiesForKeys: nil
+        ) else {
+            return []
+        }
+        var found = Set<String>()
+        for case let url as URL in enumerator {
+            let ext = url.pathExtension.lowercased()
+            guard ext == "jpg" || ext == "jpeg" else { continue }
+            found.insert(String(url.path.dropFirst(root.path.count + 1)))
+        }
+        return found
+    }
+}
+
 /// Scenario JSON bundled from `fixtures/scenarios`. No clip and no API key.
 enum BundledScenarios {
     static func load() throws -> [ReplayScenario] {
