@@ -1,6 +1,6 @@
 {
   "scenario_id": "water-table-whisper",
-  "summary": "She sits at the table without water. He misses it. The whisper fires after the 10s head start.",
+  "summary": "She sits at the table without water. The whisper fires; he then does it. Credit as cued help.",
   "sample_every": 2,
   "until": 30,
   "people": "mom",
@@ -42,6 +42,45 @@
     },
     {
       "fixture_id": "water-table-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "water-table",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "water-table-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "water-table",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "water-table-his-hands-after-cue",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_need_resolved",
+        "assessment": {
+          "need_id": "water-table",
+          "resolution": "caught_himself",
+          "action_code": "wearer_placing_water_on_table"
+        }
+      }
+    },
+    {
+      "fixture_id": "water-table-steady",
       "repeat": true,
       "normalized": {
         "finish_reason": "tool_calls",
@@ -60,20 +99,17 @@
     "head_start_seconds": 10,
     "mastery_scores": {
       "water-table": 0
-    }
+    },
+    "outcome": "caught_himself"
   },
   "frames": [
-    {
-      "t": 0.0,
-      "image": "water-table/0001.jpg"
-    },
-    {
-      "t": 5.5,
-      "image": "water-table/0002.jpg"
-    },
-    {
-      "t": 4.0,
-      "image": "water-table/0003.jpg"
-    }
+    {"t": 0, "image": "water-table/0001.jpg"},
+    {"t": 2, "image": "water-table/0002.jpg"},
+    {"t": 4, "image": "water-table/0003.jpg"},
+    {"t": 6, "image": "water-table/0004.jpg"},
+    {"t": 8, "image": "water-table/0005.jpg"},
+    {"t": 10, "image": "water-table/0006.jpg"},
+    {"t": 12, "image": "water-table/0007.jpg"},
+    {"t": 14, "image": "water-table/0008.jpg"}
   ]
 }

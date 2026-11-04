@@ -13,6 +13,7 @@ final class EndToEndReplayTests: XCTestCase {
             [
                 "take-baby-whisper", "refill-water-whisper", "take-baby-self-catch",
                 "water-table-whisper", "water-table-self-catch", "water-table-she-handled-it",
+                "water-table-whisper-she-handled-it",
             ]
         )
         let classic = scenarios.filter { $0.frames.isEmpty }
@@ -71,6 +72,24 @@ final class EndToEndReplayTests: XCTestCase {
         assertPassed(report, expect: scenario.expect)
         XCTAssertTrue(report.cues.isEmpty)
         XCTAssertTrue(speaker.spokenCues().isEmpty)
+        XCTAssertEqual(
+            report.log.filter { $0.kind == .resolvedByOther }.map(\.needID),
+            ["water-table"]
+        )
+        let mastery = try XCTUnwrap(report.needs.first { $0.id == "water-table" }?.mastery)
+        XCTAssertEqual(mastery.score, 0, accuracy: 1e-9)
+    }
+
+    func testWaterTableWhisperSheHandledItCuesThenClosesWithoutCredit() async throws {
+        let scenario = try load("water-table-whisper-she-handled-it.json")
+        XCTAssertEqual(scenario.resolvedTiming, .quick)
+        let speaker = RecordingCueSpeaker()
+        let report = try await play(scenario, speaker: speaker, timing: scenario.resolvedTiming)
+        assertPassed(report, expect: scenario.expect)
+        let cue = try XCTUnwrap(report.cues.first)
+        XCTAssertEqual(cue.needID, "water-table")
+        XCTAssertEqual(cue.kind, .whisper)
+        XCTAssertEqual(speaker.spokenCues().map(\.id), [cue.id])
         XCTAssertEqual(
             report.log.filter { $0.kind == .resolvedByOther }.map(\.needID),
             ["water-table"]
