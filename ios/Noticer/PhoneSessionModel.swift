@@ -403,33 +403,45 @@ final class PhoneSessionModel {
         commitNeeds()
     }
 
-    /// Sets every need's mastery back to initial. Refused (nil) while a
-    /// session is running. Returns the prior mastery by need id for Undo.
-    /// Tonight's wins are untouched. Never called automatically.
+    /// What "Reset learning progress" stashes for Undo: prior mastery by
+    /// need id plus Tonight's moments.
+    struct LearningResetStash {
+        var mastery: [String: MasteryState]
+        var moments: [SessionMoment]
+    }
+
+    /// Sets every need's mastery back to initial and clears Tonight.
+    /// Refused (nil) while a session is running. Returns the prior mastery
+    /// and moments for Undo. Never called automatically.
     @discardableResult
-    func resetLearningProgress() -> [String: MasteryState]? {
+    func resetLearningProgress() -> LearningResetStash? {
         guard !isRunning else {
             return nil
         }
-        var stash: [String: MasteryState] = [:]
+        var mastery: [String: MasteryState] = [:]
         for index in needs.indices {
-            stash[needs[index].id] = needs[index].mastery
+            mastery[needs[index].id] = needs[index].mastery
             needs[index].mastery = .initial
         }
+        let momentsStash = moments
+        moments = []
         saveNeeds()
-        sessionLog.appendActivity("SETTINGS", "learning reset (\(stash.count) needs)")
-        return stash
+        SessionMomentsStore.save(moments)
+        sessionLog.appendActivity("SETTINGS", "learning reset (\(mastery.count) needs, \(momentsStash.count) moments)")
+        return LearningResetStash(mastery: mastery, moments: momentsStash)
     }
 
-    /// Restores mastery stashed by `resetLearningProgress()`.
-    func restoreMastery(_ stash: [String: MasteryState]) {
+    /// Restores mastery and moments stashed by `resetLearningProgress()`.
+    func restoreLearning(_ stash: LearningResetStash) {
         for index in needs.indices {
-            if let mastery = stash[needs[index].id] {
+            if let mastery = stash.mastery[needs[index].id] {
                 needs[index].mastery = mastery
             }
         }
+        moments = stash.moments
         saveNeeds()
-        sessionLog.appendActivity("SETTINGS", "learning reset undone (\(stash.count) needs)")
+        SessionMomentsStore.save(moments)
+        sessionLog.appendActivity("SETTINGS", "learning reset undone (\(stash.mastery.count) needs, \(stash.moments.count) moments)")
     }
 
     /// Blank whisper uses her words. The list on screen can leave that line empty.

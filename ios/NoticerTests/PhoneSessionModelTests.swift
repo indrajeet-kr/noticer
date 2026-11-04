@@ -144,18 +144,27 @@ final class PhoneSessionModelTests: XCTestCase {
                 mastery: MasteryState(score: 0.8, consecutiveSelfNotices: 3, consecutiveMisses: 0)
             ),
         ]
+        let before = [
+            SessionMoment(at: Date(), needID: "take-baby", kind: .selfNotice, text: "a"),
+            SessionMoment(at: Date(), needID: "take-baby", kind: .nudge, text: "b"),
+        ]
+        model.moments = before
+        SessionMomentsStore.save(before)
 
         let stash = model.resetLearningProgress()
 
         XCTAssertNotNil(stash)
-        XCTAssertEqual(model.needs.first?.mastery.score, 0)
-        XCTAssertEqual(model.needs.first?.mastery.consecutiveSelfNotices, 0)
+        XCTAssertEqual(model.needs.first?.mastery, .initial)
         XCTAssertEqual(model.needs.first?.id, "take-baby")
         XCTAssertEqual(model.needs.first?.authorText, "take the baby")
+        XCTAssertTrue(model.moments.isEmpty)
+        XCTAssertTrue(SessionMomentsStore.loadRecent().isEmpty)
 
-        model.restoreMastery(stash!)
+        model.restoreLearning(stash!)
         XCTAssertEqual(model.needs.first?.mastery.score, 0.8)
         XCTAssertEqual(model.needs.first?.mastery.consecutiveSelfNotices, 3)
+        XCTAssertEqual(model.moments, before)
+        XCTAssertEqual(SessionMomentsStore.loadRecent(), before)
     }
 
     @MainActor
@@ -166,7 +175,11 @@ final class PhoneSessionModelTests: XCTestCase {
 
         model.start()
         XCTAssertTrue(model.isRunning)
+        let needsBefore = model.needs
+        let momentsBefore = model.moments
         XCTAssertNil(model.resetLearningProgress(), "reset must be refused while a session runs")
+        XCTAssertEqual(model.needs, needsBefore)
+        XCTAssertEqual(model.moments, momentsBefore)
         model.stop()
     }
 
@@ -434,12 +447,16 @@ final class PhoneSessionModelTests: XCTestCase {
     func testResetLearningProgressLogsSettingsLine() {
         let model = PhoneSessionModel()
         model.needs = stubNeeds()
+        model.moments = [
+            SessionMoment(at: Date(), needID: "take-baby", kind: .selfNotice, text: "a"),
+            SessionMoment(at: Date(), needID: "refill-water", kind: .nudge, text: "b"),
+        ]
 
         let stash = model.resetLearningProgress()
         XCTAssertNotNil(stash)
-        XCTAssertTrue(model.sessionLog.activity.map(\.message).contains("learning reset (2 needs)"))
+        XCTAssertTrue(model.sessionLog.activity.map(\.message).contains("learning reset (2 needs, 2 moments)"))
 
-        model.restoreMastery(stash ?? [:])
-        XCTAssertTrue(model.sessionLog.activity.map(\.message).contains("learning reset undone (2 needs)"))
+        model.restoreLearning(stash!)
+        XCTAssertTrue(model.sessionLog.activity.map(\.message).contains("learning reset undone (2 needs, 2 moments)"))
     }
 }
