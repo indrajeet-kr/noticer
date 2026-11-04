@@ -1,0 +1,138 @@
+{
+  "scenario_id": "water-table-whisper-she-handled-it",
+  "summary": "She sits without water. The whisper fires; she gets it herself. No credit.",
+  "sample_every": 2,
+  "until": 30,
+  "people": "mom",
+  "timing": "quick",
+  "needs": [
+    {
+      "id": "water-table",
+      "author_text": "Keep water on the dining table when I am sitting there",
+      "cue_wording": "Put water on the table.",
+      "visual_condition": "partner sitting at the dining table with no water within reach",
+      "handled_condition": "glass of water on the dining table",
+      "self_notice_signal": "wearer_placing_water_on_table",
+      "priority": 0,
+      "allows_check_in": false,
+      "mastery": {
+        "score": 0,
+        "consecutive_self_notices": 0,
+        "consecutive_misses": 0
+      }
+    }
+  ],
+  "responses": [
+    {
+      "fixture_id": "water-table-latch",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "latch_need_hypothesis",
+        "assessment": {
+          "need_id": "water-table",
+          "sustained_across_strip": true,
+          "partner_state_evidence": [
+            "seated_at_table",
+            "no_water_in_reach"
+          ],
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "water-table-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "water-table",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "water-table-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "water-table",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "water-table-she-handled-it-after-cue",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_need_resolved",
+        "assessment": {
+          "need_id": "water-table",
+          "resolution": "resolved_by_partner"
+        }
+      }
+    },
+    {
+      "fixture_id": "water-table-steady",
+      "repeat": true,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "water-table",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    }
+  ],
+  "expect": {
+    "cue_need_id": "water-table",
+    "cue_kind": "whisper",
+    "head_start_seconds": 10,
+    "mastery_scores": {
+      "water-table": 0
+    },
+    "outcome": "resolved_by_partner"
+  },
+  "frames": [
+    {
+      "t": 0,
+      "image": "water-table/0001.jpg"
+    },
+    {
+      "t": 2,
+      "image": "water-table/0002.jpg"
+    },
+    {
+      "t": 4,
+      "image": "water-table/0003.jpg"
+    },
+    {
+      "t": 6,
+      "image": "water-table/0004.jpg"
+    },
+    {
+      "t": 8,
+      "image": "water-table/0005.jpg"
+    },
+    {
+      "t": 10,
+      "image": "water-table/0006.jpg"
+    },
+    {
+      "t": 12,
+      "image": "water-table/0007.jpg"
+    },
+    {
+      "t": 14,
+      "image": "water-table/0008.jpg"
+    }
+  ]
+}

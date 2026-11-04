@@ -18,6 +18,8 @@ enum SessionCircleWords {
             return "We gave you a nudge: \(whisper)"
         case .gotIt(_, let shared):
             return shared ? "You finished it. Nice teamwork." : "You got it. Nice catch."
+        case .sheHandled:
+            return "She handled it. Nicely done."
         }
     }
 }
@@ -89,6 +91,9 @@ struct SessionCircle: View {
         if case .gotIt = status {
             return Theme.sage
         }
+        if case .sheHandled = status {
+            return Theme.sage
+        }
         return Theme.sagePale
     }
 
@@ -147,6 +152,11 @@ struct SessionCircle: View {
                 .fontWeight(.light)
                 .foregroundStyle(Theme.terracotta)
         case .gotIt:
+            Image(systemName: "checkmark")
+                .font(.system(size: 56))
+                .fontWeight(.light)
+                .foregroundStyle(Theme.onSage)
+        case .sheHandled:
             Image(systemName: "checkmark")
                 .font(.system(size: 56))
                 .fontWeight(.light)

@@ -1,8 +1,8 @@
 {
   "scenario_id": "take-baby-whisper",
-  "summary": "She keeps eating one-handed. He does not take the baby. The whisper waits out the 90s head start.",
+  "summary": "She keeps eating one-handed. The whisper fires; he then takes the baby. Credit as cued help.",
   "sample_every": 5,
-  "until": 95,
+  "until": 115,
   "people": "mom",
   "needs": [
     {
@@ -51,6 +51,123 @@
     },
     {
       "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "take-baby",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-his-hands-after-cue",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_need_resolved",
+        "assessment": {
+          "need_id": "take-baby",
+          "resolution": "caught_himself",
+          "action_code": "wearer_hands_receiving_baby"
+        }
+      }
+    },
+    {
+      "fixture_id": "take-baby-steady",
       "repeat": true,
       "normalized": {
         "finish_reason": "tool_calls",
@@ -70,6 +187,7 @@
     "mastery_scores": {
       "take-baby": 0,
       "refill-water": 0
-    }
+    },
+    "outcome": "caught_himself"
   }
 }

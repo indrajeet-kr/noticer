@@ -16,6 +16,7 @@ enum SessionStatus: Equatable {
     case headStart(needName: String, fraction: Double, secondsLeft: Int)
     case cue(whisper: String)
     case gotIt(needName: String, shared: Bool = false)
+    case sheHandled(needName: String)
 
     var word: String {
         switch self {
@@ -25,6 +26,7 @@ enum SessionStatus: Equatable {
         case .headStart: return "Your head start"
         case .cue: return "Cue whispered"
         case .gotIt(_, let shared): return shared ? "You finished it" : "You got it"
+        case .sheHandled: return "She handled it"
         }
     }
 
@@ -36,6 +38,7 @@ enum SessionStatus: Equatable {
         case .headStart: return "Take a look around."
         case .cue(let whisper): return "“\(whisper)”"
         case .gotIt(_, let shared): return shared ? "Nice teamwork." : "Nice catch."
+        case .sheHandled: return "No cue needed."
         }
     }
 
@@ -47,6 +50,7 @@ enum SessionStatus: Equatable {
         case .headStart: return "hourglass"
         case .cue: return "speaker.wave.2"
         case .gotIt: return "checkmark.circle"
+        case .sheHandled: return "checkmark.circle"
         }
     }
 
@@ -57,6 +61,7 @@ enum SessionStatus: Equatable {
         case .headStart: return Theme.headstart
         case .cue: return Theme.cue
         case .gotIt: return Theme.gotIt
+        case .sheHandled: return Theme.gotIt
         }
     }
 
@@ -70,6 +75,7 @@ enum SessionStatus: Equatable {
         case .headStart(let name, _, _): return "headstart-\(name)"
         case .cue(let whisper): return "cue-\(whisper)"
         case .gotIt(let name): return "gotit-\(name)"
+        case .sheHandled(let name): return "shehandled-\(name)"
         }
     }
 
