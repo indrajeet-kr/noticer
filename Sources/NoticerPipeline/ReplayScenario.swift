@@ -101,6 +101,17 @@ public struct ScenarioExpectation: Codable, Sendable, Equatable {
     }
 }
 
+/// One recorded glasses still for the replay view, at scenario time `t`.
+public struct ScenarioStill: Codable, Sendable, Equatable {
+    public var t: TimeInterval
+    public var image: String
+
+    public init(t: TimeInterval, image: String) {
+        self.t = t
+        self.image = image
+    }
+}
+
 /// A synthetic session: a keyframe clock, a scripted signal-gate preset, and recorded responses.
 public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
     public var scenarioID: String
@@ -111,8 +122,17 @@ public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
     public var people: String
     public var responses: [ScenarioResponse]
     public var expect: ScenarioExpectation
+    public var frames: [ScenarioStill] = []
+    /// "quick" or "standard". Absent means standard, so old scenarios stay valid.
+    public var timingName: String?
 
     public var id: String { scenarioID }
+
+    /// The profile this scenario plays under: quick when the JSON asks for
+    /// it, standard otherwise. Unknown values fail `validate()`.
+    public var resolvedTiming: TimingProfile {
+        timingName == "quick" ? .quick : .standard
+    }
 
     public init(
         scenarioID: String,
@@ -122,7 +142,9 @@ public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
         until: TimeInterval,
         people: String,
         responses: [ScenarioResponse],
-        expect: ScenarioExpectation
+        expect: ScenarioExpectation,
+        frames: [ScenarioStill] = [],
+        timingName: String? = nil
     ) {
         self.scenarioID = scenarioID
         self.summary = summary
@@ -132,6 +154,8 @@ public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
         self.people = people
         self.responses = responses
         self.expect = expect
+        self.frames = frames
+        self.timingName = timingName
     }
 
     public func validate() throws {
@@ -143,12 +167,32 @@ public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
         guard ScriptedSignalGate.knownPresets.contains(people) else {
             throw ScenarioError.badPeople(people)
         }
+        if let timingName, timingName != "quick", timingName != "standard" {
+            throw ScenarioError.badTiming("\(scenarioID) timing \"\(timingName)\" is not quick or standard.")
+        }
+        for still in frames {
+            guard still.t >= 0, !still.image.isEmpty else {
+                throw ScenarioError.badTiming("\(scenarioID) frames need t >= 0 and a non-empty image.")
+            }
+        }
         guard !needs.isEmpty, !responses.isEmpty else {
             throw ScenarioError.badTiming("\(scenarioID) needs a need list and at least one response.")
         }
         if responses.dropLast().contains(where: \.repeats) {
             throw ScenarioError.badRepeat
         }
+    }
+
+    /// The recorded still to show at `time`: the latest entry at or
+    /// before it. Nil when the scenario has no stills yet.
+    public func still(at time: TimeInterval) -> ScenarioStill? {
+        frames.lazy.filter { $0.t <= time }.max { $0.t < $1.t }
+    }
+
+    /// True when every referenced image is in `available` (bundle-relative
+    /// paths). Stills-free scenarios are always available.
+    public func stillsAvailable(in available: Set<String>) -> Bool {
+        frames.allSatisfy { available.contains($0.image) }
     }
 
     /// Inclusive grid from t = 0 through `until`.
@@ -177,6 +221,38 @@ public struct ReplayScenario: Codable, Sendable, Equatable, Identifiable {
         case people
         case responses
         case expect
+        case frames
+        case timingName = "timing"
+    }
+
+    /// Tolerant read: `frames` and `timing` are optional so scenarios
+    /// written before them still decode.
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        scenarioID = try container.decode(String.self, forKey: .scenarioID)
+        summary = try container.decode(String.self, forKey: .summary)
+        needs = try container.decode([Need].self, forKey: .needs)
+        sampleEvery = try container.decode(TimeInterval.self, forKey: .sampleEvery)
+        until = try container.decode(TimeInterval.self, forKey: .until)
+        people = try container.decode(String.self, forKey: .people)
+        responses = try container.decode([ScenarioResponse].self, forKey: .responses)
+        expect = try container.decode(ScenarioExpectation.self, forKey: .expect)
+        frames = try container.decodeIfPresent([ScenarioStill].self, forKey: .frames) ?? []
+        timingName = try container.decodeIfPresent(String.self, forKey: .timingName)
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(scenarioID, forKey: .scenarioID)
+        try container.encode(summary, forKey: .summary)
+        try container.encode(needs, forKey: .needs)
+        try container.encode(sampleEvery, forKey: .sampleEvery)
+        try container.encode(until, forKey: .until)
+        try container.encode(people, forKey: .people)
+        try container.encode(responses, forKey: .responses)
+        try container.encode(expect, forKey: .expect)
+        try container.encode(frames, forKey: .frames)
+        try container.encodeIfPresent(timingName, forKey: .timingName)
     }
 }
 

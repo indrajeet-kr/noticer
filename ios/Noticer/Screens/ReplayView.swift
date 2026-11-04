@@ -1,4 +1,7 @@
+import NoticerCore
+import NoticerPipeline
 import SwiftUI
+import UIKit
 
 /// Replay: a scenario or clip picker plus the same session view as Live,
 /// with a scrubber, transport, and state markers. The "Replay" chip keeps
@@ -61,12 +64,33 @@ struct ReplayView: View {
         .accessibilityElement(children: .combine)
     }
 
+    /// Scenarios with recorded stills first, then the older frameless ones.
+    private var freshScenarios: [ReplayScenario] {
+        controller.scenarios.filter { !$0.frames.isEmpty }
+    }
+
+    private var olderScenarios: [ReplayScenario] {
+        controller.scenarios.filter { $0.frames.isEmpty }
+    }
+
     private var picker: some View {
         VStack(alignment: .leading, spacing: Theme.Space.s8) {
-            if !controller.scenarios.isEmpty {
+            if !freshScenarios.isEmpty {
                 Text("Simulated replay")
                     .font(Theme.Font.headline)
-                ForEach(controller.scenarios) { scenario in
+                ForEach(freshScenarios) { scenario in
+                    replayRow(
+                        id: "scenario:\(scenario.scenarioID)",
+                        title: scenario.summary.isEmpty ? scenario.scenarioID : scenario.summary,
+                        detail: durationString(scenario.until)
+                    )
+                }
+            }
+            if !olderScenarios.isEmpty {
+                Text("Older scenarios")
+                    .font(Theme.Font.headline)
+                    .padding(.top, freshScenarios.isEmpty ? 0 : Theme.Space.s8)
+                ForEach(olderScenarios) { scenario in
                     replayRow(
                         id: "scenario:\(scenario.scenarioID)",
                         title: scenario.summary.isEmpty ? scenario.scenarioID : scenario.summary,
@@ -150,19 +174,45 @@ struct ReplayView: View {
     // MARK: - Player
 
     private var player: some View {
-        GlassCard {
-            VStack(spacing: Theme.Space.s16) {
-                SessionStatusHero(status: controller.currentStatus, orbSize: 130)
-                ReplayScrubber(
-                    fraction: controller.fraction,
-                    elapsed: controller.elapsed,
-                    total: controller.duration,
-                    markers: controller.markers,
-                    isPlaying: controller.isPlaying,
-                    onScrub: { controller.seek($0) },
-                    onPlayPause: { controller.togglePlay() },
-                    onSkip: { controller.skip($0) }
-                )
+        VStack(spacing: Theme.Space.s16) {
+            GlassCard {
+                VStack(spacing: Theme.Space.s16) {
+                    stillCard
+                    SessionStatusHero(status: controller.currentStatus, orbSize: 130)
+                    ReplayScrubber(
+                        fraction: controller.fraction,
+                        elapsed: controller.elapsed,
+                        total: controller.duration,
+                        markers: controller.markers,
+                        isPlaying: controller.isPlaying,
+                        onScrub: { controller.seek($0) },
+                        onPlayPause: { controller.togglePlay() },
+                        onSkip: { controller.skip($0) }
+                    )
+                }
+            }
+            DemoLiveStrip(
+                items: controller.currentStripItems,
+                chip: nil,
+                relative: { controller.stripRelativeTime($0) }
+            )
+        }
+    }
+
+    /// The recorded glasses still for the playhead. The orb stays for
+    /// scenarios without stills.
+    @ViewBuilder
+    private var stillCard: some View {
+        if let url = controller.currentStillURL,
+            let image = UIImage(contentsOfFile: url.path) {
+            VStack(alignment: .leading, spacing: Theme.Space.s8) {
+                Text("Glasses view (recorded)")
+                    .font(Theme.Font.caption)
+                    .foregroundStyle(Theme.textSecondary)
+                Image(uiImage: image)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .clipShape(Theme.Radius.rect(Theme.Radius.card))
             }
         }
     }

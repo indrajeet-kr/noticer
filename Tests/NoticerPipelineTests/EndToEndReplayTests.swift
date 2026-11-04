@@ -10,9 +10,17 @@ final class EndToEndReplayTests: XCTestCase {
         let ids = Set(scenarios.map(\.scenarioID))
         XCTAssertEqual(
             ids,
+            [
+                "take-baby-whisper", "refill-water-whisper", "take-baby-self-catch",
+                "water-table-whisper", "water-table-self-catch", "water-table-she-handled-it",
+            ]
+        )
+        let classic = scenarios.filter { $0.frames.isEmpty }
+        XCTAssertEqual(
+            Set(classic.map(\.scenarioID)),
             ["take-baby-whisper", "refill-water-whisper", "take-baby-self-catch"]
         )
-        for scenario in scenarios {
+        for scenario in classic {
             XCTAssertEqual(scenario.needs.map(\.id), [MVPNeedList.takeBabyID, MVPNeedList.refillWaterID])
             XCTAssertEqual(scenario.needs[0].cueWording, MVPNeedList.takeBaby.cueWording)
             XCTAssertEqual(scenario.needs[1].cueWording, MVPNeedList.refillWater.cueWording)
@@ -20,7 +28,55 @@ final class EndToEndReplayTests: XCTestCase {
             XCTAssertEqual(scenario.needs[1].selfNoticeSignal, ActionCodeExamples.wearerCarryingWaterTowardPartner)
         }
         let cueNeeds = Set(scenarios.compactMap(\.expect.cueNeedID))
-        XCTAssertEqual(cueNeeds, [MVPNeedList.takeBabyID, MVPNeedList.refillWaterID])
+        XCTAssertEqual(cueNeeds, [MVPNeedList.takeBabyID, MVPNeedList.refillWaterID, "water-table"])
+    }
+
+    func testWaterTableWhisperFiresAfterTheQuickHeadStart() async throws {
+        let scenario = try load("water-table-whisper.json")
+        XCTAssertEqual(scenario.resolvedTiming, .quick)
+        let speaker = RecordingCueSpeaker()
+        let report = try await play(scenario, speaker: speaker, timing: scenario.resolvedTiming)
+        assertPassed(report, expect: scenario.expect)
+        let cue = try XCTUnwrap(report.cues.first)
+        XCTAssertEqual(cue.needID, "water-table")
+        XCTAssertEqual(cue.kind, .whisper)
+        XCTAssertEqual(cue.text, "Put water on the table")
+        XCTAssertEqual(speaker.spokenCues().map(\.id), [cue.id])
+        let latch = try XCTUnwrap(report.latchTimes["water-table"])
+        XCTAssertEqual(cue.createdAt.timeIntervalSince(latch), 10, accuracy: 0.001)
+    }
+
+    func testWaterTableSelfCatchCreditsWithoutCueing() async throws {
+        let scenario = try load("water-table-self-catch.json")
+        XCTAssertEqual(scenario.resolvedTiming, .quick)
+        let speaker = RecordingCueSpeaker()
+        let report = try await play(scenario, speaker: speaker, timing: scenario.resolvedTiming)
+        assertPassed(report, expect: scenario.expect)
+        XCTAssertTrue(report.cues.isEmpty)
+        XCTAssertTrue(speaker.spokenCues().isEmpty)
+        XCTAssertEqual(
+            report.log.filter { $0.kind == .caughtHimself }.map(\.needID),
+            ["water-table"]
+        )
+        let mastery = try XCTUnwrap(report.needs.first { $0.id == "water-table" }?.mastery)
+        XCTAssertEqual(mastery.score, 0.25, accuracy: 1e-9)
+        XCTAssertEqual(mastery.consecutiveSelfNotices, 1)
+    }
+
+    func testWaterTableSheHandledItClosesWithoutCredit() async throws {
+        let scenario = try load("water-table-she-handled-it.json")
+        XCTAssertEqual(scenario.resolvedTiming, .quick)
+        let speaker = RecordingCueSpeaker()
+        let report = try await play(scenario, speaker: speaker, timing: scenario.resolvedTiming)
+        assertPassed(report, expect: scenario.expect)
+        XCTAssertTrue(report.cues.isEmpty)
+        XCTAssertTrue(speaker.spokenCues().isEmpty)
+        XCTAssertEqual(
+            report.log.filter { $0.kind == .resolvedByOther }.map(\.needID),
+            ["water-table"]
+        )
+        let mastery = try XCTUnwrap(report.needs.first { $0.id == "water-table" }?.mastery)
+        XCTAssertEqual(mastery.score, 0, accuracy: 1e-9)
     }
 
     func testTakeBabyCueFiresAfterTheHeadStart() async throws {
@@ -116,8 +172,12 @@ final class EndToEndReplayTests: XCTestCase {
         XCTAssertTrue(after.cues.isEmpty)
     }
 
-    private func play(_ scenario: ReplayScenario, speaker: RecordingCueSpeaker) async throws -> ScenarioReport {
-        let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker)
+    private func play(
+        _ scenario: ReplayScenario,
+        speaker: RecordingCueSpeaker,
+        timing: TimingProfile = .standard
+    ) async throws -> ScenarioReport {
+        let playback = try ScenarioPlayback(scenario: scenario, speaker: speaker, timing: timing)
         return try await playback.run()
     }
 
