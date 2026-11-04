@@ -9,6 +9,7 @@ xcuserdata/
 *.xcscmblueprint
 .env
 .env.*
+!.env.example
 *.pem
 
 # Session transcripts pulled off the phone. Source that writes them is fine.
