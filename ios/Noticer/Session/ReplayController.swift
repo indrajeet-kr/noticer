@@ -38,9 +38,17 @@ final class ReplayController {
     private var playTask: Task<Void, Never>?
     private var loadTask: Task<Void, Never>?
     private var stripMemory = ReplayStripMemory()
+    /// Scenario start of the loaded run. Row offsets measure against this,
+    /// never against another run's start.
+    private var stripStart: Date?
+    private var clock = ReplayClock()
+    /// Generation of the latest load. Only it may assign results.
+    private var loadToken = 0
+    /// Selection with a load in flight, if any.
+    private(set) var loadingID: String?
 
-    /// Watchable wall-clock pace per recorded frame.
-    private static let framePace: Duration = .milliseconds(250)
+    /// Playhead refresh while playing.
+    private static let tickInterval: Duration = .milliseconds(100)
 
     var options: [ReplayOption] {
         let scenarioOptions = scenarios.map { ReplayOption(kind: .scenario, name: $0.scenarioID) }
@@ -53,13 +61,11 @@ final class ReplayController {
     }
 
     var elapsed: TimeInterval {
-        guard times.indices.contains(index) else { return 0 }
-        return times[index]
+        clock.playhead
     }
 
     var fraction: Double {
-        guard frames.count > 1 else { return 0 }
-        return Double(index) / Double(frames.count - 1)
+        clock.fraction
     }
 
     var currentFrame: ReplayFrame? {
@@ -77,7 +83,13 @@ final class ReplayController {
     }
 
     func stripRelativeTime(_ item: DemoStripItem) -> String {
-        stripMemory.buffer.relativeTime(item)
+        guard let stripStart else {
+            return "+0.0s"
+        }
+        let offset = ReplayClock.clampedOffset(at: item.at, start: stripStart, duration: clock.duration)
+        var clamped = item
+        clamped.at = stripStart.addingTimeInterval(offset)
+        return stripMemory.buffer.relativeTime(clamped)
     }
 
     /// The recorded still for the playhead, if this scenario has stills.
@@ -91,7 +103,7 @@ final class ReplayController {
         return url
     }
 
-    private var selectedScenario: ReplayScenario? {
+    var selectedScenario: ReplayScenario? {
         guard selectedID.hasPrefix("scenario:") else { return nil }
         let name = String(selectedID.dropFirst("scenario:".count))
         return scenarios.first { $0.scenarioID == name }
@@ -119,7 +131,13 @@ final class ReplayController {
         do {
             let loaded = try BundledScenarios.load()
             let available = BundledStills.availableImages()
-            scenarios = loaded.filter { $0.stillsAvailable(in: available) }
+            scenarios = loaded
+                .filter { $0.stillsAvailable(in: available) }
+                .map { scenario -> ReplayScenario in
+                    var sorted = scenario
+                    sorted.frames.sort { $0.t < $1.t }
+                    return sorted
+                }
         } catch {
             scenarios = []
             addNotice(error.localizedDescription)
@@ -130,16 +148,30 @@ final class ReplayController {
     }
 
     /// Selecting always starts at 0:00, paused — even re-selecting the
-    /// scenario already loaded.
+    /// scenario already loaded. State clears synchronously so no stale
+    /// frame survives, and the load carries a generation token so only
+    /// the latest selection assigns results.
     func select(_ id: String, timing: TimingProfile, needs: [Need]) {
         selectedID = id
+        loadingID = id
         pause()
+        clock.reset(duration: 0)
         index = 0
         loadTask?.cancel()
+        loadToken += 1
+        frames = []
+        statuses = []
+        times = []
+        markers = []
+        stripSnapshots = []
+        stripMemory = ReplayStripMemory()
+        stripStart = nil
+        notices = []
         isLoading = true
         loadError = nil
+        let token = loadToken
         loadTask = Task {
-            await loadSelected(timing: timing, needs: needs)
+            await loadSelected(timing: timing, needs: needs, token: token)
         }
     }
 
@@ -150,9 +182,11 @@ final class ReplayController {
         if isPlaying {
             pause()
         } else {
-            if index >= frames.count - 1 {
-                index = 0
+            if clock.isAtEnd {
+                clock.seek(to: 0)
             }
+            clock.play(at: Self.realNow())
+            index = clock.index(in: times)
             isPlaying = true
             playTask?.cancel()
             playTask = Task {
@@ -171,83 +205,136 @@ final class ReplayController {
         guard !frames.isEmpty else {
             return
         }
-        index = min(frames.count - 1, max(0, Int((fraction * Double(frames.count - 1)).rounded())))
+        clock.seek(to: fraction * clock.duration)
+        if isPlaying {
+            clock.play(at: Self.realNow())
+        }
+        index = clock.index(in: times)
     }
 
     func skip(_ seconds: TimeInterval) {
         guard !times.isEmpty else {
             return
         }
-        let target = max(0, min(duration, elapsed + seconds))
-        var best = 0
-        for (offset, time) in times.enumerated() {
-            if abs(time - target) < abs(times[best] - target) {
-                best = offset
-            }
+        clock.seek(to: clock.playhead + seconds)
+        if isPlaying {
+            clock.play(at: Self.realNow())
         }
-        index = best
+        index = clock.index(in: times)
+    }
+
+    private static let realEpoch = ContinuousClock.now
+
+    private static func realNow() -> TimeInterval {
+        let elapsed = realEpoch.duration(to: ContinuousClock.now)
+        return TimeInterval(elapsed.components.seconds) + Double(elapsed.components.attoseconds) / 1e18
     }
 
     // MARK: - Precompute
 
-    private func loadSelected(timing: TimingProfile, needs: [Need]) async {
-        defer { isLoading = false }
-        frames = []
-        statuses = []
-        times = []
-        markers = []
-        stripSnapshots = []
-        stripMemory = ReplayStripMemory()
-        index = 0
+    /// One load's results, built locally and assigned only while its
+    /// generation is current, so a superseded load can never mix into
+    /// the next selection.
+    private struct LoadResult {
+        var frames: [ReplayFrame] = []
+        var statuses: [SessionStatus] = []
+        var times: [TimeInterval] = []
+        var stripSnapshots: [[DemoStripItem]] = []
+        var markers: [ReplayMarker] = []
+        var notices: [String] = []
+        var memory = ReplayStatusMemory()
+        var strip = ReplayStripMemory()
+
+        mutating func append(step: PipelineStep, view: SessionView, gateLine: String) {
+            frames.append(ReplayFrame(step: step, view: view, gateLine: gateLine))
+            if times.isEmpty {
+                times.append(0)
+            } else if let first = frames.first {
+                times.append(view.now.timeIntervalSince(first.view.now))
+            }
+            memory.advance(view: view, spoken: step.spoken)
+            statuses.append(memory.status())
+            strip.ingest(step: step, view: view)
+            stripSnapshots.append(strip.buffer.items)
+        }
+    }
+
+    private func loadSelected(timing: TimingProfile, needs: [Need], token: Int) async {
         guard let option = options.first(where: { $0.id == selectedID }) else {
-            loadError = "Pick a replay first."
+            finishLoad(token: token, result: LoadResult(), error: "Pick a replay first.")
             return
         }
+        var result = LoadResult()
         do {
             switch option.kind {
             case .scenario:
                 guard let scenario = scenarios.first(where: { $0.scenarioID == option.name }) else {
                     throw ScenarioBundleError.unreadable(option.name)
                 }
-                try await loadScenario(scenario, timing: timing)
+                try await loadScenario(scenario, timing: timing, result: &result)
             case .clip:
                 guard let url = clips.first(where: { $0.lastPathComponent == option.name }) else {
                     throw ClipLibraryError.noClips
                 }
-                try await loadClip(url: url, timing: timing, needs: needs)
+                try await loadClip(url: url, timing: timing, needs: needs, result: &result)
             }
-            buildMarkers()
-            index = 0
-            pause()
+            result.markers = Self.markers(for: result.frames, duration: result.times.last ?? 0)
+            finishLoad(token: token, result: result, error: nil)
         } catch is CancellationError {
-            // A newer selection superseded this load.
+            // A newer selection superseded this load: touch nothing.
         } catch {
-            loadError = error.localizedDescription
+            finishLoad(token: token, result: LoadResult(), error: error.localizedDescription)
         }
     }
 
-    private func loadScenario(_ scenario: ReplayScenario, timing: TimingProfile) async throws {
-        addNotice("Replay clock. No API key. The scenario uses its own need list.")
+    /// Assigns a finished load, but only while its generation is current.
+    /// A superseded load leaves the controller (including `isLoading`)
+    /// for its successor to finish.
+    private func finishLoad(token: Int, result: LoadResult, error: String?) {
+        guard token == loadToken else {
+            return
+        }
+        frames = result.frames
+        statuses = result.statuses
+        times = result.times
+        stripSnapshots = result.stripSnapshots
+        stripMemory = result.strip
+        markers = result.markers
+        for notice in result.notices {
+            addNotice(notice)
+        }
+        stripStart = result.frames.first?.view.now
+        clock.reset(duration: result.times.last ?? 0)
+        index = 0
+        pause()
+        loadError = error
+        loadingID = nil
+        isLoading = false
+    }
+
+    private func loadScenario(_ scenario: ReplayScenario, timing: TimingProfile, result: inout LoadResult) async throws {
+        result.notices.append("Recorded replay. Runs offline with this scenario's own list.")
         let effective = scenario.timingName == nil ? timing : scenario.resolvedTiming
         let playback = try ScenarioPlayback(scenario: scenario, speaker: SilentCueSpeaker(), timing: effective)
         var collected: [(PipelineStep, SessionView)] = []
         _ = try await playback.run(pace: nil) { step, view in
+            guard !Task.isCancelled else { return }
             collected.append((step, view))
         }
-        var memory = ReplayStatusMemory()
+        try Task.checkCancellation()
         for (step, view) in collected {
-            append(step: step, view: view, gateLine: "Scripted gate: \(scenario.people)", memory: &memory)
+            result.append(step: step, view: view, gateLine: "Scripted gate: \(scenario.people)")
         }
     }
 
-    private func loadClip(url: URL, timing: TimingProfile, needs: [Need]) async throws {
+    private func loadClip(url: URL, timing: TimingProfile, needs: [Need], result: inout LoadResult) async throws {
         let extracted = try await ClipLibrary.extractFrames(from: url)
         guard let first = extracted.first else {
             throw ClipLibraryError.noFrames
         }
         let recording = try ClipLibrary.makeRecording()
         if recording.skippedTruncated > 0 {
-            addNotice("Skipped \(recording.skippedTruncated) truncated fixture(s). Those files are error samples.")
+            result.notices.append("Skipped \(recording.skippedTruncated) truncated fixture(s). Those files are error samples.")
         }
         let clock = SessionClock.manual(startingAt: first.capturedAt)
         let session = try SessionPipeline(
@@ -260,42 +347,26 @@ final class ReplayController {
         let gate = SignalFrameGate()
         await gate.reset()
         let source = ReplayFrameSource(frames: extracted)
-        var memory = ReplayStatusMemory()
         while let frame = try await source.nextFrame() {
             try Task.checkCancellation()
             clock.advance(to: frame.capturedAt)
             let needOpen = await session.view().openNeeds.isEmpty == false
             let decision = await gate.evaluate(frame, needOpen: needOpen)
             let step = try await session.ingest(frame: frame, gate: decision.snapshot)
-            append(
+            result.append(
                 step: step,
                 view: await session.view(),
-                gateLine: Self.describe(decision),
-                memory: &memory
+                gateLine: Self.describe(decision)
             )
         }
     }
 
-    private func append(step: PipelineStep, view: SessionView, gateLine: String, memory: inout ReplayStatusMemory) {
-        frames.append(ReplayFrame(step: step, view: view, gateLine: gateLine))
-        if times.isEmpty {
-            times.append(0)
-        } else if let first = frames.first {
-            times.append(view.now.timeIntervalSince(first.view.now))
-        }
-        memory.advance(view: view, spoken: step.spoken)
-        statuses.append(memory.status())
-        stripMemory.ingest(step: step, view: view)
-        stripSnapshots.append(stripMemory.buffer.items)
-    }
-
-    private func buildMarkers() {
+    private static func markers(for frames: [ReplayFrame], duration: TimeInterval) -> [ReplayMarker] {
         guard let last = frames.last, duration > 0 else {
-            markers = []
-            return
+            return []
         }
         let start = frames.first?.view.now ?? last.view.now
-        markers = last.view.log.compactMap { event in
+        return last.view.log.compactMap { event in
             let color: Color?
             switch event.kind {
             case .needLatched: color = Theme.noticed
@@ -316,12 +387,16 @@ final class ReplayController {
     }
 
     private func tick() async {
-        while !Task.isCancelled, index < frames.count - 1 {
-            try? await Task.sleep(for: Self.framePace)
+        while !Task.isCancelled {
+            try? await Task.sleep(for: Self.tickInterval)
             guard !Task.isCancelled else {
                 return
             }
-            index += 1
+            clock.tick(at: Self.realNow())
+            index = clock.index(in: times)
+            if clock.isAtEnd {
+                break
+            }
         }
         isPlaying = false
     }

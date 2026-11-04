@@ -199,8 +199,9 @@ struct ReplayView: View {
         }
     }
 
-    /// The recorded glasses still for the playhead. The orb stays for
-    /// scenarios without stills.
+    /// The recorded glasses still for the playhead, or a quiet
+    /// placeholder when the scenario has no stills or the image is
+    /// missing. Never crashes on a missing image.
     @ViewBuilder
     private var stillCard: some View {
         if let url = controller.currentStillURL,
@@ -214,6 +215,12 @@ struct ReplayView: View {
                     .aspectRatio(contentMode: .fit)
                     .clipShape(Theme.Radius.rect(Theme.Radius.card))
             }
+        } else if controller.selectedScenario != nil {
+            Text("No camera frames recorded for this scenario")
+                .font(Theme.Font.caption)
+                .foregroundStyle(Theme.textSecondary)
+                .frame(maxWidth: .infinity, minHeight: 96, alignment: .center)
+                .background(Theme.bgSubtle, in: Theme.Radius.rect(Theme.Radius.card))
         }
     }
 
@@ -222,7 +229,8 @@ struct ReplayView: View {
     private func selectFirstIfNeeded() {
         if controller.selectedID.isEmpty, let first = controller.options.first {
             controller.select(first.id, timing: model.timing, needs: model.needsForSession())
-        } else if !controller.selectedID.isEmpty, controller.frames.isEmpty, !controller.isLoading {
+        } else if !controller.selectedID.isEmpty, controller.frames.isEmpty, !controller.isLoading,
+            controller.loadingID != controller.selectedID {
             controller.select(controller.selectedID, timing: model.timing, needs: model.needsForSession())
         }
     }
