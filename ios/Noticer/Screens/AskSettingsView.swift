@@ -16,7 +16,7 @@ struct AskSettingsView: View {
     @State private var showingLog = false
     @State private var confirmingIntro = false
     @State private var confirmingReset = false
-    @State private var resetStash: [String: MasteryState]?
+    @State private var resetStash: PhoneSessionModel.LearningResetStash?
     @State private var resetToastID = UUID()
     @State private var dictation = DictationService()
     @AppStorage("noticer.onboarding.done") private var onboardingDone = false
@@ -121,7 +121,7 @@ struct AskSettingsView: View {
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("This sets every need back to Learning. Tonight's wins stay.")
+            Text("Sets every need back to Learning and clears Tonight.")
         }
     }
 
@@ -136,7 +136,7 @@ struct AskSettingsView: View {
                 }
                 .font(Theme.Font.headline)
                 .disabled(model.isRunning)
-                Text("Sets every need back to Learning. Tonight's wins stay.")
+                Text("Sets every need back to Learning and clears Tonight.")
                     .font(Theme.Font.caption)
                     .foregroundStyle(Theme.textSecondary)
                 Toggle("Demo mode", isOn: $demoMode)
@@ -160,7 +160,7 @@ struct AskSettingsView: View {
 
     private func undoReset() {
         if let stash = resetStash {
-            model.restoreMastery(stash)
+            model.restoreLearning(stash)
         }
         resetStash = nil
     }
