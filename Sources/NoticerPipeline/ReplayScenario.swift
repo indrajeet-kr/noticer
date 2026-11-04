@@ -59,19 +59,23 @@ public struct ScenarioExpectation: Codable, Sendable, Equatable {
     public var headStartSeconds: TimeInterval?
     public var silentThroughHeadStart: Bool?
     public var masteryScores: [String: Double]
+    /// Required last outcome event: "caught_himself" or "resolved_by_partner".
+    public var outcome: String?
 
     public init(
         cueNeedID: String? = nil,
         cueKind: CueKind? = nil,
         headStartSeconds: TimeInterval? = nil,
         silentThroughHeadStart: Bool? = nil,
-        masteryScores: [String: Double] = [:]
+        masteryScores: [String: Double] = [:],
+        outcome: String? = nil
     ) {
         self.cueNeedID = cueNeedID
         self.cueKind = cueKind
         self.headStartSeconds = headStartSeconds
         self.silentThroughHeadStart = silentThroughHeadStart
         self.masteryScores = masteryScores
+        self.outcome = outcome
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -80,6 +84,7 @@ public struct ScenarioExpectation: Codable, Sendable, Equatable {
         case headStartSeconds = "head_start_seconds"
         case silentThroughHeadStart = "silent_through_head_start"
         case masteryScores = "mastery_scores"
+        case outcome
     }
 
     public init(from decoder: Decoder) throws {
@@ -89,6 +94,7 @@ public struct ScenarioExpectation: Codable, Sendable, Equatable {
         headStartSeconds = try container.decodeIfPresent(TimeInterval.self, forKey: .headStartSeconds)
         silentThroughHeadStart = try container.decodeIfPresent(Bool.self, forKey: .silentThroughHeadStart)
         masteryScores = try container.decodeIfPresent([String: Double].self, forKey: .masteryScores) ?? [:]
+        outcome = try container.decodeIfPresent(String.self, forKey: .outcome)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -98,6 +104,7 @@ public struct ScenarioExpectation: Codable, Sendable, Equatable {
         try container.encodeIfPresent(headStartSeconds, forKey: .headStartSeconds)
         try container.encodeIfPresent(silentThroughHeadStart, forKey: .silentThroughHeadStart)
         try container.encode(masteryScores, forKey: .masteryScores)
+        try container.encodeIfPresent(outcome, forKey: .outcome)
     }
 }
 
@@ -326,6 +333,17 @@ public struct ScenarioReport: Sendable, Equatable {
 public enum ScenarioCheck {
     public static func failures(_ report: ScenarioReport, expect: ScenarioExpectation) -> [String] {
         var failures: [String] = []
+        if let outcome = expect.outcome {
+            let last = report.log.last { $0.kind == .caughtHimself || $0.kind == .resolvedByOther }
+            let actual: String? = switch last?.kind {
+            case .caughtHimself: "caught_himself"
+            case .resolvedByOther: "resolved_by_partner"
+            default: nil
+            }
+            if actual != outcome {
+                failures.append("expected outcome \(outcome), got \(actual ?? "none").")
+            }
+        }
         if !report.modelErrors.isEmpty {
             failures.append("model errors: \(report.modelErrors.joined(separator: "; "))")
         }

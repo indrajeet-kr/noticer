@@ -1,8 +1,8 @@
 {
   "scenario_id": "refill-water-whisper",
-  "summary": "She is nursing without water. He misses it. The whisper waits out the 90s head start.",
+  "summary": "She is nursing without water. The whisper fires; he then brings water. Credit as cued help.",
   "sample_every": 5,
-  "until": 95,
+  "until": 115,
   "people": "mom",
   "needs": [
     {
@@ -51,6 +51,123 @@
     },
     {
       "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_no_transition",
+        "assessment": {
+          "need_id": "refill-water",
+          "sustained_across_strip": true,
+          "wearer_hands_occupied": false
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-his-hands-after-cue",
+      "repeat": false,
+      "normalized": {
+        "finish_reason": "tool_calls",
+        "tool": "report_need_resolved",
+        "assessment": {
+          "need_id": "refill-water",
+          "resolution": "caught_himself",
+          "action_code": "wearer_carrying_water_toward_partner"
+        }
+      }
+    },
+    {
+      "fixture_id": "refill-water-steady",
       "repeat": true,
       "normalized": {
         "finish_reason": "tool_calls",
@@ -70,6 +187,7 @@
     "mastery_scores": {
       "take-baby": 0,
       "refill-water": 0
-    }
+    },
+    "outcome": "caught_himself"
   }
 }
